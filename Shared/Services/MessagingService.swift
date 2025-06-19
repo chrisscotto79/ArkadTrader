@@ -1,3 +1,11 @@
+//
+//  MessagingService.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 6/18/25.
+//
+
+
 // File: Shared/Services/MessagingService.swift
 
 import Foundation

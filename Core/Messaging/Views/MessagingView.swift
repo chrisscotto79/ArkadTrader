@@ -1,3 +1,11 @@
+//
+//  MessagingView.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 6/18/25.
+//
+
+
 // File: Core/Messaging/Views/MessagingView.swift
 
 import SwiftUI
