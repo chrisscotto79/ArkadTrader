@@ -1,4 +1,5 @@
 // File: Shared/Services/DataService.swift
+// Fixed version without conflicts
 
 import Foundation
 
@@ -28,13 +29,10 @@ class DataService: ObservableObject {
         
         isLoading = true
         
-        async let tradesTask = loadTrades(for: userId)
-        async let leaderboardTask = loadLeaderboard()
-        async let postsTask = loadPosts()
-        
-        await tradesTask
-        await leaderboardTask
-        await postsTask
+        // Load data sequentially to avoid type issues
+        await loadTrades(for: userId)
+        await loadLeaderboard()
+        await loadPosts()
         
         isLoading = false
     }
@@ -116,7 +114,8 @@ class DataService: ObservableObject {
         let createRequest = CreatePostRequest(
             content: post.content,
             imageURL: post.imageURL,
-            postType: post.postType
+            postType: post.postType,
+            tradeId: nil // Optional parameter
         )
         
         do {
@@ -162,327 +161,12 @@ class DataService: ObservableObject {
     
     // MARK: - Refresh Methods
     func refreshAllData() async {
-        guard let userId = AuthService.shared.currentUser?.id.uuidString else { return }
-        await loadInitialData()
-    }
-}
-
-// File: Core/Messaging/ViewModels/MessagingViewModel.swift
-
-@MainActor
-class MessagingViewModel: ObservableObject {
-    @Published var conversations: [Conversation] = []
-    @Published var currentConversation: Conversation?
-    @Published var messages: [Message] = []
-    @Published var messageText = ""
-    @Published var isLoading = false
-    @Published var isLoadingMessages = false
-    
-    private let messagingService = MessagingService.shared
-    
-    init() {
-        loadConversations()
-    }
-    
-    // MARK: - Conversations
-    func loadConversations() {
+        guard let currentUserId = AuthService.shared.currentUser?.id.uuidString else { return }
+        
         isLoading = true
-        Task {
-            await messagingService.loadConversations()
-            self.conversations = messagingService.conversations
-            self.isLoading = false
-        }
-    }
-    
-    func selectConversation(_ conversation: Conversation) {
-        currentConversation = conversation
-        loadMessages(for: conversation.id.uuidString)
-        
-        // Mark as read
-        Task {
-            await messagingService.markAsRead(conversationId: conversation.id.uuidString)
-        }
-    }
-    
-    // MARK: - Messages
-    func loadMessages(for conversationId: String) {
-        isLoadingMessages = true
-        Task {
-            await messagingService.loadMessages(for: conversationId)
-            self.messages = messagingService.getMessages(for: conversationId)
-            self.isLoadingMessages = false
-        }
-    }
-    
-    func sendMessage() {
-        guard let conversation = currentConversation,
-              !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-        
-        let recipientId = conversation.otherParticipant(
-            currentUserId: AuthService.shared.currentUser?.id ?? UUID()
-        )?.id.uuidString ?? ""
-        
-        Task {
-            do {
-                let message = try await messagingService.sendMessage(
-                    to: recipientId,
-                    content: messageText,
-                    conversationId: conversation.id.uuidString
-                )
-                
-                self.messages.append(message)
-                self.messageText = ""
-                
-                // Reload conversations to update last message
-                loadConversations()
-            } catch {
-                print("Failed to send message: \(error)")
-            }
-        }
-    }
-    
-    func startConversation(with user: User) {
-        Task {
-            do {
-                let conversation = try await messagingService.createConversation(with: user.id.uuidString)
-                self.currentConversation = conversation
-                self.messages = []
-            } catch {
-                print("Failed to start conversation: \(error)")
-            }
-        }
-    }
-    
-    // MARK: - Helper Methods
-    var unreadCount: Int {
-        conversations.reduce(0) { $0 + $1.unreadCount }
-    }
-    
-    func getOtherParticipant(in conversation: Conversation) -> User? {
-        guard let currentUserId = AuthService.shared.currentUser?.id else { return nil }
-        return conversation.otherParticipant(currentUserId: currentUserId)
-    }
-}
-
-// File: Core/Search/ViewModels/SearchViewModel.swift
-
-@MainActor
-class SearchViewModel: ObservableObject {
-    @Published var searchText = ""
-    @Published var searchResults: [SearchResult] = []
-    @Published var userResults: [User] = []
-    @Published var recentSearches: [String] = []
-    @Published var isSearching = false
-    @Published var showingSuggestions = false
-    
-    private let searchService = SearchService.shared
-    private let socialService = SocialService.shared
-    
-    init() {
-        self.recentSearches = searchService.recentSearches
-    }
-    
-    // MARK: - Search Methods
-    func performSearch() {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            clearResults()
-            return
-        }
-        
-        Task {
-            do {
-                isSearching = true
-                userResults = try await searchService.searchUsers(query: searchText)
-                isSearching = false
-            } catch {
-                isSearching = false
-                print("Search failed: \(error)")
-            }
-        }
-    }
-    
-    func performFullSearch() {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            clearResults()
-            return
-        }
-        
-        Task {
-            do {
-                isSearching = true
-                searchResults = try await searchService.searchAll(query: searchText)
-                isSearching = false
-            } catch {
-                isSearching = false
-                print("Search failed: \(error)")
-            }
-        }
-    }
-    
-    func clearResults() {
-        searchResults = []
-        userResults = []
-        showingSuggestions = false
-    }
-    
-    func selectRecentSearch(_ query: String) {
-        searchText = query
-        performSearch()
-    }
-    
-    func clearRecentSearches() {
-        searchService.clearRecentSearches()
-        recentSearches = []
-    }
-    
-    // MARK: - Social Actions
-    func followUser(_ user: User) {
-        Task {
-            do {
-                _ = try await socialService.followUser(user.id.uuidString)
-                // Update user in results
-                updateUserFollowStatus(user.id.uuidString, isFollowing: true)
-            } catch {
-                print("Failed to follow user: \(error)")
-            }
-        }
-    }
-    
-    func unfollowUser(_ user: User) {
-        Task {
-            do {
-                _ = try await socialService.unfollowUser(user.id.uuidString)
-                // Update user in results
-                updateUserFollowStatus(user.id.uuidString, isFollowing: false)
-            } catch {
-                print("Failed to unfollow user: \(error)")
-            }
-        }
-    }
-    
-    private func updateUserFollowStatus(_ userId: String, isFollowing: Bool) {
-        // Update in user results
-        for i in 0..<userResults.count {
-            if userResults[i].id.uuidString == userId {
-                // You'd need to add an isFollowing property to User model
-                // or track it separately
-                break
-            }
-        }
-    }
-    
-    // MARK: - Suggestions
-    var searchSuggestions: [String] {
-        if searchText.isEmpty {
-            return searchService.getPopularSearches()
-        } else {
-            return searchService.getSearchSuggestions(for: searchText)
-        }
-    }
-    
-    func showSuggestions() {
-        showingSuggestions = true
-    }
-    
-    func hideSuggestions() {
-        showingSuggestions = false
-    }
-}
-
-// File: Core/Settings/ViewModels/SettingsViewModel.swift
-
-@MainActor
-class SettingsViewModel: ObservableObject {
-    @Published var isPrivateAccount = false
-    @Published var pushNotifications = true
-    @Published var emailNotifications = true
-    @Published var isLoading = false
-    @Published var showDeleteAccountAlert = false
-    @Published var showLogoutAlert = false
-    
-    private let authService = AuthService.shared
-    
-    init() {
-        loadSettings()
-    }
-    
-    // MARK: - Settings Management
-    func loadSettings() {
-        // Load from user defaults or user object
-        // These would typically come from the server
-        isPrivateAccount = UserDefaults.standard.bool(forKey: "isPrivateAccount")
-        pushNotifications = UserDefaults.standard.bool(forKey: "pushNotifications")
-        emailNotifications = UserDefaults.standard.bool(forKey: "emailNotifications")
-    }
-    
-    func updatePrivacy(_ isPrivate: Bool) {
-        isLoading = true
-        Task {
-            do {
-                _ = try await authService.updateAccountSettings(isPrivate: isPrivate)
-                self.isPrivateAccount = isPrivate
-                UserDefaults.standard.set(isPrivate, forKey: "isPrivateAccount")
-            } catch {
-                print("Failed to update privacy setting: \(error)")
-            }
-            self.isLoading = false
-        }
-    }
-    
-    func updateNotifications(push: Bool? = nil, email: Bool? = nil) {
-        isLoading = true
-        Task {
-            do {
-                _ = try await authService.updateAccountSettings(
-                    pushNotifications: push,
-                    emailNotifications: email
-                )
-                
-                if let push = push {
-                    self.pushNotifications = push
-                    UserDefaults.standard.set(push, forKey: "pushNotifications")
-                }
-                
-                if let email = email {
-                    self.emailNotifications = email
-                    UserDefaults.standard.set(email, forKey: "emailNotifications")
-                }
-            } catch {
-                print("Failed to update notification settings: \(error)")
-            }
-            self.isLoading = false
-        }
-    }
-    
-    // MARK: - Account Actions
-    func logout() {
-        authService.logout()
-    }
-    
-    func deleteAccount() {
-        isLoading = true
-        Task {
-            do {
-                try await authService.deleteAccount()
-                // Account is deleted, user is automatically logged out
-            } catch {
-                print("Failed to delete account: \(error)")
-                self.isLoading = false
-            }
-        }
-    }
-    
-    // MARK: - Export Data
-    func exportUserData() {
-        // Implement data export functionality
-        // This would generate a file with user's trading data
-        print("Exporting user data...")
-    }
-    
-    // MARK: - Helper Methods
-    var currentUser: User? {
-        return authService.currentUser
+        await loadTrades(for: currentUserId)
+        await loadLeaderboard()
+        await loadPosts()
+        isLoading = false
     }
 }

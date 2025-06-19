@@ -88,48 +88,7 @@ struct Following: Identifiable, Codable {
     }
 }
 
-// File: Shared/Models/SearchResult.swift
 
-struct SearchResult: Identifiable, Codable {
-    let id: UUID
-    let type: SearchResultType
-    let user: User?
-    let post: Post?
-    let trade: Trade?
-    let relevanceScore: Double
-    
-    init(user: User, relevanceScore: Double = 1.0) {
-        self.id = UUID()
-        self.type = .user
-        self.user = user
-        self.post = nil
-        self.trade = nil
-        self.relevanceScore = relevanceScore
-    }
-    
-    init(post: Post, relevanceScore: Double = 1.0) {
-        self.id = UUID()
-        self.type = .post
-        self.user = nil
-        self.post = post
-        self.trade = nil
-        self.relevanceScore = relevanceScore
-    }
-}
-
-enum SearchResultType: String, CaseIterable, Codable {
-    case user = "user"
-    case post = "post"
-    case trade = "trade"
-    
-    var displayName: String {
-        switch self {
-        case .user: return "User"
-        case .post: return "Post"
-        case .trade: return "Trade"
-        }
-    }
-}
 
 // File: Shared/Models/Notification.swift
 

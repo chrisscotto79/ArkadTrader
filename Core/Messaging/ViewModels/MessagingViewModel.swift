@@ -1,3 +1,11 @@
+//
+//  MessagingViewModel.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 6/19/25.
+//
+
+
 
 // File: Core/Messaging/ViewModels/MessagingViewModel.swift
 // Minimal version to prevent errors

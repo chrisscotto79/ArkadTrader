@@ -47,7 +47,7 @@ struct ProfileView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                EnhancedSettingsView()
+                MainSettingsView()
             }
         }
     }
@@ -287,11 +287,6 @@ struct ProfileStatView: View {
                 .foregroundColor(.gray)
         }
     }
-}
-
-#Preview {
-    ProfileView()
-        .environmentObject(AuthViewModel())
 }
 
 #Preview {

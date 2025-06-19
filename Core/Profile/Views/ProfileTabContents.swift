@@ -1,436 +1,277 @@
-// File: Core/Profile/Views/ProfileTabContents.swift
+// File: Core/Profile/Views/ProfileView.swift
 
 import SwiftUI
 
-// MARK: - Overview Tab
-struct ProfileOverviewTab: View {
+struct ProfileView: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @StateObject private var portfolioViewModel = PortfolioViewModel()
+    @State private var showSettings = false
+    @State private var selectedTab = 0 // 0 = Overview, 1 = Trades, 2 = Posts
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Profile Header
+                    ProfileHeaderView()
+                        .environmentObject(authViewModel)
+                        .environmentObject(portfolioViewModel)
+                    
+                    // Tab Selector
+                    ProfileTabSelector(selectedTab: $selectedTab)
+                    
+                    // Content based on selected tab
+                    switch selectedTab {
+                    case 0:
+                        ProfileOverviewTab()
+                            .environmentObject(portfolioViewModel)
+                    case 1:
+                        ProfileTradesTab()
+                            .environmentObject(portfolioViewModel)
+                    case 2:
+                        ProfilePostsTab()
+                    default:
+                        ProfileOverviewTab()
+                            .environmentObject(portfolioViewModel)
+                    }
+                }
+            }
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gearshape")
+                            .foregroundColor(.arkadGold)
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                MainSettingsView()
+            }
+        }
+    }
+}
+
+// MARK: - Profile Header
+struct ProfileHeaderView: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     
     var body: some View {
-        VStack(spacing: 24) {
-            // Performance Dashboard
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Performance")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Text("All Time")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+        VStack(spacing: 20) {
+            // Profile Picture & Basic Info
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(
+                            gradient: Gradient(colors: [Color.arkadGold.opacity(0.3), Color.arkadGold]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ))
+                        .frame(width: 120, height: 120)
+                    
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 110, height: 110)
+                    
+                    Text(initials)
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundColor(.arkadGold)
                 }
-                .padding(.horizontal)
                 
-                // Performance Cards Grid - Real Data
-                LazyVGrid(columns: [
-                    GridItem(.flexible(), spacing: 8),
-                    GridItem(.flexible(), spacing: 8)
-                ], spacing: 12) {
-                    PerformanceCard(
-                        title: "Total P&L",
-                        value: portfolioViewModel.portfolio?.totalProfitLoss.asCurrencyWithSign ?? "$0.00",
-                        color: (portfolioViewModel.portfolio?.totalProfitLoss ?? 0) >= 0 ? .marketGreen : .marketRed,
-                        icon: "dollarsign.circle"
-                    )
+                VStack(spacing: 8) {
+                    HStack {
+                        Text(authViewModel.currentUser?.fullName ?? "User")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        if authViewModel.currentUser?.isVerified == true {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundColor(.arkadGold)
+                                .font(.title3)
+                        }
+                    }
                     
-                    PerformanceCard(
-                        title: "Win Rate",
-                        value: portfolioViewModel.portfolio?.winRate.asPercentage ?? "0%",
-                        color: .arkadGold,
-                        icon: "target"
-                    )
+                    Text("@\(authViewModel.currentUser?.username ?? "username")")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
                     
-                    PerformanceCard(
-                        title: "Total Trades",
-                        value: "\(portfolioViewModel.trades.count)",
-                        color: .arkadGold,
-                        icon: "chart.bar"
-                    )
-                    
-                    PerformanceCard(
-                        title: "Open Positions",
-                        value: "\(portfolioViewModel.trades.filter { $0.isOpen }.count)",
-                        color: .marketGreen,
-                        icon: "chart.line.uptrend.xyaxis"
-                    )
+                    // Subscription Badge
+                    HStack {
+                        Image(systemName: subscriptionIcon)
+                            .font(.caption)
+                        Text(authViewModel.currentUser?.subscriptionTier.displayName ?? "Basic")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(subscriptionColor.opacity(0.15))
+                    .foregroundColor(subscriptionColor)
+                    .cornerRadius(12)
                 }
-                .padding(.horizontal)
+                
+                // Bio
+                if let bio = authViewModel.currentUser?.bio, !bio.isEmpty {
+                    Text(bio)
+                        .font(.body)
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                } else {
+                    Text("New trader on ArkadTrader 📈")
+                        .font(.body)
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
             }
             
-            // Portfolio Allocation - Real Data
-            if !portfolioViewModel.trades.isEmpty {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Recent Activity")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal)
-                    
-                    VStack(spacing: 8) {
-                        ForEach(portfolioViewModel.trades.prefix(3), id: \.id) { trade in
-                            RecentTradeActivityRow(trade: trade)
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-            } else {
-                // Empty State
-                VStack(spacing: 16) {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray.opacity(0.5))
-                    
-                    Text("Start Your Trading Journey")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.gray)
-                    
-                    Text("Add your first trade to see your performance metrics here")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                    
-                    NavigationLink(destination: PortfolioView()) {
-                        Text("Add First Trade")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.arkadBlack)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                            .background(Color.arkadGold)
-                            .cornerRadius(8)
-                    }
-                }
-                .padding(.vertical, 40)
-                .padding(.horizontal)
-            }
-        }
-        .padding(.top, 20)
-    }
-}
-
-// MARK: - Trades Tab
-struct ProfileTradesTab: View {
-    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
-    
-    var body: some View {
-        VStack(spacing: 24) {
-            if !portfolioViewModel.trades.isEmpty {
-                // Trading Stats Summary - Real Data
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Trading Summary")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal)
-                    
-                    HStack(spacing: 12) {
-                        TradingStatCard(
-                            title: "Total Trades",
-                            value: "\(portfolioViewModel.trades.count)",
-                            color: .arkadGold
-                        )
-                        TradingStatCard(
-                            title: "Open Positions",
-                            value: "\(portfolioViewModel.trades.filter { $0.isOpen }.count)",
-                            color: .marketGreen
-                        )
-                        TradingStatCard(
-                            title: "Closed Trades",
-                            value: "\(portfolioViewModel.trades.filter { !$0.isOpen }.count)",
-                            color: .arkadGold
-                        )
-                    }
-                    .padding(.horizontal)
-                }
-                
-                // All Trades List
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text("All Trades")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Text("\(portfolioViewModel.trades.count) total")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    .padding(.horizontal)
-                    
-                    LazyVStack(spacing: 8) {
-                        ForEach(portfolioViewModel.trades.sorted(by: { $0.entryDate > $1.entryDate }), id: \.id) { trade in
-                            TradeHistoryRow(trade: trade)
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-            } else {
-                // Empty State
-                VStack(spacing: 16) {
-                    Image(systemName: "chart.bar.doc.horizontal")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray.opacity(0.5))
-                    
-                    Text("No Trades Yet")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.gray)
-                    
-                    Text("Your trading history will appear here once you start adding trades")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                    
-                    NavigationLink(destination: PortfolioView()) {
-                        Text("Add Your First Trade")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.arkadBlack)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                            .background(Color.arkadGold)
-                            .cornerRadius(8)
-                    }
-                }
-                .padding(.vertical, 40)
-                .padding(.horizontal)
-            }
-        }
-        .padding(.top, 20)
-    }
-}
-
-// MARK: - Posts Tab
-struct ProfilePostsTab: View {
-    var body: some View {
-        VStack(spacing: 24) {
-            // Posts Stats - Starting from zero
+            // Stats Row - Real Data
             HStack(spacing: 0) {
-                PostStatCard(title: "Posts", value: "0", color: .arkadGold)
-                    .frame(maxWidth: .infinity)
-                PostStatCard(title: "Likes", value: "0", color: .marketGreen)
-                    .frame(maxWidth: .infinity)
-                PostStatCard(title: "Comments", value: "0", color: .arkadGold)
-                    .frame(maxWidth: .infinity)
+                ProfileStatView(
+                    title: "Following",
+                    value: "\(authViewModel.currentUser?.followingCount ?? 0)",
+                    color: .arkadGold
+                )
+                .frame(maxWidth: .infinity)
+                
+                ProfileStatView(
+                    title: "Followers",
+                    value: "\(authViewModel.currentUser?.followersCount ?? 0)",
+                    color: .arkadGold
+                )
+                .frame(maxWidth: .infinity)
+                
+                ProfileStatView(
+                    title: "Trades",
+                    value: "\(portfolioViewModel.trades.count)",
+                    color: .arkadGold
+                )
+                .frame(maxWidth: .infinity)
             }
             .padding(.horizontal)
             
-            // Empty State for Posts
-            VStack(spacing: 16) {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 48))
-                    .foregroundColor(.gray.opacity(0.5))
-                
-                Text("No Posts Yet")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.gray)
-                
-                Text("Share your trading insights and connect with the community")
+            // Quick Action Buttons
+            HStack(spacing: 12) {
+                Button(action: {}) {
+                    HStack {
+                        Image(systemName: "plus")
+                        Text("Follow")
+                    }
                     .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.arkadBlack)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.arkadGold)
+                    .cornerRadius(8)
+                }
                 
-                Button(action: {
-                    // TODO: Navigate to create post
-                }) {
-                    Text("Create First Post")
+                Button(action: {}) {
+                    HStack {
+                        Image(systemName: "message")
+                        Text("Message")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.arkadGold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.arkadGold.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                Button(action: {}) {
+                    Image(systemName: "square.and.arrow.up")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.arkadBlack)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.arkadGold)
+                        .foregroundColor(.arkadGold)
+                        .frame(width: 44, height: 44)
+                        .background(Color.arkadGold.opacity(0.1))
                         .cornerRadius(8)
                 }
             }
-            .padding(.vertical, 40)
             .padding(.horizontal)
         }
+        .padding(.vertical, 20)
+        .background(Color.white)
+        .cornerRadius(20, corners: [.bottomLeft, .bottomRight])
+        .shadow(color: .gray.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+    
+    private var initials: String {
+        guard let user = authViewModel.currentUser else { return "U" }
+        let names = user.fullName.split(separator: " ")
+        let firstInitial = names.first?.first ?? Character("U")
+        let lastInitial = names.count > 1 ? names.last?.first ?? Character("") : Character("")
+        return String(firstInitial) + String(lastInitial)
+    }
+    
+    private var subscriptionColor: Color {
+        switch authViewModel.currentUser?.subscriptionTier {
+        case .basic: return .gray
+        case .pro: return .arkadGold
+        case .elite: return .arkadBlack
+        case .none: return .gray
+        }
+    }
+    
+    private var subscriptionIcon: String {
+        switch authViewModel.currentUser?.subscriptionTier {
+        case .basic: return "star"
+        case .pro: return "star.fill"
+        case .elite: return "crown.fill"
+        case .none: return "star"
+        }
+    }
+}
+
+// MARK: - Profile Tab Selector
+struct ProfileTabSelector: View {
+    @Binding var selectedTab: Int
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            TabButton(title: "Overview", isSelected: selectedTab == 0) {
+                selectedTab = 0
+            }
+            TabButton(title: "Trades", isSelected: selectedTab == 1) {
+                selectedTab = 1
+            }
+            TabButton(title: "Posts", isSelected: selectedTab == 2) {
+                selectedTab = 2
+            }
+        }
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
+        .padding(.horizontal)
         .padding(.top, 20)
     }
 }
 
-// MARK: - Supporting Views
-struct PerformanceCard: View {
+struct TabButton: View {
     let title: String
-    let value: String
-    let color: Color
-    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .font(.title3)
-                Spacer()
-            }
-            
-            Text(value)
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(color)
-            
+        Button(action: action) {
             Text(title)
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
-    }
-}
-
-// MARK: - Recent Trade Activity Row
-struct RecentTradeActivityRow: View {
-    let trade: Trade
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: trade.isOpen ? "chart.line.uptrend.xyaxis" : "checkmark.circle.fill")
-                .foregroundColor(trade.isOpen ? .arkadGold : .marketGreen)
                 .font(.subheadline)
-                .frame(width: 24, height: 24)
-                .cornerRadius(12)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(trade.isOpen ? "Opened \(trade.ticker) position" : "Closed \(trade.ticker) position")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Text(timeAgo(from: trade.entryDate))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            if !trade.isOpen, let exitPrice = trade.exitPrice {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(trade.profitLoss >= 0 ? "+$\(trade.profitLoss, specifier: "%.0f")" : "-$\(abs(trade.profitLoss), specifier: "%.0f")")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-    
-    private func timeAgo(from date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        let days = Int(interval / 86400)
-        let hours = Int(interval / 3600) % 24
-        
-        if days > 0 {
-            return "\(days)d ago"
-        } else if hours > 0 {
-            return "\(hours)h ago"
-        } else {
-            return "Now"
+                .fontWeight(.semibold)
+                .foregroundColor(isSelected ? .arkadBlack : .gray)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(isSelected ? Color.arkadGold : Color.clear)
+                .cornerRadius(8)
         }
     }
 }
 
-// MARK: - Trading Stat Card
-struct TradingStatCard: View {
-    let title: String
-    let value: String
-    let color: Color
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(color)
-            
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(Color.white)
-        .cornerRadius(8)
-        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
-    }
-}
-
-// MARK: - Trade History Row
-struct TradeHistoryRow: View {
-    let trade: Trade
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(trade.ticker)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    
-                    Text(trade.isOpen ? "OPEN" : "CLOSED")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(trade.isOpen ? Color.arkadGold.opacity(0.2) : Color.gray.opacity(0.2))
-                        .foregroundColor(trade.isOpen ? .arkadGold : .gray)
-                        .cornerRadius(4)
-                }
-                
-                Text("\(trade.quantity) shares @ $\(trade.entryPrice, specifier: "%.2f")")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                
-                Text(formatDate(trade.entryDate))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            VStack(alignment: .trailing, spacing: 4) {
-                if trade.isOpen {
-                    Text("$\(trade.currentValue, specifier: "%.0f")")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.arkadGold)
-                    
-                    Text("Current Value")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                } else {
-                    Text(trade.profitLoss >= 0 ? "+$\(trade.profitLoss, specifier: "%.0f")" : "-$\(abs(trade.profitLoss), specifier: "%.0f")")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                    
-                    Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(trade.profitLossPercentage, specifier: "%.1f")%")
-                        .font(.caption)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                }
-            }
-        }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(8)
-        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        return formatter.string(from: date)
-    }
-}
-
-// MARK: - Post Stat Card
-struct PostStatCard: View {
+// MARK: - Profile Stat View
+struct ProfileStatView: View {
     let title: String
     let value: String
     let color: Color
@@ -441,14 +282,14 @@ struct PostStatCard: View {
                 .font(.title2)
                 .fontWeight(.bold)
                 .foregroundColor(color)
-            
             Text(title)
                 .font(.caption)
                 .foregroundColor(.gray)
         }
-        .padding(.vertical, 16)
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
     }
+}
+
+#Preview {
+    ProfileView()
+        .environmentObject(AuthViewModel())
 }
