@@ -1,4 +1,3 @@
-// File: Core/Profile/Views/ProfileView.swift
 
 import SwiftUI
 
@@ -47,7 +46,7 @@ struct ProfileView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                MainSettingsView()
+                EnhancedSettingsView()
             }
         }
     }

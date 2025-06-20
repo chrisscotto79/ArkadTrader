@@ -1,28 +1,24 @@
 
-// File: Core/Messaging/Views/MessagingView.swift
-// Minimal version to get compilation working
-
 import SwiftUI
 
 struct MessagingView: View {
     var body: some View {
         NavigationView {
-            VStack {
+            VStack(spacing: 20) {
                 Text("Messages")
-                    .font(.title)
-                    .padding()
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
                 
-                Text("Messaging functionality coming soon...")
+                Text("Messaging functionality coming soon!")
                     .foregroundColor(.gray)
-                    .padding()
                 
                 Spacer()
             }
             .navigationTitle("Messages")
+            .padding()
         }
     }
 }
 
 #Preview {
     MessagingView()
-}

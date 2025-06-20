@@ -1,68 +1,55 @@
-// File: Shared/Components/TabBarView.swift
-// Final fixed version
 
 import SwiftUI
 
 struct TabBarView: View {
     @State private var selectedTab = 0
-    @StateObject private var messagingService = MessagingService.shared
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            HomeView()
+            // Home Tab
+            Text("Home Tab")
+                .font(.largeTitle)
                 .tabItem {
                     Image(systemName: "house.fill")
                     Text("Home")
                 }
                 .tag(0)
             
-            SearchTabView()
+            // Search Tab
+            Text("Search Tab")
+                .font(.largeTitle)
                 .tabItem {
                     Image(systemName: "magnifyingglass")
                     Text("Search")
                 }
                 .tag(1)
             
-            PortfolioView()
+            // Portfolio Tab
+            Text("Portfolio Tab")
+                .font(.largeTitle)
                 .tabItem {
                     Image(systemName: "chart.line.uptrend.xyaxis")
                     Text("Portfolio")
                 }
                 .tag(2)
             
-            MessagingTabView()
+            // Messaging Tab
+            Text("Messaging Tab")
+                .font(.largeTitle)
                 .tabItem {
-                    Image(systemName: "message.fill")
-                    Text("Messages")
+                    Image(systemName: "envelope.fill")
+                    Text("Messaging")
                 }
-                .badge(messagingService.unreadCount > 0 ? "\(messagingService.unreadCount)" : nil)
                 .tag(3)
             
-            ProfileView()
+            // Profile Tab
+            Text("Profile Tab")
+                .font(.largeTitle)
                 .tabItem {
                     Image(systemName: "person.fill")
                     Text("Profile")
                 }
                 .tag(4)
         }
-        .accentColor(.arkadGold)
     }
-}
-
-// Wrapper views to avoid naming conflicts with existing views
-struct SearchTabView: View {
-    var body: some View {
-        SearchView()
-    }
-}
-
-struct MessagingTabView: View {
-    var body: some View {
-        MessagingView()
-    }
-}
-
-#Preview {
-    TabBarView()
-        .environmentObject(AuthViewModel())
 }

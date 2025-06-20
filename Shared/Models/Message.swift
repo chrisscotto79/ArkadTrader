@@ -1,12 +1,3 @@
-//
-//  Message.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/18/25.
-//
-
-// File: Shared/Models/Message.swift
-
 import Foundation
 
 struct Message: Identifiable, Codable {
@@ -45,8 +36,6 @@ enum MessageType: String, CaseIterable, Codable {
     }
 }
 
-// File: Shared/Models/Conversation.swift
-
 struct Conversation: Identifiable, Codable {
     let id: UUID
     let participantIds: [UUID]
@@ -66,13 +55,10 @@ struct Conversation: Identifiable, Codable {
         self.updatedAt = Date()
     }
     
-    // Helper to get the other participant (assuming 1-on-1 conversation)
     func otherParticipant(currentUserId: UUID) -> User? {
         return participants?.first { $0.id != currentUserId }
     }
 }
-
-// File: Shared/Models/Following.swift
 
 struct Following: Identifiable, Codable {
     let id: UUID
@@ -88,10 +74,6 @@ struct Following: Identifiable, Codable {
     }
 }
 
-
-
-// File: Shared/Models/Notification.swift
-
 struct AppNotification: Identifiable, Codable {
     let id: UUID
     let userId: UUID
@@ -100,7 +82,7 @@ struct AppNotification: Identifiable, Codable {
     let message: String
     let isRead: Bool
     let createdAt: Date
-    let actionUrl: String? // Deep link to relevant content
+    let actionUrl: String?
     let relatedUserId: UUID?
     let relatedTradeId: UUID?
     let relatedPostId: UUID?
@@ -151,8 +133,6 @@ enum NotificationType: String, CaseIterable, Codable {
     }
 }
 
-// File: Shared/Models/Comment.swift
-
 struct Comment: Identifiable, Codable {
     let id: UUID
     let postId: UUID
@@ -161,7 +141,7 @@ struct Comment: Identifiable, Codable {
     let content: String
     let likesCount: Int
     let createdAt: Date
-    let parentCommentId: UUID? // For reply threading
+    let parentCommentId: UUID?
     
     init(postId: UUID, authorId: UUID, authorUsername: String, content: String) {
         self.id = UUID()
@@ -174,8 +154,6 @@ struct Comment: Identifiable, Codable {
         self.parentCommentId = nil
     }
 }
-
-// File: Shared/Models/Like.swift
 
 struct Like: Identifiable, Codable {
     let id: UUID
@@ -195,23 +173,17 @@ struct Like: Identifiable, Codable {
     }
 }
 
-// Extensions to existing models for enhanced functionality
-
-// Add to User.swift
+// Extensions
 extension User {
     var isOnline: Bool {
-        // Calculate if user was active recently
-        // This would be updated from real-time data
         return true // Placeholder
     }
     
     var lastActiveAt: Date {
-        // Return last activity timestamp
         return Date() // Placeholder
     }
 }
 
-// Add to Trade.swift
 extension Trade {
     var shareableContent: String {
         let performance = profitLoss >= 0 ? "📈 +\(profitLoss.asCurrency)" : "📉 \(profitLoss.asCurrency)"
@@ -224,7 +196,6 @@ extension Trade {
     }
 }
 
-// Add to Post.swift
 extension Post {
     var isRecent: Bool {
         let oneHourAgo = Calendar.current.date(byAdding: .hour, value: -1, to: Date()) ?? Date()
@@ -245,6 +216,29 @@ extension Post {
         } else {
             let days = Int(interval / 86400)
             return "\(days)d"
+        }
+    }
+}
+
+extension Date {
+    var timeAgoString: String {
+        let interval = Date().timeIntervalSince(self)
+        
+        if interval < 60 {
+            return "now"
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return "\(minutes)m"
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return "\(hours)h"
+        } else {
+            let days = Int(interval / 86400)
+            if days == 1 {
+                return "1d"
+            } else {
+                return "\(days)d"
+            }
         }
     }
 }
