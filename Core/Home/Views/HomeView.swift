@@ -62,69 +62,8 @@ struct HomeView: View {
                             .foregroundColor(.marketGreen)
                     }
                 }
-                
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Logout") {
-                        authViewModel.logout()
-                    }
-                }
             }
         }
-    }
-}
-
-struct FeedPostCard: View {
-    let index: Int
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Circle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 40, height: 40)
-                
-                VStack(alignment: .leading) {
-                    Text("Trader \(index + 1)")
-                        .fontWeight(.semibold)
-                    Text("2h ago")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                Image(systemName: "ellipsis")
-                    .foregroundColor(.gray)
-            }
-            
-            Text("Just closed my AAPL position with a +15% gain! 📈 Market sentiment looking bullish.")
-                .font(.body)
-            
-            HStack {
-                Button(action: {}) {
-                    HStack {
-                        Image(systemName: "heart")
-                        Text("24")
-                    }
-                    .foregroundColor(.gray)
-                    .font(.caption)
-                }
-                
-                Button(action: {}) {
-                    HStack {
-                        Image(systemName: "message")
-                        Text("8")
-                    }
-                    .foregroundColor(.gray)
-                    .font(.caption)
-                }
-                
-                Spacer()
-            }
-        }
-        .padding()
-        .background(Color.gray.opacity(0.1))
-        .cornerRadius(12)
     }
 }
 

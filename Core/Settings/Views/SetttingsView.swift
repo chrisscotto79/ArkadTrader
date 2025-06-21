@@ -1,16 +1,8 @@
-//
-//  SetttingsView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/19/25.
-//
-
 // File: Core/Settings/Views/SettingsView.swift
 
 import SwiftUI
 
-// MARK: - Main Settings View
-struct MainSettingsView: View {
+struct SettingsView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.dismiss) var dismiss
     @State private var showEditProfile = false
@@ -167,6 +159,6 @@ struct SettingsRowView: View {
 }
 
 #Preview {
-    MainSettingsView()
+    SettingsView()
         .environmentObject(AuthViewModel())
 }

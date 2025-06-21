@@ -1,16 +1,4 @@
-//
-//  EditProfileView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
-//
-//  EditProfileView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
+// File: Core/Profile/Views/EditProfileView.swift
 
 import SwiftUI
 
@@ -21,6 +9,8 @@ struct EditProfileView: View {
     @State private var fullName: String = ""
     @State private var bio: String = ""
     @State private var isLoading = false
+    @State private var showAlert = false
+    @State private var alertMessage = ""
     
     var body: some View {
         NavigationView {
@@ -67,6 +57,13 @@ struct EditProfileView: View {
             .onAppear {
                 loadCurrentUser()
             }
+            .alert("Success", isPresented: $showAlert) {
+                Button("OK") {
+                    dismiss()
+                }
+            } message: {
+                Text(alertMessage)
+            }
         }
     }
     
@@ -80,11 +77,21 @@ struct EditProfileView: View {
     private func saveProfile() {
         isLoading = true
         
-        // Simulate save delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            // Update user profile logic would go here
+        Task {
+            do {
+                try await authViewModel.updateProfile(
+                    fullName: fullName,
+                    bio: bio
+                )
+                
+                alertMessage = "Profile updated successfully!"
+                showAlert = true
+            } catch {
+                alertMessage = "Failed to update profile"
+                showAlert = true
+            }
+            
             isLoading = false
-            dismiss()
         }
     }
 }

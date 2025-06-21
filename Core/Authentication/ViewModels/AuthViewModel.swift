@@ -1,10 +1,3 @@
-//
-//  AuthViewModel.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
 // File: Core/Authentication/ViewModels/AuthViewModel.swift
 
 import Foundation
@@ -63,6 +56,10 @@ class AuthViewModel: ObservableObject {
         }
         
         isLoading = false
+    }
+    
+    func updateProfile(fullName: String?, bio: String?) async throws {
+        try await authService.updateProfile(fullName: fullName, bio: bio)
     }
     
     func logout() {

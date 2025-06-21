@@ -1,3 +1,4 @@
+// File: Core/Profile/Views/ProfileView.swift
 
 import SwiftUI
 
@@ -9,7 +10,7 @@ struct ProfileView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
+            SwiftUI.ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 0) {
                     // Profile Header
                     ProfileHeaderView()
@@ -46,8 +47,29 @@ struct ProfileView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                EnhancedSettingsView()
-            }
+                NavigationView {
+                    List {
+                        Section {
+                            HStack {
+                                Text("Settings")
+                                    .font(.headline)
+                                Spacer()
+                                Button("Done") {
+                                    showSettings = false
+                                }
+                            }
+                        }
+                        
+                        Section {
+                            Button("Logout") {
+                                authViewModel.logout()
+                            }
+                            .foregroundColor(.red)
+                        }
+                    }
+                    .navigationTitle("Settings")
+                    .navigationBarTitleDisplayMode(.inline)
+                }            }
         }
     }
 }
@@ -154,10 +176,10 @@ struct ProfileHeaderView: View {
             
             // Quick Action Buttons
             HStack(spacing: 12) {
-                Button(action: {}) {
+                NavigationLink(destination: EditProfileView()) {
                     HStack {
-                        Image(systemName: "plus")
-                        Text("Follow")
+                        Image(systemName: "square.and.pencil")
+                        Text("Edit Profile")
                     }
                     .font(.subheadline)
                     .fontWeight(.semibold)
@@ -165,20 +187,6 @@ struct ProfileHeaderView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
                     .background(Color.arkadGold)
-                    .cornerRadius(8)
-                }
-                
-                Button(action: {}) {
-                    HStack {
-                        Image(systemName: "message")
-                        Text("Message")
-                    }
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.arkadGold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Color.arkadGold.opacity(0.1))
                     .cornerRadius(8)
                 }
                 

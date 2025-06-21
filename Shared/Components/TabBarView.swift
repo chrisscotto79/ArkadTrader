@@ -1,3 +1,4 @@
+// File: Shared/Components/TabBarView.swift
 
 import SwiftUI
 
@@ -7,8 +8,7 @@ struct TabBarView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             // Home Tab
-            Text("Home Tab")
-                .font(.largeTitle)
+            HomeView()
                 .tabItem {
                     Image(systemName: "house.fill")
                     Text("Home")
@@ -16,8 +16,7 @@ struct TabBarView: View {
                 .tag(0)
             
             // Search Tab
-            Text("Search Tab")
-                .font(.largeTitle)
+            Text("Search Coming Soon")
                 .tabItem {
                     Image(systemName: "magnifyingglass")
                     Text("Search")
@@ -25,8 +24,7 @@ struct TabBarView: View {
                 .tag(1)
             
             // Portfolio Tab
-            Text("Portfolio Tab")
-                .font(.largeTitle)
+            PortfolioView()
                 .tabItem {
                     Image(systemName: "chart.line.uptrend.xyaxis")
                     Text("Portfolio")
@@ -34,22 +32,25 @@ struct TabBarView: View {
                 .tag(2)
             
             // Messaging Tab
-            Text("Messaging Tab")
-                .font(.largeTitle)
                 .tabItem {
                     Image(systemName: "envelope.fill")
-                    Text("Messaging")
+                    Text("Messages")
                 }
                 .tag(3)
             
             // Profile Tab
-            Text("Profile Tab")
-                .font(.largeTitle)
+            ProfileView()
                 .tabItem {
                     Image(systemName: "person.fill")
                     Text("Profile")
                 }
                 .tag(4)
         }
+        .accentColor(.arkadGold)
     }
+}
+
+#Preview {
+    TabBarView()
+        .environmentObject(AuthViewModel())
 }

@@ -1,10 +1,3 @@
-//
-//  ContentView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
 // File: App/ContentView.swift
 
 import SwiftUI
@@ -16,8 +9,10 @@ struct ContentView: View {
         Group {
             if authViewModel.isAuthenticated {
                 TabBarView()
+                    .environmentObject(authViewModel)
             } else {
                 LoginView()
+                    .environmentObject(authViewModel)
             }
         }
         .environmentObject(authViewModel)

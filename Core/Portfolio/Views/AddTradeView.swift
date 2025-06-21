@@ -1,31 +1,26 @@
-//
-//  AddTradeView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
 // File: Core/Portfolio/Views/AddTradeView.swift
 
 import SwiftUI
 
 struct AddTradeView: View {
-    @Binding var trades: [Trade]
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var authViewModel: AuthViewModel
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     
     @State private var ticker = ""
     @State private var tradeType: TradeType = .stock
     @State private var entryPrice = ""
     @State private var quantity = ""
     @State private var notes = ""
+    @State private var showAlert = false
+    @State private var alertMessage = ""
     
     var body: some View {
         NavigationView {
             Form {
                 Section("Trade Details") {
                     TextField("Ticker Symbol", text: $ticker)
-                        .autocapitalization(.allCharacters)
+                        .textInputAutocapitalization(.characters)
                     
                     Picker("Trade Type", selection: $tradeType) {
                         ForEach(TradeType.allCases, id: \.self) { type in
@@ -62,6 +57,13 @@ struct AddTradeView: View {
                     .disabled(!isFormValid)
                 }
             }
+            .alert("Success", isPresented: $showAlert) {
+                Button("OK") {
+                    dismiss()
+                }
+            } message: {
+                Text(alertMessage)
+            }
         }
     }
     
@@ -80,18 +82,29 @@ struct AddTradeView: View {
             return
         }
         
-        var newTrade = Trade(ticker: ticker, tradeType: tradeType, entryPrice: price, quantity: qty, userId: userId)
+        var newTrade = Trade(
+            ticker: ticker.uppercased(),
+            tradeType: tradeType,
+            entryPrice: price,
+            quantity: qty,
+            userId: userId
+        )
         
         if !notes.isEmpty {
             newTrade.notes = notes
         }
         
-        trades.append(newTrade)
-        dismiss()
+        // Add trade to portfolio
+        portfolioViewModel.addTrade(newTrade)
+        
+        // Show success message
+        alertMessage = "Trade added successfully!"
+        showAlert = true
     }
 }
 
 #Preview {
-    AddTradeView(trades: .constant([]))
+    AddTradeView()
         .environmentObject(AuthViewModel())
+        .environmentObject(PortfolioViewModel())
 }

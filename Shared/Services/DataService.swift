@@ -1,12 +1,10 @@
 // File: Shared/Services/DataService.swift
-// Fixed version without conflicts
 
 import Foundation
 
 @MainActor
 class DataService: ObservableObject {
     static let shared = DataService()
-    private let networkService = NetworkService.shared
     
     @Published var trades: [Trade] = []
     @Published var posts: [Post] = []
@@ -14,139 +12,62 @@ class DataService: ObservableObject {
     @Published var isLoading = false
     
     private init() {
-        Task {
-            await loadInitialData()
-        }
+        loadMockData()
     }
     
-    // MARK: - Initial Data Loading
-    private func loadInitialData() async {
-        // Load data only if user is authenticated
-        guard AuthService.shared.isAuthenticated,
-              let userId = AuthService.shared.currentUser?.id.uuidString else {
-            return
-        }
-        
-        isLoading = true
-        
-        // Load data sequentially to avoid type issues
-        await loadTrades(for: userId)
-        await loadLeaderboard()
-        await loadPosts()
-        
-        isLoading = false
+    // MARK: - Mock Data Loading
+    private func loadMockData() {
+        loadMockTrades()
+        loadMockPosts()
+        loadMockLeaderboard()
     }
     
     // MARK: - Trade Methods
-    func loadTrades(for userId: String) async {
-        do {
-            self.trades = try await networkService.fetchTrades(userId: userId)
-        } catch {
-            print("Failed to load trades: \(error)")
-            // Fallback to mock data for development
-            loadMockTrades()
-        }
-    }
-    
     func addTrade(_ trade: Trade) async throws {
-        let createRequest = CreateTradeRequest(
-            ticker: trade.ticker,
-            tradeType: trade.tradeType,
-            entryPrice: trade.entryPrice,
-            quantity: trade.quantity,
-            notes: trade.notes,
-            strategy: trade.strategy
-        )
+        // Add to local array
+        trades.append(trade)
         
-        do {
-            let newTrade = try await networkService.createTrade(createRequest)
-            self.trades.append(newTrade)
-        } catch {
-            print("Failed to add trade: \(error)")
-            throw error
-        }
+        // Save to UserDefaults
+        saveTrades()
     }
     
     func updateTrade(_ trade: Trade) async throws {
-        let updateRequest = UpdateTradeRequest(
-            exitPrice: trade.exitPrice,
-            notes: trade.notes,
-            strategy: trade.strategy
-        )
-        
-        do {
-            let updatedTrade = try await networkService.updateTrade(
-                id: trade.id.uuidString,
-                updateRequest
-            )
-            
-            if let index = trades.firstIndex(where: { $0.id == trade.id }) {
-                trades[index] = updatedTrade
-            }
-        } catch {
-            print("Failed to update trade: \(error)")
-            throw error
+        if let index = trades.firstIndex(where: { $0.id == trade.id }) {
+            trades[index] = trade
+            saveTrades()
         }
     }
     
     func deleteTrade(_ trade: Trade) async throws {
-        do {
-            try await networkService.deleteTrade(id: trade.id.uuidString)
-            trades.removeAll { $0.id == trade.id }
-        } catch {
-            print("Failed to delete trade: \(error)")
-            throw error
-        }
+        trades.removeAll { $0.id == trade.id }
+        saveTrades()
     }
     
     // MARK: - Post Methods
-    func loadPosts() async {
-        do {
-            self.posts = try await networkService.fetchFeed()
-        } catch {
-            print("Failed to load posts: \(error)")
-            // Fallback to mock data for development
-            loadMockPosts()
-        }
-    }
-    
     func addPost(_ post: Post) async throws {
-        let createRequest = CreatePostRequest(
-            content: post.content,
-            imageURL: post.imageURL,
-            postType: post.postType,
-            tradeId: nil // Optional parameter
-        )
-        
-        do {
-            let newPost = try await networkService.createPost(createRequest)
-            self.posts.insert(newPost, at: 0)
-        } catch {
-            print("Failed to add post: \(error)")
-            throw error
-        }
+        posts.insert(post, at: 0)
+        savePosts()
     }
     
-    // MARK: - Leaderboard Methods
-    func loadLeaderboard(timeframe: String = "weekly") async {
-        do {
-            self.leaderboard = try await networkService.fetchLeaderboard(timeframe: timeframe)
-        } catch {
-            print("Failed to load leaderboard: \(error)")
-            // Fallback to mock data for development
-            loadMockLeaderboard()
-        }
-    }
-    
-    // MARK: - Mock Data (for development/testing)
+    // MARK: - Mock Data Generators
     private func loadMockTrades() {
-        // Keep existing mock trades for development
-        trades = []
+        // Try to load from UserDefaults first
+        if let data = UserDefaults.standard.data(forKey: "userTrades"),
+           let savedTrades = try? JSONDecoder().decode([Trade].self, from: data) {
+            self.trades = savedTrades
+        }
     }
     
     private func loadMockPosts() {
-        // Keep existing mock posts for development
-        posts = []
+        // Create some sample posts
+        guard let userId = AuthService.shared.currentUser?.id else { return }
+        
+        posts = [
+            Post(content: "Just closed my AAPL position with a +15% gain! 📈", authorId: userId, authorUsername: "currentuser"),
+            Post(content: "Market looking bullish today! SPY breaking new highs 🚀", authorId: UUID(), authorUsername: "trader123"),
+            Post(content: "Anyone else watching TSLA? Thinking about entering a position 🤔", authorId: UUID(), authorUsername: "stockmaster"),
+            Post(content: "My portfolio is up 3.2% today! Best day this month 💪", authorId: UUID(), authorUsername: "daytrader99")
+        ]
     }
     
     private func loadMockLeaderboard() {
@@ -155,18 +76,37 @@ class DataService: ObservableObject {
             LeaderboardEntry(rank: 2, username: "BullRunner", profitLoss: 12890.25, winRate: 72.3, isVerified: true),
             LeaderboardEntry(rank: 3, username: "MarketMaster", profitLoss: 11650.00, winRate: 69.8, isVerified: false),
             LeaderboardEntry(rank: 4, username: "TradingGuru", profitLoss: 9875.75, winRate: 68.2, isVerified: true),
-            LeaderboardEntry(rank: 5, username: "StockWiz", profitLoss: 8420.30, winRate: 65.7, isVerified: false)
+            LeaderboardEntry(rank: 5, username: "StockWiz", profitLoss: 8420.30, winRate: 65.7, isVerified: false),
+            LeaderboardEntry(rank: 6, username: "DayTrader", profitLoss: 7850.00, winRate: 64.3, isVerified: false),
+            LeaderboardEntry(rank: 7, username: "SwingKing", profitLoss: 6920.75, winRate: 62.8, isVerified: true),
+            LeaderboardEntry(rank: 8, username: "OptionsPro", profitLoss: 5780.50, winRate: 61.2, isVerified: false),
+            LeaderboardEntry(rank: 9, username: "CryptoQueen", profitLoss: 4650.25, winRate: 59.7, isVerified: true),
+            LeaderboardEntry(rank: 10, username: "NewTrader", profitLoss: 3420.00, winRate: 58.1, isVerified: false)
         ]
+    }
+    
+    // MARK: - Persistence
+    private func saveTrades() {
+        if let data = try? JSONEncoder().encode(trades) {
+            UserDefaults.standard.set(data, forKey: "userTrades")
+        }
+    }
+    
+    private func savePosts() {
+        // For now, posts are not persisted
+        // Could implement persistence if needed
     }
     
     // MARK: - Refresh Methods
     func refreshAllData() async {
-        guard let currentUserId = AuthService.shared.currentUser?.id.uuidString else { return }
-        
         isLoading = true
-        await loadTrades(for: currentUserId)
-        await loadLeaderboard()
-        await loadPosts()
+        
+        // Simulate network delay
+        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+        
+        // Reload mock data
+        loadMockData()
+        
         isLoading = false
     }
 }

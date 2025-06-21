@@ -1,18 +1,11 @@
-//
-//  PortfolioView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
-
 // File: Core/Portfolio/Views/PortfolioView.swift
 
 import SwiftUI
 
 struct PortfolioView: View {
     @State private var showAddTrade = false
-    @State private var mockTrades: [Trade] = []
+    @StateObject private var portfolioViewModel = PortfolioViewModel()
+    @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
         NavigationView {
@@ -24,7 +17,7 @@ struct PortfolioView: View {
                             Text("Portfolio Value")
                                 .font(.caption)
                                 .foregroundColor(.gray)
-                            Text("$12,450.00")
+                            Text(portfolioViewModel.portfolio?.totalValue.asCurrency ?? "$0.00")
                                 .font(.title)
                                 .fontWeight(.bold)
                         }
@@ -32,19 +25,38 @@ struct PortfolioView: View {
                         Spacer()
                         
                         VStack(alignment: .trailing) {
-                            Text("Today's P&L")
+                            Text("Total P&L")
                                 .font(.caption)
                                 .foregroundColor(.gray)
-                            Text("+$245.00 (+2.01%)")
-                                .font(.headline)
-                                .foregroundColor(.marketGreen)
+                            HStack(spacing: 4) {
+                                Text(portfolioViewModel.portfolio?.totalProfitLoss.asCurrencyWithSign ?? "$0.00")
+                                    .font(.headline)
+                                    .foregroundColor((portfolioViewModel.portfolio?.totalProfitLoss ?? 0) >= 0 ? .marketGreen : .marketRed)
+                                if let portfolio = portfolioViewModel.portfolio, portfolio.totalTrades > 0 {
+                                    Text("(\(portfolio.totalProfitLossPercentage.asPercentageWithSign))")
+                                        .font(.caption)
+                                        .foregroundColor((portfolio.totalProfitLoss) >= 0 ? .marketGreen : .marketRed)
+                                }
+                            }
                         }
                     }
                     
                     HStack {
-                        StatCard(title: "Win Rate", value: "68%", color: .arkadGold)
-                        StatCard(title: "Total Trades", value: "24", color: .arkadGold)
-                        StatCard(title: "Open Positions", value: "3", color: .arkadGold)
+                        StatCard(
+                            title: "Win Rate",
+                            value: portfolioViewModel.portfolio?.winRate.asPercentage ?? "0%",
+                            color: .arkadGold
+                        )
+                        StatCard(
+                            title: "Total Trades",
+                            value: "\(portfolioViewModel.portfolio?.totalTrades ?? 0)",
+                            color: .arkadGold
+                        )
+                        StatCard(
+                            title: "Open Positions",
+                            value: "\(portfolioViewModel.portfolio?.openPositions ?? 0)",
+                            color: .arkadGold
+                        )
                     }
                 }
                 .padding()
@@ -58,22 +70,48 @@ struct PortfolioView: View {
                         Text("Recent Trades")
                             .font(.headline)
                         Spacer()
-                        Button("View All") {
-                            // TODO: Navigate to all trades
+                        if !portfolioViewModel.trades.isEmpty {
+                            NavigationLink("View All") {
+                                AllTradesView()
+                                    .environmentObject(portfolioViewModel)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
                         }
-                        .font(.caption)
-                        .foregroundColor(.blue)
                     }
                     .padding(.horizontal)
                     
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            if mockTrades.isEmpty {
-                                Text("No trades yet. Add your first trade!")
-                                    .foregroundColor(.gray)
-                                    .padding()
+                            if portfolioViewModel.trades.isEmpty {
+                                VStack(spacing: 16) {
+                                    Image(systemName: "chart.line.uptrend.xyaxis")
+                                        .font(.system(size: 48))
+                                        .foregroundColor(.gray.opacity(0.5))
+                                    
+                                    Text("No trades yet")
+                                        .font(.headline)
+                                        .foregroundColor(.gray)
+                                    
+                                    Text("Add your first trade to start tracking your portfolio!")
+                                        .font(.subheadline)
+                                        .foregroundColor(.gray)
+                                        .multilineTextAlignment(.center)
+                                    
+                                    Button("Add First Trade") {
+                                        showAddTrade = true
+                                    }
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.arkadBlack)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 12)
+                                    .background(Color.arkadGold)
+                                    .cornerRadius(8)
+                                }
+                                .padding(.vertical, 40)
                             } else {
-                                ForEach(mockTrades) { trade in
+                                ForEach(portfolioViewModel.trades.prefix(5)) { trade in
                                     TradeRowView(trade: trade)
                                 }
                             }
@@ -89,13 +127,37 @@ struct PortfolioView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showAddTrade = true }) {
                         Image(systemName: "plus")
+                            .foregroundColor(.arkadGold)
                     }
                 }
             }
             .sheet(isPresented: $showAddTrade) {
-                AddTradeView(trades: $mockTrades)
+                AddTradeView()
+                    .environmentObject(portfolioViewModel)
+                    .environmentObject(authViewModel)
             }
         }
+        .onAppear {
+            portfolioViewModel.loadPortfolioData()
+        }
+    }
+}
+
+// MARK: - All Trades View
+struct AllTradesView: View {
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
+    
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(portfolioViewModel.trades.sorted(by: { $0.entryDate > $1.entryDate })) { trade in
+                    TradeRowView(trade: trade)
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("All Trades")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -120,4 +182,5 @@ struct StatCard: View {
 
 #Preview {
     PortfolioView()
+        .environmentObject(AuthViewModel())
 }
