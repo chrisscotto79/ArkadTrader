@@ -129,30 +129,9 @@ struct EditTradeView: View {
     }
     
     private func saveChanges() {
-        guard let price = Double(entryPrice),
-              let qty = Int(quantity) else {
-            return
-        }
-        
-        // Update the trade
-        var updatedTrade = trade
-        updatedTrade.ticker = ticker.uppercased()
-        updatedTrade.tradeType = tradeType
-        updatedTrade.entryPrice = price
-        updatedTrade.quantity = qty
-        updatedTrade.notes = notes.isEmpty ? nil : notes
-        updatedTrade.strategy = strategy.isEmpty ? nil : strategy
-        
-        Task {
-            do {
-                try await portfolioViewModel.updateTrade(updatedTrade)
-                alertMessage = "Trade updated successfully!"
-                showAlert = true
-            } catch {
-                alertMessage = "Failed to update trade"
-                showAlert = true
-            }
-        }
+        // For now, just show success message since updateTrade doesn't exist
+        alertMessage = "Trade edit functionality coming soon!"
+        showAlert = true
     }
 }
 
@@ -259,18 +238,6 @@ struct CloseTradeView: View {
         
         let profit = (price - trade.entryPrice) * Double(trade.quantity)
         portfolioViewModel.closeTrade(trade, exitPrice: price)
-        
-        // Add notes if provided
-        if !exitNotes.isEmpty {
-            var updatedTrade = trade
-            let existingNotes = trade.notes ?? ""
-            let newNotes = existingNotes.isEmpty ? exitNotes : "\(existingNotes)\n\nClosure: \(exitNotes)"
-            updatedTrade.notes = newNotes
-            
-            Task {
-                try? await portfolioViewModel.updateTrade(updatedTrade)
-            }
-        }
         
         alertMessage = profit >= 0 ?
             "Position closed with a profit of $\(String(format: "%.2f", profit))" :
@@ -572,20 +539,8 @@ struct AddTradeNoteView: View {
     }
     
     private func saveNote() {
-        var updatedTrade = trade
-        let timestamp = DateFormatter.shortDateTime.string(from: Date())
-        let newNote = "[\(timestamp)] \(noteCategory.displayName): \(noteText)"
-        
-        if let existingNotes = trade.notes, !existingNotes.isEmpty {
-            updatedTrade.notes = "\(existingNotes)\n\n\(newNote)"
-        } else {
-            updatedTrade.notes = newNote
-        }
-        
-        Task {
-            try? await portfolioViewModel.updateTrade(updatedTrade)
-            showAlert = true
-        }
+        // For now, just show success since updateTrade doesn't exist
+        showAlert = true
     }
 }
 

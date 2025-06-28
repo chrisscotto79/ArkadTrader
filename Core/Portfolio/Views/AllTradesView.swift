@@ -1,19 +1,18 @@
 // File: Core/Portfolio/Views/AllTradesView.swift
-// Comprehensive Trades List with Filtering, Sorting, and Management
+// Conflict-free version with unique view names
 
 import SwiftUI
 
 struct AllTradesView: View {
     @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     @State private var searchText = ""
-    @State private var selectedFilter: AllTradesFilter = .all
-    @State private var selectedSort: AllTradesSort = .newest
+    @State private var selectedFilter: TradeFilterType = .all
+    @State private var selectedSort: TradeSortType = .newest
     @State private var showFilterSheet = false
     @State private var showSortSheet = false
     @State private var selectedTrade: Trade?
     @State private var showTradeDetail = false
-    @State private var showBulkActions = false
-    @State private var selectedTrades: Set<UUID> = []
+    @Environment(\.dismiss) var dismiss
     
     var filteredAndSortedTrades: [Trade] {
         var trades = portfolioViewModel.trades
@@ -67,361 +66,200 @@ struct AllTradesView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Header with Stats
-            TradesHeaderView(
-                totalTrades: portfolioViewModel.trades.count,
-                filteredCount: filteredAndSortedTrades.count,
-                selectedCount: selectedTrades.count,
-                showBulkActions: $showBulkActions
-            )
-            
-            // Search and Filter Bar
-            SearchAndFilterBar(
-                searchText: $searchText,
-                selectedFilter: selectedFilter,
-                selectedSort: selectedSort,
-                showFilterSheet: $showFilterSheet,
-                showSortSheet: $showSortSheet
-            )
-            
-            // Trades List
-            if filteredAndSortedTrades.isEmpty {
-                EmptyTradesListView(hasAnyTrades: !portfolioViewModel.trades.isEmpty)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(filteredAndSortedTrades, id: \.id) { trade in
-                            AdvancedTradeRow(
-                                trade: trade,
-                                isSelected: selectedTrades.contains(trade.id),
-                                showSelection: showBulkActions
-                            ) {
-                                if showBulkActions {
-                                    toggleTradeSelection(trade.id)
-                                } else {
-                                    selectedTrade = trade
-                                    showTradeDetail = true
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 100)
-                }
-            }
-        }
-        .navigationTitle("All Trades")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button(action: { showBulkActions.toggle() }) {
-                        Label(showBulkActions ? "Cancel Selection" : "Select Trades", systemImage: "checkmark.circle")
-                    }
-                    
-                    Button(action: exportTrades) {
-                        Label("Export Trades", systemImage: "square.and.arrow.up")
-                    }
-                    
-                    Button(action: refreshTrades) {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundColor(.arkadGold)
-                }
-            }
-        }
-        .sheet(isPresented: $showFilterSheet) {
-            FilterSheet(selectedFilter: $selectedFilter)
-        }
-        .sheet(isPresented: $showSortSheet) {
-            SortSheet(selectedSort: $selectedSort)
-        }
-        .sheet(isPresented: $showTradeDetail) {
-            if let trade = selectedTrade {
-                EnhancedTradeDetailView(trade: trade)
-                    .environmentObject(portfolioViewModel)
-            }
-        }
-        .overlay(
-            // Bulk Actions Bar
-            Group {
-                if showBulkActions && !selectedTrades.isEmpty {
-                    BulkActionsBar(
-                        selectedCount: selectedTrades.count,
-                        onDelete: deleteBulkTrades,
-                        onExport: exportSelectedTrades
-                    )
-                }
-            }
-        )
-    }
-    
-    private func toggleTradeSelection(_ tradeId: UUID) {
-        if selectedTrades.contains(tradeId) {
-            selectedTrades.remove(tradeId)
-        } else {
-            selectedTrades.insert(tradeId)
-        }
-    }
-    
-    private func deleteBulkTrades() {
-        // Delete selected trades
-        let tradesToDelete = portfolioViewModel.trades.filter { selectedTrades.contains($0.id) }
-        for trade in tradesToDelete {
-            portfolioViewModel.deleteTrade(trade)
-        }
-        selectedTrades.removeAll()
-        showBulkActions = false
-    }
-    
-    private func exportSelectedTrades() {
-        // Implementation for exporting selected trades
-        let tradesToExport = portfolioViewModel.trades.filter { selectedTrades.contains($0.id) }
-        // Generate CSV or report
-    }
-    
-    private func exportTrades() {
-        // Implementation for exporting all trades
-    }
-    
-    private func refreshTrades() {
-        portfolioViewModel.loadPortfolioData()
-    }
-}
-
-// MARK: - Trades Header View
-struct TradesHeaderView: View {
-    let totalTrades: Int
-    let filteredCount: Int
-    let selectedCount: Int
-    @Binding var showBulkActions: Bool
-    
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(filteredCount) of \(totalTrades) trades")
+        NavigationView {
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Text("\(filteredAndSortedTrades.count) of \(portfolioViewModel.trades.count) trades")
                         .font(.subheadline)
                         .foregroundColor(.gray)
                     
-                    if showBulkActions {
-                        Text("\(selectedCount) selected")
+                    Spacer()
+                }
+                .padding()
+                
+                // Search and Filter Bar
+                VStack(spacing: 12) {
+                    // Search Bar
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.gray)
+                        
+                        TextField("Search trades, tickers, notes...", text: $searchText)
+                            .textFieldStyle(PlainTextFieldStyle())
+                        
+                        if !searchText.isEmpty {
+                            Button(action: { searchText = "" }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(8)
+                    
+                    // Filter and Sort Buttons
+                    HStack(spacing: 12) {
+                        Button(action: { showFilterSheet = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "line.3.horizontal.decrease.circle")
+                                Text(selectedFilter.shortName)
+                            }
                             .font(.caption)
                             .foregroundColor(.arkadGold)
-                    }
-                }
-                
-                Spacer()
-                
-                if showBulkActions {
-                    Button("Cancel") {
-                        showBulkActions = false
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.arkadGold)
-                }
-            }
-            
-            // Quick Stats
-            if !showBulkActions {
-                HStack(spacing: 16) {
-                    QuickStatPill(title: "Open", value: "\(totalTrades)", color: .arkadGold)
-                    QuickStatPill(title: "Closed", value: "\(totalTrades)", color: .gray)
-                    QuickStatPill(title: "Winners", value: "\(totalTrades)", color: .marketGreen)
-                    QuickStatPill(title: "Losers", value: "\(totalTrades)", color: .marketRed)
-                }
-            }
-        }
-        .padding()
-        .background(Color.white)
-        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
-    }
-}
-
-// MARK: - Search and Filter Bar
-struct SearchAndFilterBar: View {
-    @Binding var searchText: String
-    let selectedFilter: AllTradesFilter
-    let selectedSort: AllTradesSort
-    @Binding var showFilterSheet: Bool
-    @Binding var showSortSheet: Bool
-    
-    var body: some View {
-        VStack(spacing: 12) {
-            // Search Bar
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.gray)
-                
-                TextField("Search trades, tickers, notes...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.gray)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(8)
-            
-            // Filter and Sort Buttons
-            HStack(spacing: 12) {
-                Button(action: { showFilterSheet = true }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                        Text(selectedFilter.shortName)
-                    }
-                    .font(.caption)
-                    .foregroundColor(.arkadGold)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.arkadGold.opacity(0.1))
-                    .cornerRadius(6)
-                }
-                
-                Button(action: { showSortSheet = true }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.arrow.down")
-                        Text(selectedSort.shortName)
-                    }
-                    .font(.caption)
-                    .foregroundColor(.arkadGold)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.arkadGold.opacity(0.1))
-                    .cornerRadius(6)
-                }
-                
-                Spacer()
-            }
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 8)
-        .background(Color.white)
-    }
-}
-
-// MARK: - Advanced Trade Row
-struct AdvancedTradeRow: View {
-    let trade: Trade
-    let isSelected: Bool
-    let showSelection: Bool
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                // Selection indicator
-                if showSelection {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundColor(isSelected ? .arkadGold : .gray)
-                }
-                
-                // Trade Status Indicator
-                VStack(spacing: 4) {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                    
-                    Text(trade.ticker)
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                }
-                .frame(width: 40)
-                
-                // Trade Information
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(trade.ticker)
-                            .font(.headline)
-                            .fontWeight(.semibold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.arkadGold.opacity(0.1))
+                            .cornerRadius(6)
+                        }
                         
-                        Text(trade.tradeType.displayName)
-                            .font(.caption2)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.gray.opacity(0.2))
-                            .cornerRadius(3)
-                        
-                        if trade.isOpen {
-                            Text("OPEN")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.arkadGold)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.arkadGold.opacity(0.2))
-                                .cornerRadius(3)
+                        Button(action: { showSortSheet = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.up.arrow.down")
+                                Text(selectedSort.shortName)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.arkadGold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.arkadGold.opacity(0.1))
+                            .cornerRadius(6)
                         }
                         
                         Spacer()
                     }
-                    
-                    HStack {
-                        Text("\(trade.quantity) @ $\(String(format: "%.2f", trade.entryPrice))")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        
-                        if !trade.isOpen, let exitPrice = trade.exitPrice {
-                            Text("→ $\(String(format: "%.2f", exitPrice))")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+                
+                // Trades List
+                if filteredAndSortedTrades.isEmpty {
+                    EmptyAllTradesView(hasAnyTrades: !portfolioViewModel.trades.isEmpty)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(filteredAndSortedTrades, id: \.id) { trade in
+                                Button(action: {
+                                    selectedTrade = trade
+                                    showTradeDetail = true
+                                }) {
+                                    TradeListItemView(trade: trade)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
                         }
+                        .padding(.horizontal)
+                        .padding(.bottom, 100)
                     }
-                    
-                    Text(formatDate(trade.entryDate))
-                        .font(.caption2)
-                        .foregroundColor(.gray)
                 }
-                
-                Spacer()
-                
-                // Performance
-                VStack(alignment: .trailing, spacing: 4) {
-                    if trade.isOpen {
-                        Text("$\(String(format: "%.0f", trade.currentValue))")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.arkadGold)
-                        
-                        Text("Current")
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                    } else {
-                        Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                        
-                        Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.1f", trade.profitLossPercentage))%")
-                            .font(.caption)
-                            .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+            }
+            .navigationTitle("All Trades")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
                     }
                 }
                 
-                if !showSelection {
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Refresh") {
+                        portfolioViewModel.loadPortfolioData()
+                    }
+                    .foregroundColor(.arkadGold)
                 }
             }
         }
-        .buttonStyle(PlainButtonStyle())
+        .sheet(isPresented: $showFilterSheet) {
+            TradeFilterSheet(selectedFilter: $selectedFilter)
+        }
+        .sheet(isPresented: $showSortSheet) {
+            TradeSortSheet(selectedSort: $selectedSort)
+        }
+        .sheet(isPresented: $showTradeDetail) {
+            if let trade = selectedTrade {
+                TradeDetailPopup(trade: trade)
+            }
+        }
+    }
+}
+
+// MARK: - Trade List Item View (completely unique name)
+struct TradeListItemView: View {
+    let trade: Trade
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Status Indicator
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+            
+            // Trade Information
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(trade.ticker)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    if trade.isOpen {
+                        Text("OPEN")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.arkadGold)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.arkadGold.opacity(0.2))
+                            .cornerRadius(3)
+                    }
+                    
+                    Spacer()
+                }
+                
+                Text("\(trade.quantity) @ $\(String(format: "%.2f", trade.entryPrice))")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                
+                Text(formatDate(trade.entryDate))
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+            
+            // Performance
+            VStack(alignment: .trailing, spacing: 4) {
+                if trade.isOpen {
+                    Text("$\(String(format: "%.0f", trade.currentValue))")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.arkadGold)
+                    
+                    Text("Current")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                } else {
+                    Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                    
+                    Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.1f", trade.profitLossPercentage))%")
+                        .font(.caption)
+                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                }
+            }
+            
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.gray)
+        }
         .padding()
-        .background(isSelected ? Color.arkadGold.opacity(0.1) : Color.white)
+        .background(Color.white)
         .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isSelected ? Color.arkadGold : Color.gray.opacity(0.2), lineWidth: 1)
-        )
+        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
     }
     
     private var statusColor: Color {
@@ -439,31 +277,167 @@ struct AdvancedTradeRow: View {
     }
 }
 
-// MARK: - Supporting Views
-struct QuickStatPill: View {
-    let title: String
-    let value: String
-    let color: Color
+// MARK: - Trade Detail Popup (completely unique name)
+struct TradeDetailPopup: View {
+    let trade: Trade
+    @Environment(\.dismiss) var dismiss
     
     var body: some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(color)
-            
-            Text(title)
-                .font(.caption2)
-                .foregroundColor(.gray)
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Trade Header
+                    VStack(spacing: 16) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(trade.ticker)
+                                    .font(.largeTitle)
+                                    .fontWeight(.bold)
+                                
+                                Text(trade.tradeType.displayName)
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: trade.isOpen ? "clock.fill" : "checkmark.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundColor(trade.isOpen ? .arkadGold : (trade.profitLoss >= 0 ? .marketGreen : .marketRed))
+                        }
+                        
+                        // P&L Display
+                        if !trade.isOpen {
+                            VStack(spacing: 8) {
+                                Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.2f", trade.profitLoss))" : "-$\(String(format: "%.2f", abs(trade.profitLoss)))")
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                                
+                                Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.2f", trade.profitLossPercentage))%")
+                                    .font(.title2)
+                                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color.white)
+                    .cornerRadius(16)
+                    .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
+                    
+                    // Trade Details
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Trade Details")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        
+                        VStack(spacing: 12) {
+                            HStack {
+                                Text("Quantity")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                Text("\(trade.quantity) shares")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            HStack {
+                                Text("Entry Price")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                Text("$\(String(format: "%.2f", trade.entryPrice))")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            HStack {
+                                Text("Entry Date")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                Text(formatDate(trade.entryDate))
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            if let exitPrice = trade.exitPrice {
+                                HStack {
+                                    Text("Exit Price")
+                                        .font(.subheadline)
+                                        .foregroundColor(.gray)
+                                    Spacer()
+                                    Text("$\(String(format: "%.2f", exitPrice))")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                }
+                            }
+                            
+                            if let exitDate = trade.exitDate {
+                                HStack {
+                                    Text("Exit Date")
+                                        .font(.subheadline)
+                                        .foregroundColor(.gray)
+                                    Spacer()
+                                    Text(formatDate(exitDate))
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                }
+                            }
+                            
+                            if let strategy = trade.strategy {
+                                HStack {
+                                    Text("Strategy")
+                                        .font(.subheadline)
+                                        .foregroundColor(.gray)
+                                    Spacer()
+                                    Text(strategy)
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                }
+                            }
+                            
+                            if let notes = trade.notes {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Notes")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    Text(notes)
+                                        .font(.body)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color.white)
+                    .cornerRadius(16)
+                    .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
+                }
+                .padding()
+            }
+            .navigationTitle("Trade Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.1))
-        .cornerRadius(6)
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }
 
-struct EmptyTradesListView: View {
+// MARK: - Empty View (completely unique name)
+struct EmptyAllTradesView: View {
     let hasAnyTrades: Bool
     
     var body: some View {
@@ -485,56 +459,15 @@ struct EmptyTradesListView: View {
     }
 }
 
-struct BulkActionsBar: View {
-    let selectedCount: Int
-    let onDelete: () -> Void
-    let onExport: () -> Void
-    
-    var body: some View {
-        VStack {
-            Spacer()
-            
-            HStack {
-                Text("\(selectedCount) selected")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Spacer()
-                
-                Button(action: onExport) {
-                    HStack {
-                        Image(systemName: "square.and.arrow.up")
-                        Text("Export")
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.arkadGold)
-                }
-                
-                Button(action: onDelete) {
-                    HStack {
-                        Image(systemName: "trash")
-                        Text("Delete")
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.red)
-                }
-            }
-            .padding()
-            .background(Color.white)
-            .shadow(color: .gray.opacity(0.3), radius: 8, x: 0, y: -2)
-        }
-    }
-}
-
-// MARK: - Filter and Sort Sheets
-struct FilterSheet: View {
-    @Binding var selectedFilter: AllTradesFilter
+// MARK: - Filter and Sort Sheets (completely unique names)
+struct TradeFilterSheet: View {
+    @Binding var selectedFilter: TradeFilterType
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             List {
-                ForEach(AllTradesFilter.allCases, id: \.self) { filter in
+                ForEach(TradeFilterType.allCases, id: \.self) { filter in
                     Button(action: {
                         selectedFilter = filter
                         dismiss()
@@ -562,14 +495,14 @@ struct FilterSheet: View {
     }
 }
 
-struct SortSheet: View {
-    @Binding var selectedSort: AllTradesSort
+struct TradeSortSheet: View {
+    @Binding var selectedSort: TradeSortType
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             List {
-                ForEach(AllTradesSort.allCases, id: \.self) { sort in
+                ForEach(TradeSortType.allCases, id: \.self) { sort in
                     Button(action: {
                         selectedSort = sort
                         dismiss()
@@ -597,8 +530,8 @@ struct SortSheet: View {
     }
 }
 
-// MARK: - Enhanced Enums
-enum AllTradesFilter: CaseIterable {
+// MARK: - Enums (completely unique names)
+enum TradeFilterType: CaseIterable {
     case all, open, closed, profitable, losses, thisWeek, thisMonth
     
     var displayName: String {
@@ -626,7 +559,7 @@ enum AllTradesFilter: CaseIterable {
     }
 }
 
-enum AllTradesSort: CaseIterable {
+enum TradeSortType: CaseIterable {
     case newest, oldest, highestGain, highestLoss, ticker, largestPosition
     
     var displayName: String {
@@ -653,8 +586,6 @@ enum AllTradesSort: CaseIterable {
 }
 
 #Preview {
-    NavigationView {
-        AllTradesView()
-            .environmentObject(PortfolioViewModel())
-    }
+    AllTradesView()
+        .environmentObject(PortfolioViewModel())
 }
