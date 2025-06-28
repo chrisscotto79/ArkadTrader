@@ -5,8 +5,8 @@ import SwiftUI
 
 struct ProfileTradesTab: View {
     @EnvironmentObject var portfolioViewModel: PortfolioViewModel
-    @State private var selectedFilter: TradeFilter = .all
-    @State private var selectedSort: TradeSort = .newest
+    @State private var selectedFilter: ProfileTradeFilter = .all
+    @State private var selectedSort: ProfileTradeSort = .newest
     @State private var showFilterSheet = false
     @State private var selectedTrade: Trade?
     @State private var showTradeDetail = false
@@ -110,7 +110,7 @@ struct ProfileTradesTab: View {
                     
                     Menu {
                         Picker("Sort by", selection: $selectedSort) {
-                            ForEach(TradeSort.allCases, id: \.self) { sort in
+                            ForEach(ProfileTradeSort.allCases, id: \.self) { sort in
                                 Text(sort.displayName).tag(sort)
                             }
                         }
@@ -180,7 +180,7 @@ struct ProfileTradesTab: View {
         }
         .padding(.top, 20)
         .sheet(isPresented: $showFilterSheet) {
-            TradeFilterSheet(selectedFilter: $selectedFilter)
+            ProfileTradeFilterSheet(selectedFilter: $selectedFilter)
         }
         .sheet(isPresented: $showTradeDetail) {
             if let trade = selectedTrade {
@@ -319,14 +319,14 @@ struct EnhancedTradeRow: View {
 }
 
 // MARK: - Filter Sheet
-struct TradeFilterSheet: View {
-    @Binding var selectedFilter: TradeFilter
+struct ProfileTradeFilterSheet: View {
+    @Binding var selectedFilter: ProfileTradeFilter
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             List {
-                ForEach(TradeFilter.allCases, id: \.self) { filter in
+                ForEach(ProfileTradeFilter.allCases, id: \.self) { filter in
                     Button(action: {
                         selectedFilter = filter
                         dismiss()
@@ -549,7 +549,7 @@ struct CloseTradeSheet: View {
 }
 
 // MARK: - Enums
-enum TradeFilter: CaseIterable {
+enum ProfileTradeFilter: CaseIterable {
     case all, open, closed, profitable, losses
     
     var displayName: String {
@@ -563,7 +563,7 @@ enum TradeFilter: CaseIterable {
     }
 }
 
-enum TradeSort: CaseIterable {
+enum ProfileTradeSort: CaseIterable {
     case newest, oldest, highestGain, highestLoss, ticker
     
     var displayName: String {
