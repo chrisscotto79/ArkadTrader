@@ -6,10 +6,12 @@
       "scale" : "1x"
     },
     {
+      "filename" : "Arkad.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
+      "filename" : "Arkad 1.png",
       "idiom" : "universal",
       "scale" : "3x"
     }
