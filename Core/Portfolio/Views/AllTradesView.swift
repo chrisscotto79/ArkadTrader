@@ -1,272 +1,425 @@
-// File: Core/Portfolio/Views/AllTradesView.swift
-// Conflict-free version with unique view names
-
+// MARK: - Fixed AddTradeView.swift
 import SwiftUI
 
-struct AllTradesView: View {
-    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
-    @State private var searchText = ""
-    @State private var selectedFilter: TradeFilterType = .all
-    @State private var selectedSort: TradeSortType = .newest
-    @State private var showFilterSheet = false
-    @State private var showSortSheet = false
-    @State private var selectedTrade: Trade?
-    @State private var showTradeDetail = false
+struct AddTradeView: View {
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel // Use existing instance
     
-    var filteredAndSortedTrades: [Trade] {
-        var trades = portfolioViewModel.trades
-        
-        // Apply search filter
-        if !searchText.isEmpty {
-            trades = trades.filter { trade in
-                trade.ticker.localizedCaseInsensitiveContains(searchText) ||
-                (trade.notes?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                (trade.strategy?.localizedCaseInsensitiveContains(searchText) ?? false)
-            }
-        }
-        
-        // Apply status filter
-        switch selectedFilter {
-        case .all:
-            break
-        case .open:
-            trades = trades.filter { $0.isOpen }
-        case .closed:
-            trades = trades.filter { !$0.isOpen }
-        case .profitable:
-            trades = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
-        case .losses:
-            trades = trades.filter { !$0.isOpen && $0.profitLoss < 0 }
-        case .thisWeek:
-            let weekAgo = Calendar.current.date(byAdding: .weekOfYear, value: -1, to: Date()) ?? Date()
-            trades = trades.filter { $0.entryDate >= weekAgo }
-        case .thisMonth:
-            let monthAgo = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
-            trades = trades.filter { $0.entryDate >= monthAgo }
-        }
-        
-        // Apply sorting
-        switch selectedSort {
-        case .newest:
-            trades.sort { $0.entryDate > $1.entryDate }
-        case .oldest:
-            trades.sort { $0.entryDate < $1.entryDate }
-        case .highestGain:
-            trades.sort { $0.profitLoss > $1.profitLoss }
-        case .highestLoss:
-            trades.sort { $0.profitLoss < $1.profitLoss }
-        case .ticker:
-            trades.sort { $0.ticker < $1.ticker }
-        case .largestPosition:
-            trades.sort { $0.currentValue > $1.currentValue }
-        }
-        
-        return trades
-    }
+    @State private var ticker = ""
+    @State private var tradeType: TradeType = .stock
+    @State private var entryPrice = ""
+    @State private var quantity = ""
+    @State private var notes = ""
+    @State private var strategy = ""
+    @State private var selectedStrategy: TradingStrategy = .custom
+    
+    @State private var showingConfirmation = false
+    @State private var isValidating = false
+    @State private var validationMessage = ""
+    @State private var isAddingTrade = false
+    @State private var showSuccess = false
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Header
-                HStack {
-                    Text("\(filteredAndSortedTrades.count) of \(portfolioViewModel.trades.count) trades")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                    
-                    Spacer()
-                }
-                .padding()
-                
-                // Search and Filter Bar
-                VStack(spacing: 12) {
-                    // Search Bar
+            Form {
+                Section("Trade Information") {
                     HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.gray)
-                        
-                        TextField("Search trades, tickers, notes...", text: $searchText)
-                            .textFieldStyle(PlainTextFieldStyle())
-                        
-                        if !searchText.isEmpty {
-                            Button(action: { searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.gray)
+                        Text("Ticker")
+                        Spacer()
+                        TextField("AAPL", text: $ticker)
+                            .textCase(.uppercase)
+                            .multilineTextAlignment(.trailing)
+                            .onChange(of: ticker) { _, newValue in
+                                ticker = newValue.uppercased()
+                                validateTicker()
                             }
+                    }
+                    
+                    Picker("Trade Type", selection: $tradeType) {
+                        ForEach(TradeType.allCases, id: \.self) { type in
+                            Text(type.displayName).tag(type)
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
                     
-                    // Filter and Sort Buttons
-                    HStack(spacing: 12) {
-                        Button(action: { showFilterSheet = true }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "line.3.horizontal.decrease.circle")
-                                Text(selectedFilter.shortName)
-                            }
-                            .font(.caption)
-                            .foregroundColor(.arkadGold)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.arkadGold.opacity(0.1))
-                            .cornerRadius(6)
-                        }
-                        
-                        Button(action: { showSortSheet = true }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.up.arrow.down")
-                                Text(selectedSort.shortName)
-                            }
-                            .font(.caption)
-                            .foregroundColor(.arkadGold)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.arkadGold.opacity(0.1))
-                            .cornerRadius(6)
-                        }
-                        
+                    HStack {
+                        Text("Entry Price")
                         Spacer()
+                        TextField("0.00", text: $entryPrice)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    HStack {
+                        Text("Quantity")
+                        Spacer()
+                        TextField("0", text: $quantity)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    if !validationMessage.isEmpty {
+                        Text(validationMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
                 
-                // Trades List
-                if filteredAndSortedTrades.isEmpty {
-                    EmptyAllTradesView(hasAnyTrades: !portfolioViewModel.trades.isEmpty)
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 8) {
-                            ForEach(filteredAndSortedTrades, id: \.id) { trade in
-                                Button(action: {
-                                    selectedTrade = trade
-                                    showTradeDetail = true
-                                }) {
-                                    TradeListItemView(trade: trade)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
+                Section("Strategy") {
+                    Picker("Trading Strategy", selection: $selectedStrategy) {
+                        ForEach(TradingStrategy.allCases, id: \.self) { strategy in
+                            Text(strategy.displayName).tag(strategy)
                         }
-                        .padding(.horizontal)
-                        .padding(.bottom, 100)
+                    }
+                    
+                    if selectedStrategy == .custom {
+                        TextField("Custom strategy description", text: $strategy, axis: .vertical)
+                            .lineLimit(2...4)
+                    }
+                }
+                
+                Section("Notes") {
+                    TextField("Trade notes (optional)", text: $notes, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+                
+                Section("Trade Summary") {
+                    if isFormValid {
+                        HStack {
+                            Text("Total Investment")
+                            Spacer()
+                            Text("$\(String(format: "%.2f", totalInvestment))")
+                                .fontWeight(.semibold)
+                        }
+                        
+                        HStack {
+                            Text("Position Size")
+                            Spacer()
+                            Text("\(quantity) shares")
+                                .fontWeight(.semibold)
+                        }
                     }
                 }
             }
-            .navigationTitle("All Trades")
+            .navigationTitle("Add Trade")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
+                    Button("Cancel") {
                         dismiss()
                     }
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Refresh") {
-                        portfolioViewModel.loadPortfolioData()
+                    Button("Add Trade") {
+                        showingConfirmation = true
                     }
-                    .foregroundColor(.arkadGold)
+                    .disabled(!isFormValid || isAddingTrade)
+                    .overlay(
+                        Group {
+                            if isAddingTrade {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
+                    )
                 }
             }
         }
-        .sheet(isPresented: $showFilterSheet) {
-            TradeFilterSheet(selectedFilter: $selectedFilter)
-        }
-        .sheet(isPresented: $showSortSheet) {
-            TradeSortSheet(selectedSort: $selectedSort)
-        }
-        .sheet(isPresented: $showTradeDetail) {
-            if let trade = selectedTrade {
-                TradeDetailPopup(trade: trade)
+        .confirmationDialog("Confirm Trade", isPresented: $showingConfirmation, titleVisibility: .visible) {
+            Button("Add Trade") {
+                addTrade()
             }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Add \(quantity) shares of \(ticker) at \(entryPrice.isEmpty ? "$0.00" : "$\(entryPrice)") per share?")
+        }
+        .alert("Trade Added", isPresented: $showSuccess) {
+            Button("OK") {
+                dismiss()
+            }
+        } message: {
+            Text("Successfully added \(quantity) shares of \(ticker)")
+        }
+        .alert("Error", isPresented: $portfolioViewModel.showError) {
+            Button("OK") { }
+        } message: {
+            Text(portfolioViewModel.errorMessage)
+        }
+    }
+    
+    private var isFormValid: Bool {
+        !ticker.isEmpty &&
+        !entryPrice.isEmpty &&
+        !quantity.isEmpty &&
+        Double(entryPrice) != nil &&
+        Int(quantity) != nil &&
+        Double(entryPrice)! > 0 &&
+        Int(quantity)! > 0 &&
+        validationMessage.isEmpty
+    }
+    
+    private var totalInvestment: Double {
+        guard let price = Double(entryPrice), let qty = Int(quantity) else { return 0 }
+        return price * Double(qty)
+    }
+    
+    private func validateTicker() {
+        isValidating = true
+        validationMessage = ""
+        
+        // Basic ticker validation
+        if ticker.count > 5 {
+            validationMessage = "Ticker too long"
+        } else if ticker.contains(where: { !$0.isLetter }) {
+            validationMessage = "Ticker should only contain letters"
+        }
+        
+        isValidating = false
+    }
+    
+    private func addTrade() {
+        guard let price = Double(entryPrice),
+              let qty = Int(quantity) else {
+            return
+        }
+        
+        isAddingTrade = true
+        
+        let finalStrategy = selectedStrategy == .custom ? strategy : selectedStrategy.displayName
+        
+        // Use the simple non-async function
+        portfolioViewModel.addTradeSimple(
+            ticker: ticker,
+            tradeType: tradeType,
+            entryPrice: price,
+            quantity: qty,
+            notes: notes.isEmpty ? nil : notes
+        )
+        
+        isAddingTrade = false
+        
+        // Check if there was an error
+        if !portfolioViewModel.showError {
+            showSuccess = true
         }
     }
 }
 
-// MARK: - Trade List Item View (completely unique name)
-struct TradeListItemView: View {
+// MARK: - Trade Management View
+struct TradeManagementView: View {
     let trade: Trade
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel // Use existing instance
+    @Environment(\.dismiss) var dismiss
+    
+    @State private var showingCloseDialog = false
+    @State private var showingEditView = false
+    @State private var showingDeleteAlert = false
     
     var body: some View {
-        HStack(spacing: 12) {
-            // Status Indicator
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-            
-            // Trade Information
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(trade.ticker)
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Trade Header
+                    TradeHeaderCard(trade: trade)
+                    
+                    // Current Performance (if open)
+                    if trade.isOpen {
+                        CurrentPerformanceCard(trade: trade)
+                    }
+                    
+                    // Action Buttons
+                    TradeActionButtons(
+                        trade: trade,
+                        onClose: { showingCloseDialog = true },
+                        onEdit: { showingEditView = true },
+                        onDelete: { showingDeleteAlert = true }
+                    )
+                    
+                    // Trade Details
+                    TradeDetailsCard(trade: trade)
+                }
+                .padding()
+            }
+            .navigationTitle("Manage Trade")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingCloseDialog) {
+            CloseTradeDialog(trade: trade)
+                .environmentObject(portfolioViewModel)
+        }
+        .sheet(isPresented: $showingEditView) {
+            EditTradeView(trade: trade)
+                .environmentObject(portfolioViewModel)
+        }
+        .alert("Delete Trade", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                deleteTrade()
+            }
+        } message: {
+            Text("Are you sure you want to delete this \(trade.ticker) trade? This action cannot be undone.")
+        }
+        .alert("Error", isPresented: $portfolioViewModel.showError) {
+            Button("OK") { }
+        } message: {
+            Text(portfolioViewModel.errorMessage)
+        }
+    }
+    
+    private func deleteTrade() {
+        portfolioViewModel.deleteTrade(trade)
+        dismiss()
+    }
+}
+
+// MARK: - Close Trade Dialog
+struct CloseTradeDialog: View {
+    let trade: Trade
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
+    @Environment(\.dismiss) var dismiss
+    
+    @State private var exitPrice = ""
+    @State private var closingNotes = ""
+    @State private var isClosing = false
+    @State private var showSuccess = false
+    
+    var projectedPL: Double {
+        guard let price = Double(exitPrice) else { return 0 }
+        return (price - trade.entryPrice) * Double(trade.quantity)
+    }
+    
+    var projectedPercentage: Double {
+        guard let price = Double(exitPrice) else { return 0 }
+        return ((price - trade.entryPrice) / trade.entryPrice) * 100
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // Header
+                VStack(spacing: 16) {
+                    Text("Close Position")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    
+                    VStack(spacing: 8) {
+                        Text(trade.ticker)
+                            .font(.title)
+                            .fontWeight(.semibold)
+                        
+                        Text("\(trade.quantity) shares @ $\(String(format: "%.2f", trade.entryPrice))")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                        
+                        Text("Opened \(formatDate(trade.entryDate))")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                // Exit Price Input
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Exit Price")
                         .font(.headline)
                         .fontWeight(.semibold)
                     
-                    if trade.isOpen {
-                        Text("OPEN")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.arkadGold)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.arkadGold.opacity(0.2))
-                            .cornerRadius(3)
+                    TextField("Enter exit price", text: $exitPrice)
+                        .keyboardType(.decimalPad)
+                        .font(.title2)
+                        .padding()
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.arkadGold, lineWidth: 2)
+                        )
+                }
+                
+                // Projected Outcome
+                if !exitPrice.isEmpty, Double(exitPrice) != nil {
+                    ProjectedOutcomeCard(
+                        projectedPL: projectedPL,
+                        projectedPercentage: projectedPercentage
+                    )
+                }
+                
+                // Closing Notes
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Closing Notes (Optional)")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    TextField("Why are you closing this position?", text: $closingNotes, axis: .vertical)
+                        .lineLimit(3...6)
+                        .padding()
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(12)
+                }
+                
+                Spacer()
+                
+                // Action Buttons
+                VStack(spacing: 12) {
+                    Button(action: closePosition) {
+                        HStack {
+                            if isClosing {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .foregroundColor(.white)
+                            } else {
+                                Image(systemName: "xmark.circle")
+                                Text("Close Position")
+                            }
+                        }
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.arkadGold)
+                        .cornerRadius(12)
                     }
+                    .disabled(exitPrice.isEmpty || Double(exitPrice) == nil || isClosing)
                     
-                    Spacer()
-                }
-                
-                Text("\(trade.quantity) @ $\(String(format: "%.2f", trade.entryPrice))")
-                    .font(.caption)
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .font(.subheadline)
                     .foregroundColor(.gray)
-                
-                Text(formatDate(trade.entryDate))
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            // Performance
-            VStack(alignment: .trailing, spacing: 4) {
-                if trade.isOpen {
-                    Text("$\(String(format: "%.0f", trade.currentValue))")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.arkadGold)
-                    
-                    Text("Current")
-                        .font(.caption2)
-                        .foregroundColor(.gray)
-                } else {
-                    Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                    
-                    Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.1f", trade.profitLossPercentage))%")
-                        .font(.caption)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
                 }
             }
-            
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundColor(.gray)
+            .padding()
+            .navigationBarHidden(true)
         }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
+        .alert("Position Closed", isPresented: $showSuccess) {
+            Button("OK") {
+                dismiss()
+            }
+        } message: {
+            Text("Successfully closed \(trade.ticker) position")
+        }
     }
     
-    private var statusColor: Color {
-        if trade.isOpen {
-            return .arkadGold
-        } else {
-            return trade.profitLoss >= 0 ? .marketGreen : .marketRed
+    private func closePosition() {
+        guard let price = Double(exitPrice) else { return }
+        
+        isClosing = true
+        
+        // Use simple non-async function
+        portfolioViewModel.closeTrade(trade, exitPrice: price)
+        
+        isClosing = false
+        
+        if !portfolioViewModel.showError {
+            showSuccess = true
         }
     }
     
@@ -277,315 +430,414 @@ struct TradeListItemView: View {
     }
 }
 
-// MARK: - Trade Detail Popup (completely unique name)
-struct TradeDetailPopup: View {
+// MARK: - Edit Trade View
+struct EditTradeView: View {
     let trade: Trade
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     @Environment(\.dismiss) var dismiss
+    
+    @State private var ticker: String
+    @State private var entryPrice: String
+    @State private var quantity: String
+    @State private var notes: String
+    @State private var strategy: String
+    @State private var showSuccess = false
+    
+    init(trade: Trade) {
+        self.trade = trade
+        _ticker = State(initialValue: trade.ticker)
+        _entryPrice = State(initialValue: String(format: "%.2f", trade.entryPrice))
+        _quantity = State(initialValue: "\(trade.quantity)")
+        _notes = State(initialValue: trade.notes ?? "")
+        _strategy = State(initialValue: trade.strategy ?? "")
+    }
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Trade Header
-                    VStack(spacing: 16) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(trade.ticker)
-                                    .font(.largeTitle)
-                                    .fontWeight(.bold)
-                                
-                                Text(trade.tradeType.displayName)
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: trade.isOpen ? "clock.fill" : "checkmark.circle.fill")
-                                .font(.system(size: 30))
-                                .foregroundColor(trade.isOpen ? .arkadGold : (trade.profitLoss >= 0 ? .marketGreen : .marketRed))
-                        }
-                        
-                        // P&L Display
-                        if !trade.isOpen {
-                            VStack(spacing: 8) {
-                                Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.2f", trade.profitLoss))" : "-$\(String(format: "%.2f", abs(trade.profitLoss)))")
-                                    .font(.system(size: 36, weight: .bold))
-                                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                                
-                                Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.2f", trade.profitLossPercentage))%")
-                                    .font(.title2)
-                                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color.white)
-                    .cornerRadius(16)
-                    .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
+            Form {
+                Section("Trade Information") {
+                    TextField("Ticker", text: $ticker)
+                        .textCase(.uppercase)
                     
-                    // Trade Details
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Trade Details")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        VStack(spacing: 12) {
-                            HStack {
-                                Text("Quantity")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                Spacer()
-                                Text("\(trade.quantity) shares")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                            }
-                            
-                            HStack {
-                                Text("Entry Price")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                Spacer()
-                                Text("$\(String(format: "%.2f", trade.entryPrice))")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                            }
-                            
-                            HStack {
-                                Text("Entry Date")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                Spacer()
-                                Text(formatDate(trade.entryDate))
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                            }
-                            
-                            if let exitPrice = trade.exitPrice {
-                                HStack {
-                                    Text("Exit Price")
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                    Spacer()
-                                    Text("$\(String(format: "%.2f", exitPrice))")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                }
-                            }
-                            
-                            if let exitDate = trade.exitDate {
-                                HStack {
-                                    Text("Exit Date")
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                    Spacer()
-                                    Text(formatDate(exitDate))
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                }
-                            }
-                            
-                            if let strategy = trade.strategy {
-                                HStack {
-                                    Text("Strategy")
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                    Spacer()
-                                    Text(strategy)
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                }
-                            }
-                            
-                            if let notes = trade.notes {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Notes")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Text(notes)
-                                        .font(.body)
-                                        .foregroundColor(.gray)
-                                }
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color.white)
-                    .cornerRadius(16)
-                    .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
+                    TextField("Entry Price", text: $entryPrice)
+                        .keyboardType(.decimalPad)
+                    
+                    TextField("Quantity", text: $quantity)
+                        .keyboardType(.numberPad)
                 }
-                .padding()
+                
+                Section("Notes & Strategy") {
+                    TextField("Strategy", text: $strategy)
+                    TextField("Notes", text: $notes, axis: .vertical)
+                        .lineLimit(3...6)
+                }
             }
-            .navigationTitle("Trade Details")
+            .navigationTitle("Edit Trade")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+                    Button("Save") {
+                        saveChanges()
+                    }
+                    .disabled(!isFormValid)
+                }
+            }
+        }
+        .alert("Trade Updated", isPresented: $showSuccess) {
+            Button("OK") { dismiss() }
+        }
+    }
+    
+    private var isFormValid: Bool {
+        !ticker.isEmpty &&
+        !entryPrice.isEmpty &&
+        !quantity.isEmpty &&
+        Double(entryPrice) != nil &&
+        Int(quantity) != nil
+    }
+    
+    private func saveChanges() {
+        portfolioViewModel.updateTrade(
+            trade,
+            ticker: ticker,
+            entryPrice: Double(entryPrice),
+            quantity: Int(quantity),
+            notes: notes
+        )
+        
+        if !portfolioViewModel.showError {
+            showSuccess = true
+        }
+    }
+}
+
+// MARK: - Supporting UI Components
+struct TradeHeaderCard: View {
+    let trade: Trade
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(trade.ticker)
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    
+                    Text(trade.tradeType.displayName)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    StatusBadge(
+                        text: trade.isOpen ? "OPEN" : "CLOSED",
+                        color: trade.isOpen ? .arkadGold : .gray
+                    )
+                    
+                    Text("\(daysHeld(from: trade.entryDate)) days")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+            
+            if !trade.isOpen {
+                VStack(spacing: 8) {
+                    Text(formatCurrencyWithSign(trade.profitLoss))
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                    
+                    Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.2f", trade.profitLossPercentage))%")
+                        .font(.title3)
+                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    private func daysHeld(from date: Date) -> Int {
+        let endDate = trade.exitDate ?? Date()
+        return Calendar.current.dateComponents([.day], from: date, to: endDate).day ?? 0
+    }
+    
+    private func formatCurrencyWithSign(_ value: Double) -> String {
+        let formatted = String(format: "$%.2f", abs(value))
+        return value >= 0 ? "+\(formatted)" : "-\(formatted)"
+    }
+}
+
+struct CurrentPerformanceCard: View {
+    let trade: Trade
+    
+    // Mock current price calculation
+    private var mockCurrentPrice: Double {
+        trade.entryPrice * 1.02 // Mock 2% gain
+    }
+    
+    private var unrealizedPL: Double {
+        (mockCurrentPrice - trade.entryPrice) * Double(trade.quantity)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Current Performance")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Current Price")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Text("$\(String(format: "%.2f", mockCurrentPrice))")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Unrealized P&L")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Text(formatCurrencyWithSign(unrealizedPL))
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(unrealizedPL >= 0 ? .marketGreen : .marketRed)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    private func formatCurrencyWithSign(_ value: Double) -> String {
+        let formatted = String(format: "$%.2f", abs(value))
+        return value >= 0 ? "+\(formatted)" : "-\(formatted)"
+    }
+}
+
+struct TradeActionButtons: View {
+    let trade: Trade
+    let onClose: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            if trade.isOpen {
+                Button(action: onClose) {
+                    HStack {
+                        Image(systemName: "xmark.circle")
+                        Text("Close Position")
+                    }
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.arkadGold)
+                    .cornerRadius(12)
+                }
+            }
+            
+            HStack(spacing: 12) {
+                Button(action: onEdit) {
+                    HStack {
+                        Image(systemName: "pencil")
+                        Text("Edit")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.arkadGold)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.arkadGold.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                
+                Button(action: onDelete) {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Delete")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(12)
+                }
+            }
+        }
+    }
+}
+
+struct TradeDetailsCard: View {
+    let trade: Trade
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Trade Details")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            VStack(spacing: 12) {
+                DetailRow(label: "Quantity", value: "\(trade.quantity) shares")
+                DetailRow(label: "Entry Price", value: "$\(String(format: "%.2f", trade.entryPrice))")
+                DetailRow(label: "Entry Date", value: formatDate(trade.entryDate))
+                
+                if let exitPrice = trade.exitPrice {
+                    DetailRow(label: "Exit Price", value: "$\(String(format: "%.2f", exitPrice))")
+                }
+                
+                if let exitDate = trade.exitDate {
+                    DetailRow(label: "Exit Date", value: formatDate(exitDate))
+                }
+                
+                if let strategy = trade.strategy, !strategy.isEmpty {
+                    DetailRow(label: "Strategy", value: strategy)
+                }
+                
+                if let notes = trade.notes, !notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Notes")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text(notes)
+                            .font(.body)
+                            .foregroundColor(.gray)
                     }
                 }
             }
         }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .gray.opacity(0.1), radius: 8, x: 0, y: 4)
     }
     
     private func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
-        formatter.timeStyle = .short
         return formatter.string(from: date)
     }
 }
 
-// MARK: - Empty View (completely unique name)
-struct EmptyAllTradesView: View {
-    let hasAnyTrades: Bool
+struct DetailRow: View {
+    let label: String
+    let value: String
     
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: hasAnyTrades ? "magnifyingglass" : "chart.line.uptrend.xyaxis")
-                .font(.system(size: 48))
-                .foregroundColor(.gray.opacity(0.5))
-            
-            Text(hasAnyTrades ? "No trades match your filters" : "No trades yet")
-                .font(.headline)
-                .foregroundColor(.gray)
-            
-            Text(hasAnyTrades ? "Try adjusting your search or filter criteria" : "Add your first trade to get started")
+        HStack {
+            Text(label)
                 .font(.subheadline)
                 .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.medium)
         }
-        .padding(.vertical, 60)
+        .padding(.vertical, 2)
     }
 }
 
-// MARK: - Filter and Sort Sheets (completely unique names)
-struct TradeFilterSheet: View {
-    @Binding var selectedFilter: TradeFilterType
-    @Environment(\.dismiss) var dismiss
+struct ProjectedOutcomeCard: View {
+    let projectedPL: Double
+    let projectedPercentage: Double
     
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(TradeFilterType.allCases, id: \.self) { filter in
-                    Button(action: {
-                        selectedFilter = filter
-                        dismiss()
-                    }) {
-                        HStack {
-                            Text(filter.displayName)
-                                .foregroundColor(.primary)
-                            Spacer()
-                            if selectedFilter == filter {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.arkadGold)
-                            }
-                        }
-                    }
+        VStack(spacing: 12) {
+            Text("Projected Outcome")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Profit/Loss")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Text(formatCurrencyWithSign(projectedPL))
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(projectedPL >= 0 ? .marketGreen : .marketRed)
                 }
-            }
-            .navigationTitle("Filter Trades")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing) {
+                    Text("Return")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Text("\(projectedPercentage >= 0 ? "+" : "")\(String(format: "%.2f", projectedPercentage))%")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(projectedPL >= 0 ? .marketGreen : .marketRed)
                 }
             }
         }
+        .padding()
+        .background((projectedPL >= 0 ? Color.marketGreen : Color.marketRed).opacity(0.1))
+        .cornerRadius(12)
+    }
+    
+    private func formatCurrencyWithSign(_ value: Double) -> String {
+        let formatted = String(format: "$%.2f", abs(value))
+        return value >= 0 ? "+\(formatted)" : "-\(formatted)"
     }
 }
 
-struct TradeSortSheet: View {
-    @Binding var selectedSort: TradeSortType
-    @Environment(\.dismiss) var dismiss
+struct StatusBadge: View {
+    let text: String
+    let color: Color
     
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(TradeSortType.allCases, id: \.self) { sort in
-                    Button(action: {
-                        selectedSort = sort
-                        dismiss()
-                    }) {
-                        HStack {
-                            Text(sort.displayName)
-                                .foregroundColor(.primary)
-                            Spacer()
-                            if selectedSort == sort {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.arkadGold)
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Sort Trades")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
+        Text(text)
+            .font(.caption)
+            .fontWeight(.bold)
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.1))
+            .cornerRadius(6)
     }
 }
 
-// MARK: - Enums (completely unique names)
-enum TradeFilterType: CaseIterable {
-    case all, open, closed, profitable, losses, thisWeek, thisMonth
+// MARK: - Supporting Enums
+enum TradingStrategy: CaseIterable {
+    case dayTrading
+    case swingTrading
+    case longTerm
+    case momentum
+    case valueInvesting
+    case technicalAnalysis
+    case custom
     
     var displayName: String {
         switch self {
-        case .all: return "All Trades"
-        case .open: return "Open Positions"
-        case .closed: return "Closed Trades"
-        case .profitable: return "Profitable Trades"
-        case .losses: return "Loss Trades"
-        case .thisWeek: return "This Week"
-        case .thisMonth: return "This Month"
+        case .dayTrading: return "Day Trading"
+        case .swingTrading: return "Swing Trading"
+        case .longTerm: return "Long Term Hold"
+        case .momentum: return "Momentum"
+        case .valueInvesting: return "Value Investing"
+        case .technicalAnalysis: return "Technical Analysis"
+        case .custom: return "Custom Strategy"
         }
     }
-    
-    var shortName: String {
-        switch self {
-        case .all: return "All"
-        case .open: return "Open"
-        case .closed: return "Closed"
-        case .profitable: return "Wins"
-        case .losses: return "Losses"
-        case .thisWeek: return "Week"
-        case .thisMonth: return "Month"
-        }
-    }
-}
-
-enum TradeSortType: CaseIterable {
-    case newest, oldest, highestGain, highestLoss, ticker, largestPosition
-    
-    var displayName: String {
-        switch self {
-        case .newest: return "Newest First"
-        case .oldest: return "Oldest First"
-        case .highestGain: return "Highest Gain"
-        case .highestLoss: return "Highest Loss"
-        case .ticker: return "Ticker (A-Z)"
-        case .largestPosition: return "Largest Position"
-        }
-    }
-    
-    var shortName: String {
-        switch self {
-        case .newest: return "Newest"
-        case .oldest: return "Oldest"
-        case .highestGain: return "Best"
-        case .highestLoss: return "Worst"
-        case .ticker: return "A-Z"
-        case .largestPosition: return "Size"
-        }
-    }
-}
-
-#Preview {
-    AllTradesView()
-        .environmentObject(PortfolioViewModel())
 }
