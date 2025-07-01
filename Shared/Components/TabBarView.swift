@@ -1,5 +1,4 @@
 // Shared/Components/TabBarView.swift
-// Fixed TabBarView with proper MessagingView reference
 
 import SwiftUI
 
