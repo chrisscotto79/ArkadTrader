@@ -1,11 +1,5 @@
-//
-//  Trade.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
-// File: Shared/Models/Trade.swift
+// Shared/Models/Trade.swift
+// Enhanced Trade model with additional computed properties
 
 import Foundation
 
@@ -38,6 +32,26 @@ struct Trade: Identifiable, Codable {
             return exitPrice * Double(quantity)
         }
         return entryPrice * Double(quantity)
+    }
+    
+    // Additional computed properties for UI
+    var daysHeld: Int {
+        let endDate = exitDate ?? Date()
+        return Calendar.current.dateComponents([.day], from: entryDate, to: endDate).day ?? 0
+    }
+    
+    var formattedEntryDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        return formatter.string(from: entryDate)
+    }
+    
+    var statusText: String {
+        if isOpen {
+            return "OPEN"
+        } else {
+            return profitLoss >= 0 ? "PROFIT" : "LOSS"
+        }
     }
     
     init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: UUID) {

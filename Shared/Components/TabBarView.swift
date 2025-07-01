@@ -1,4 +1,5 @@
-// File: Shared/Components/TabBarView.swift
+// Shared/Components/TabBarView.swift
+// Fixed TabBarView with proper MessagingView reference
 
 import SwiftUI
 
@@ -16,7 +17,7 @@ struct TabBarView: View {
                 .tag(0)
             
             // Search Tab
-            Text("Search Coming Soon")
+            SearchView()
                 .tabItem {
                     Image(systemName: "magnifyingglass")
                     Text("Search")
@@ -32,6 +33,7 @@ struct TabBarView: View {
                 .tag(2)
             
             // Messaging Tab
+            MessagingView()
                 .tabItem {
                     Image(systemName: "envelope.fill")
                     Text("Messages")
