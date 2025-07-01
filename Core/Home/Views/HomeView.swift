@@ -47,11 +47,19 @@ struct HomeView: View {
                 
                 Spacer()
             }
-            .navigationTitle("ArkadTrader")
-            .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { // This centers it in the nav bar
+                    AsyncImage(url: URL(string: "https://arkadwealthgroup.com/wp-content/uploads/2025/01/ARKAD_BLACK.png")) { image in
+                        image
+                            .resizable()
+                            .scaledToFit()
+                    } placeholder: {
+                        Color.clear
+                    }
+                    .frame(height: 38) // adjust height as needed
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    // Market sentiment indicator
                     HStack {
                         Image(systemName: "arrow.up.circle.fill")
                             .foregroundColor(.marketGreen)
@@ -63,6 +71,8 @@ struct HomeView: View {
                     }
                 }
             }
+
+
         }
     }
 }

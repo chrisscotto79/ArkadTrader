@@ -375,10 +375,10 @@ struct ProfileOverviewTab: View {
                     
                     VStack(spacing: 8) {
                         ForEach(portfolioViewModel.trades.prefix(3), id: \.id) { trade in
-                            RecentTradeRow(trade: trade)
+                            TradeRowView(trade: trade, style: .compact)
+                                .padding(.horizontal)
                         }
                     }
-                    .padding(.horizontal)
                 }
             } else {
                 // Empty State
@@ -425,10 +425,10 @@ struct SimpleProfileTradesTab: View {
                 // Simple trades list
                 LazyVStack(spacing: 8) {
                     ForEach(portfolioViewModel.trades.prefix(5), id: \.id) { trade in
-                        SimpleTradeRow(trade: trade)
+                        TradeRowView(trade: trade, style: .standard)
+                            .padding(.horizontal)
                     }
                 }
-                .padding(.horizontal)
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "chart.bar.doc.horizontal")
@@ -561,75 +561,6 @@ struct PerformanceCard: View {
         .background(Color.white)
         .cornerRadius(12)
         .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
-    }
-}
-
-struct RecentTradeRow: View {
-    let trade: Trade
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(trade.ticker)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                Text(trade.isOpen ? "OPEN" : "CLOSED")
-                    .font(.caption)
-                    .foregroundColor(trade.isOpen ? .arkadGold : .gray)
-            }
-            
-            Spacer()
-            
-            if !trade.isOpen {
-                Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-            }
-        }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(8)
-        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
-    }
-}
-
-struct SimpleTradeRow: View {
-    let trade: Trade
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(trade.ticker)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                Text("\(trade.quantity) shares")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            VStack(alignment: .trailing, spacing: 4) {
-                if trade.isOpen {
-                    Text("OPEN")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.arkadGold)
-                } else {
-                    Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
-                }
-            }
-        }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(8)
-        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
     }
 }
 

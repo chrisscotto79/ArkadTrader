@@ -2,185 +2,200 @@
 //  MarketNewsFeedView.swift
 //  ArkadTrader
 //
-//  Created by chris scotto on 6/18/25.
-//
-
-// File: Core/Home/Views/MarketNewsFeedView.swift
 
 import SwiftUI
 
 struct MarketNewsFeedView: View {
+    @StateObject private var newsFetcher = PolygonNewsFetcher()
+    @State private var timer: Timer?
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                ForEach(0..<15, id: \.self) { index in
-                    NewsCard(index: index)
+                ForEach(newsFetcher.newsItems) { item in
+                    LiveNewsCard(news: item)
+                }
+
+                if newsFetcher.newsItems.isEmpty {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading news from Polygon.io...")
+                            .foregroundColor(.gray)
+                    }
+                    .padding(.top, 50)
                 }
             }
             .padding(.horizontal)
             .padding(.top, 16)
         }
-        .refreshable {
-            // TODO: Refresh news
+        .onAppear {
+            newsFetcher.fetchNews()
+            startAutoRefresh()
         }
+        .onDisappear {
+            stopAutoRefresh()
+        }
+        .refreshable {
+            newsFetcher.fetchNews()
+        }
+    }
+
+    private func startAutoRefresh() {
+        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
+            newsFetcher.fetchNews()
+        }
+    }
+
+    private func stopAutoRefresh() {
+        timer?.invalidate()
+        timer = nil
     }
 }
 
-struct NewsCard: View {
-    let index: Int
-    
+// MARK: - News Fetcher
+class PolygonNewsFetcher: ObservableObject {
+    @Published var newsItems: [PolygonNewsItem] = []
+
+    private let apiKey = "x3gVFWOZqHWtmYIz770auaj576WSF2Fh"
+
+    func fetchNews() {
+        guard let url = URL(string: "https://api.polygon.io/v2/reference/news?limit=20&apiKey=\(apiKey)") else { return }
+
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            if let error = error {
+                print("❌ Fetch error: \(error)")
+                return
+            }
+
+            guard let data = data else { return }
+
+            do {
+                let decoded = try JSONDecoder().decode(PolygonNewsResponse.self, from: data)
+                DispatchQueue.main.async {
+                    var newItems = decoded.results ?? []
+                    newItems.removeAll { item in
+                        self?.newsItems.contains(where: { $0.id == item.id }) ?? false
+                    }
+                    self?.newsItems.insert(contentsOf: newItems, at: 0)
+                }
+            } catch {
+                print("⚠️ Decode error: \(error)")
+            }
+        }.resume()
+    }
+}
+
+struct PolygonNewsResponse: Decodable {
+    let results: [PolygonNewsItem]?
+}
+
+// MARK: - News Model
+struct PolygonNewsItem: Identifiable, Decodable {
+    let id: String
+    let title: String
+    let description: String?
+    let published_utc: String
+    let article_url: String?
+    let tickers: [String]
+
+    var headline: String { title }
+    var summary: String? { description }
+    var url: String? { article_url }
+    var symbols: [String] { Array(tickers.prefix(6)) }
+
+    var timestamp: Double {
+        ISO8601DateFormatter().date(from: published_utc)?.timeIntervalSince1970 ?? 0
+    }
+
+    var createdAt: Date {
+        Date(timeIntervalSince1970: timestamp)
+    }
+
+    var source: String {
+        return "Polygon"
+    }
+}
+
+// MARK: - News Card View
+struct LiveNewsCard: View {
+    let news: PolygonNewsItem
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(getNewsSource(for: index))
+                    Text(news.source)
                         .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundColor(.arkadGold)
-                    
-                    Text(getTimeAgo(for: index))
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.accentColor)
+
+                    Text(formatDate(news.createdAt))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
-                
+
                 Spacer()
-                
-                // Market impact indicator
-                getMarketImpact(for: index)
+
+                Text("Live")
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundColor(.orange)
+                    .cornerRadius(4)
             }
-            
-            Text(getNewsHeadline(for: index))
+
+            Text(news.headline)
                 .font(.headline)
                 .fontWeight(.semibold)
-                .lineLimit(3)
-            
-            Text(getNewsDescription(for: index))
-                .font(.body)
-                .foregroundColor(.gray)
-                .lineLimit(3)
-            
-            // Related stocks/symbols
-            HStack {
-                ForEach(getRelatedSymbols(for: index), id: \.self) { symbol in
-                    Text(symbol)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.arkadGold.opacity(0.1))
-                        .foregroundColor(.arkadGold)
-                        .cornerRadius(4)
+
+            if let summary = news.summary {
+                Text(summary)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+            }
+
+            if !news.symbols.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(news.symbols.prefix(6), id: \ .self) { symbol in
+                            Text(symbol)
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.accentColor.opacity(0.15))
+                                .foregroundColor(.accentColor)
+                                .cornerRadius(4)
+                        }
+                    }
                 }
-                
-                Spacer()
-                
-                Button(action: {}) {
-                    Image(systemName: "bookmark")
-                        .foregroundColor(.gray)
-                }
-                
-                Button(action: {}) {
-                    Image(systemName: "square.and.arrow.up")
-                        .foregroundColor(.gray)
+            }
+
+            if let urlString = news.url, let url = URL(string: urlString) {
+                Link(destination: url) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link")
+                        Text("Read More")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
                 }
             }
         }
         .padding()
-        .background(Color.white)
+        .background(Color(.systemBackground))
         .cornerRadius(12)
-        .shadow(color: .gray.opacity(0.2), radius: 3, x: 0, y: 1)
+        .shadow(color: .black.opacity(0.05), radius: 3, x: 0, y: 1)
     }
-    
-    private func getNewsSource(for index: Int) -> String {
-        let sources = ["Bloomberg", "Reuters", "CNBC", "MarketWatch", "Yahoo Finance", "Financial Times", "Wall Street Journal"]
-        return sources[index % sources.count]
-    }
-    
-    private func getTimeAgo(for index: Int) -> String {
-        let times = ["5m ago", "15m ago", "1h ago", "2h ago", "3h ago", "5h ago", "1d ago"]
-        return times[index % times.count]
-    }
-    
-    private func getMarketImpact(for index: Int) -> some View {
-        let impacts = ["High", "Medium", "Low"]
-        let colors: [Color] = [.marketRed, .arkadGold, .marketGreen]
-        let impact = impacts[index % impacts.count]
-        let color = colors[index % colors.count]
-        
-        return Text(impact)
-            .font(.caption)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.2))
-            .foregroundColor(color)
-            .cornerRadius(4)
-    }
-    
-    private func getNewsHeadline(for index: Int) -> String {
-        let headlines = [
-            "Fed Signals Potential Rate Cut as Inflation Cools",
-            "Tech Stocks Rally on Strong AI Earnings Reports",
-            "Oil Prices Surge Amid Middle East Tensions",
-            "Bitcoin Breaks $50,000 as Institutional Adoption Grows",
-            "Apple Reports Record iPhone Sales in Q3",
-            "Tesla Unveils New Model with 400-Mile Range",
-            "JPMorgan CEO Warns of Economic Headwinds",
-            "NVIDIA Stock Jumps 15% on AI Chip Demand",
-            "Gold Hits All-Time High as Dollar Weakens",
-            "Amazon Announces Major Warehouse Expansion",
-            "Microsoft Azure Revenue Exceeds Expectations",
-            "Energy Stocks Outperform Amid Supply Concerns",
-            "Meta's Reality Labs Shows Signs of Progress",
-            "Banking Sector Faces New Regulatory Challenges",
-            "Crypto Market Cap Reaches $2 Trillion Milestone"
-        ]
-        return headlines[index % headlines.count]
-    }
-    
-    private func getNewsDescription(for index: Int) -> String {
-        let descriptions = [
-            "Federal Reserve officials indicated a dovish stance in their latest meeting, suggesting that interest rate cuts may be on the horizon as inflation continues to moderate.",
-            "Major technology companies reported stronger-than-expected earnings driven by artificial intelligence initiatives, boosting investor confidence in the sector.",
-            "Crude oil futures spiked following geopolitical developments in the Middle East, raising concerns about global supply disruptions.",
-            "The world's largest cryptocurrency reached a significant milestone as more institutional investors embrace digital assets as a store of value.",
-            "Apple's latest quarterly results showed robust demand for its flagship smartphone, despite concerns about market saturation.",
-            "Electric vehicle manufacturer announced breakthrough in battery technology that could revolutionize the industry's range capabilities.",
-            "The banking giant's chief executive outlined potential economic challenges ahead, citing concerns about commercial real estate and consumer debt.",
-            "Semiconductor company's shares soared as demand for artificial intelligence chips continues to outpace supply significantly.",
-            "Precious metals reached record levels as investors seek safe-haven assets amid currency volatility and inflation concerns.",
-            "E-commerce leader revealed plans for significant infrastructure investment to meet growing demand for faster delivery services.",
-            "Cloud computing division's impressive growth helped drive overall revenue above analyst expectations for the quarter.",
-            "Traditional energy companies are benefiting from supply constraints and increased demand as economies reopen globally.",
-            "Social media company's virtual reality division showed encouraging progress in user adoption and revenue generation.",
-            "New financial regulations could significantly impact lending practices and profitability across the banking industry.",
-            "Digital asset market capitalization milestone reflects growing mainstream acceptance and institutional investment flows."
-        ]
-        return descriptions[index % descriptions.count]
-    }
-    
-    private func getRelatedSymbols(for index: Int) -> [String] {
-        let symbolSets = [
-            ["SPY", "QQQ"],
-            ["AAPL", "MSFT", "GOOGL"],
-            ["XOM", "CVX"],
-            ["BTC", "ETH"],
-            ["AAPL"],
-            ["TSLA"],
-            ["JPM", "BAC"],
-            ["NVDA"],
-            ["GLD", "SLV"],
-            ["AMZN"],
-            ["MSFT"],
-            ["XLE"],
-            ["META"],
-            ["XLF"],
-            ["BTC", "COIN"]
-        ]
-        return symbolSets[index % symbolSets.count]
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
+// MARK: - Preview
 #Preview {
     MarketNewsFeedView()
 }
