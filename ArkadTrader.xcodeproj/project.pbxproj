@@ -6,6 +6,14 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CECE0B642E15794800C28AA3 /* FirebaseAnalyticsWithoutAdIdSupport in Frameworks */ = {isa = PBXBuildFile; productRef = CECE0B632E15794800C28AA3 /* FirebaseAnalyticsWithoutAdIdSupport */; };
+		CED445472E1572400056B849 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = CED445462E1572400056B849 /* FirebaseAnalytics */; };
+		CED445492E1572400056B849 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = CED445482E1572400056B849 /* FirebaseAuth */; };
+		CED4454B2E1572400056B849 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = CED4454A2E1572400056B849 /* FirebaseFirestore */; };
+		CED4454D2E1572400056B849 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = CED4454C2E1572400056B849 /* FirebaseStorage */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		CE6AB6A32DF7D0AF006085B4 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -49,6 +57,7 @@
 				Models/User.swift,
 				Services/AuthService.swift,
 				Services/DataService.swift,
+				Services/FirestoreService.swift,
 				Services/MessagingService.swift,
 				Services/NetworkService.swift,
 				Services/SearchService.swift,
@@ -95,6 +104,7 @@
 			membershipExceptions = (
 				ArkadTraderApp.swift,
 				ContentView.swift,
+				"GoogleService-Info.plist",
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
@@ -142,6 +152,11 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CED445472E1572400056B849 /* FirebaseAnalytics in Frameworks */,
+				CECE0B642E15794800C28AA3 /* FirebaseAnalyticsWithoutAdIdSupport in Frameworks */,
+				CED4454D2E1572400056B849 /* FirebaseStorage in Frameworks */,
+				CED445492E1572400056B849 /* FirebaseAuth in Frameworks */,
+				CED4454B2E1572400056B849 /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -193,6 +208,11 @@
 			);
 			name = ArkadTrader;
 			packageProductDependencies = (
+				CED445462E1572400056B849 /* FirebaseAnalytics */,
+				CED445482E1572400056B849 /* FirebaseAuth */,
+				CED4454A2E1572400056B849 /* FirebaseFirestore */,
+				CED4454C2E1572400056B849 /* FirebaseStorage */,
+				CECE0B632E15794800C28AA3 /* FirebaseAnalyticsWithoutAdIdSupport */,
 			);
 			productName = ArkadTrader;
 			productReference = CED442912E027AFC0056B849 /* ArkadTrader.app */;
@@ -270,6 +290,9 @@
 			);
 			mainGroup = CE6AB68B2DF7D0AE006085B4;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CE6AB68B2DF7D0AE006085B4;
 			projectDirPath = "";
@@ -493,7 +516,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.3;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ArkadTrader;
+				PRODUCT_BUNDLE_IDENTIFIER = com.chrisscotto.ArkadTrader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -532,7 +555,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.3;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ArkadTrader;
+				PRODUCT_BUNDLE_IDENTIFIER = com.chrisscotto.ArkadTrader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -678,6 +701,45 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.15.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CECE0B632E15794800C28AA3 /* FirebaseAnalyticsWithoutAdIdSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsWithoutAdIdSupport;
+		};
+		CED445462E1572400056B849 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		CED445482E1572400056B849 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		CED4454A2E1572400056B849 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		CED4454C2E1572400056B849 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CED445452E1572400056B849 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CE6AB68C2DF7D0AE006085B4 /* Project object */;
 }

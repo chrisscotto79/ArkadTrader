@@ -1,3 +1,11 @@
+//
+//  FirestoreService.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 7/2/25.
+//
+
+
 // MARK: - Firestore Service
 // File: Shared/Services/FirestoreService.swift
 

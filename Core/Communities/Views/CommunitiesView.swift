@@ -1,3 +1,11 @@
+//
+//  CommunitiesView.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 7/2/25.
+//
+
+
 // MARK: - Communities View (Replaces MessagingView)
 // File: Core/Communities/Views/CommunitiesView.swift
 
