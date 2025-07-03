@@ -48,6 +48,7 @@
 				"Extensions/Color+Extensions.swift",
 				"Extensions/Double+Extensions.swift",
 				"Extensions/View+Extensions.swift",
+				Models/Community.swift,
 				Models/LeaderboardEntry.swift,
 				Models/Message.swift,
 				Models/Portfolio.swift,
@@ -55,12 +56,6 @@
 				Models/SearchModels.swift,
 				Models/Trade.swift,
 				Models/User.swift,
-				Services/AuthService.swift,
-				Services/DataService.swift,
-				Services/FirestoreService.swift,
-				Services/MessagingService.swift,
-				Services/NetworkService.swift,
-				Services/SearchService.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};

@@ -1,3 +1,11 @@
+//
+//  Community.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 7/3/25.
+//
+
+
 // File: Shared/Models/Community.swift
 // Community model for Firebase integration
 

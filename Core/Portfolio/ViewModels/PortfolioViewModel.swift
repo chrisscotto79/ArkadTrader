@@ -1,11 +1,12 @@
 // File: Core/Portfolio/ViewModels/PortfolioViewModel.swift
+// Updated PortfolioViewModel for Firebase integration
 
 import Foundation
 import SwiftUI
 
 @MainActor
 class PortfolioViewModel: ObservableObject {
-    @Published var trades: [FirebaseTrade] = []
+    @Published var trades: [Trade] = []
     @Published var portfolio: Portfolio?
     @Published var isLoading = false
     @Published var errorMessage = ""
@@ -23,7 +24,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     func loadPortfolioData() {
-        guard let userId = authService.currentUser?.id else { return }
+        guard let userId = authService.currentUser?.id.uuidString else { return }
         
         isLoading = true
         
@@ -46,7 +47,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     private func setupTradesListener() {
-        guard let userId = authService.currentUser?.id else { return }
+        guard let userId = authService.currentUser?.id.uuidString else { return }
         
         firestoreService.listenToUserTrades(userId: userId) { [weak self] trades in
             Task { @MainActor in
@@ -56,7 +57,7 @@ class PortfolioViewModel: ObservableObject {
         }
     }
     
-    func addTrade(_ trade: FirebaseTrade) {
+    func addTrade(_ trade: Trade) {
         Task {
             do {
                 try await firestoreService.addTrade(trade)
@@ -71,7 +72,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     func addTradeSimple(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, notes: String? = nil) {
-        guard let userId = authService.currentUser?.id else {
+        guard let userId = authService.currentUser?.id.uuidString else {
             self.errorMessage = "User not authenticated"
             self.showError = true
             return
@@ -83,13 +84,13 @@ class PortfolioViewModel: ObservableObject {
             return
         }
         
-        var newTrade = FirebaseTrade(ticker: ticker.uppercased(), tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
+        var newTrade = Trade(ticker: ticker.uppercased(), tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
         newTrade.notes = notes
         
         addTrade(newTrade)
     }
     
-    func closeTrade(_ trade: FirebaseTrade, exitPrice: Double) {
+    func closeTrade(_ trade: Trade, exitPrice: Double) {
         var updatedTrade = trade
         updatedTrade.exitPrice = exitPrice
         updatedTrade.exitDate = Date()
@@ -98,6 +99,8 @@ class PortfolioViewModel: ObservableObject {
         Task {
             do {
                 try await firestoreService.updateTrade(updatedTrade)
+                // Update user stats
+                await updateUserStats()
                 // The listener will automatically update the trades array
             } catch {
                 await MainActor.run {
@@ -108,10 +111,39 @@ class PortfolioViewModel: ObservableObject {
         }
     }
     
-    func deleteTrade(_ trade: FirebaseTrade) {
+    func updateTrade(_ trade: Trade, ticker: String? = nil, entryPrice: Double? = nil, quantity: Int? = nil, notes: String? = nil) {
+        var updatedTrade = trade
+        
+        if let ticker = ticker, !ticker.isEmpty {
+            updatedTrade.ticker = ticker.uppercased()
+        }
+        if let entryPrice = entryPrice, entryPrice > 0 {
+            updatedTrade.entryPrice = entryPrice
+        }
+        if let quantity = quantity, quantity > 0 {
+            updatedTrade.quantity = quantity
+        }
+        if let notes = notes {
+            updatedTrade.notes = notes
+        }
+        
         Task {
             do {
-                try await firestoreService.deleteTrade(tradeId: trade.id)
+                try await firestoreService.updateTrade(updatedTrade)
+                // The listener will automatically update the trades array
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "Failed to update trade: \(error.localizedDescription)"
+                    self.showError = true
+                }
+            }
+        }
+    }
+    
+    func deleteTrade(_ trade: Trade) {
+        Task {
+            do {
+                try await firestoreService.deleteTrade(tradeId: trade.id.uuidString)
                 // The listener will automatically update the trades array
             } catch {
                 await MainActor.run {
@@ -133,7 +165,7 @@ class PortfolioViewModel: ObservableObject {
         let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
         let winRate = closedTrades.count > 0 ? Double(winningTrades) / Double(closedTrades.count) * 100 : 0
         
-        var newPortfolio = Portfolio(userId: UUID(uuidString: userId) ?? UUID())
+        var newPortfolio = Portfolio(userId: userId)
         newPortfolio.totalValue = totalValue
         newPortfolio.totalProfitLoss = totalPL
         newPortfolio.openPositions = openPositions
@@ -155,11 +187,26 @@ class PortfolioViewModel: ObservableObject {
         return todaysTrades.reduce(0) { $0 + $1.profitLoss }
     }
     
+    private func updateUserStats() async {
+        guard let userId = authService.currentUser?.id.uuidString,
+              let portfolio = portfolio else { return }
+        
+        do {
+            try await firestoreService.updateUserStats(
+                userId: userId,
+                totalProfitLoss: portfolio.totalProfitLoss,
+                winRate: portfolio.winRate
+            )
+        } catch {
+            print("Failed to update user stats: \(error)")
+        }
+    }
+    
     func refreshData() {
         loadPortfolioData()
     }
     
-    func getBestPerformingTrade() -> FirebaseTrade? {
+    func getBestPerformingTrade() -> Trade? {
         return trades.filter { !$0.isOpen }.max(by: { $0.profitLoss < $1.profitLoss })
     }
     
@@ -167,5 +214,24 @@ class PortfolioViewModel: ObservableObject {
         return trades.reduce(0) { total, trade in
             total + (trade.entryPrice * Double(trade.quantity))
         }
+    }
+    
+    func getOpenPositionsCount() -> Int {
+        return trades.filter { $0.isOpen }.count
+    }
+    
+    func getClosedPositionsCount() -> Int {
+        return trades.filter { !$0.isOpen }.count
+    }
+    
+    func getWinRate() -> Double {
+        let closedTrades = trades.filter { !$0.isOpen }
+        guard !closedTrades.isEmpty else { return 0 }
+        let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
+        return Double(winningTrades) / Double(closedTrades.count) * 100
+    }
+    
+    func getTotalProfitLoss() -> Double {
+        return trades.filter { !$0.isOpen }.reduce(0) { $0 + $1.profitLoss }
     }
 }
