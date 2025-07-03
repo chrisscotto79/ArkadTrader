@@ -1,4 +1,4 @@
-// Shared/Components/TabBarView.swift
+// File: Shared/Components/TabBarView.swift
 
 import SwiftUI
 
@@ -31,7 +31,7 @@ struct TabBarView: View {
                 }
                 .tag(2)
             
-            // Messaging Tab
+            // Messages Tab (Keep original for now)
             MessagingView()
                 .tabItem {
                     Image(systemName: "envelope.fill")
@@ -53,5 +53,5 @@ struct TabBarView: View {
 
 #Preview {
     TabBarView()
-        .environmentObject(AuthViewModel())
+        .environmentObject(FirebaseAuthService.shared)
 }

@@ -1,4 +1,3 @@
-// MARK: - Enhanced PortfolioViewModel (Replace your existing one)
 // File: Core/Portfolio/ViewModels/PortfolioViewModel.swift
 
 import Foundation
@@ -6,38 +5,62 @@ import SwiftUI
 
 @MainActor
 class PortfolioViewModel: ObservableObject {
-    @Published var trades: [Trade] = []
+    @Published var trades: [FirebaseTrade] = []
     @Published var portfolio: Portfolio?
     @Published var isLoading = false
     @Published var errorMessage = ""
     @Published var showError = false
     
-    private let dataService = DataService.shared
+    private let firestoreService = FirestoreService.shared
+    private let authService = FirebaseAuthService.shared
     
     init() {
-        loadPortfolioData()
+        setupTradesListener()
+    }
+    
+    deinit {
+        firestoreService.removeAllListeners()
     }
     
     func loadPortfolioData() {
+        guard let userId = authService.currentUser?.id else { return }
+        
         isLoading = true
         
-        // Load trades from data service
-        self.trades = dataService.trades
-        
-        // Calculate portfolio metrics
-        calculatePortfolioMetrics()
-        
-        isLoading = false
-    }
-    
-    // MARK: - Enhanced Core Functions
-    
-    func addTrade(_ trade: Trade) {
-        trades.append(trade)
         Task {
             do {
-                try await dataService.addTrade(trade)
-                calculatePortfolioMetrics()
+                let trades = try await firestoreService.getUserTrades(userId: userId)
+                await MainActor.run {
+                    self.trades = trades
+                    self.calculatePortfolioMetrics()
+                    self.isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "Failed to load portfolio: \(error.localizedDescription)"
+                    self.showError = true
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+    
+    private func setupTradesListener() {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        firestoreService.listenToUserTrades(userId: userId) { [weak self] trades in
+            Task { @MainActor in
+                self?.trades = trades
+                self?.calculatePortfolioMetrics()
+            }
+        }
+    }
+    
+    func addTrade(_ trade: FirebaseTrade) {
+        Task {
+            do {
+                try await firestoreService.addTrade(trade)
+                // The listener will automatically update the trades array
             } catch {
                 await MainActor.run {
                     self.errorMessage = "Failed to add trade: \(error.localizedDescription)"
@@ -48,55 +71,48 @@ class PortfolioViewModel: ObservableObject {
     }
     
     func addTradeSimple(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, notes: String? = nil) {
-        guard let userId = AuthService.shared.currentUser?.id else {
+        guard let userId = authService.currentUser?.id else {
             self.errorMessage = "User not authenticated"
             self.showError = true
             return
         }
         
-        // Validate input
         guard !ticker.isEmpty, entryPrice > 0, quantity > 0 else {
             self.errorMessage = "Please check your input values"
             self.showError = true
             return
         }
         
-        var newTrade = Trade(ticker: ticker.uppercased(), tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
+        var newTrade = FirebaseTrade(ticker: ticker.uppercased(), tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
         newTrade.notes = notes
         
         addTrade(newTrade)
     }
     
-    func closeTrade(_ trade: Trade, exitPrice: Double) {
-        if let index = trades.firstIndex(where: { $0.id == trade.id }) {
-            trades[index].exitPrice = exitPrice
-            trades[index].exitDate = Date()
-            trades[index].isOpen = false
-            
-            Task {
-                do {
-                    try await dataService.updateTrade(trades[index])
-                    await MainActor.run {
-                        self.calculatePortfolioMetrics()
-                    }
-                } catch {
-                    await MainActor.run {
-                        self.errorMessage = "Failed to close trade: \(error.localizedDescription)"
-                        self.showError = true
-                    }
+    func closeTrade(_ trade: FirebaseTrade, exitPrice: Double) {
+        var updatedTrade = trade
+        updatedTrade.exitPrice = exitPrice
+        updatedTrade.exitDate = Date()
+        updatedTrade.isOpen = false
+        
+        Task {
+            do {
+                try await firestoreService.updateTrade(updatedTrade)
+                // The listener will automatically update the trades array
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "Failed to close trade: \(error.localizedDescription)"
+                    self.showError = true
                 }
             }
         }
     }
     
-    func deleteTrade(_ trade: Trade) {
-        trades.removeAll { $0.id == trade.id }
+    func deleteTrade(_ trade: FirebaseTrade) {
         Task {
             do {
-                try await dataService.deleteTrade(trade)
-                await MainActor.run {
-                    self.calculatePortfolioMetrics()
-                }
+                try await firestoreService.deleteTrade(tradeId: trade.id)
+                // The listener will automatically update the trades array
             } catch {
                 await MainActor.run {
                     self.errorMessage = "Failed to delete trade: \(error.localizedDescription)"
@@ -106,69 +122,44 @@ class PortfolioViewModel: ObservableObject {
         }
     }
     
-    func updateTrade(_ trade: Trade, ticker: String? = nil, entryPrice: Double? = nil, quantity: Int? = nil, notes: String? = nil) {
-        guard let index = trades.firstIndex(where: { $0.id == trade.id }) else {
-            self.errorMessage = "Trade not found"
-            self.showError = true
-            return
-        }
-        
-        if let ticker = ticker, !ticker.isEmpty {
-            trades[index].ticker = ticker.uppercased()
-        }
-        if let entryPrice = entryPrice, entryPrice > 0 {
-            trades[index].entryPrice = entryPrice
-        }
-        if let quantity = quantity, quantity > 0 {
-            trades[index].quantity = quantity
-        }
-        if let notes = notes {
-            trades[index].notes = notes
-        }
-        
-        Task {
-            do {
-                try await dataService.updateTrade(trades[index])
-                await MainActor.run {
-                    self.calculatePortfolioMetrics()
-                }
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = "Failed to update trade: \(error.localizedDescription)"
-                    self.showError = true
-                }
-            }
-        }
-    }
-    
     private func calculatePortfolioMetrics() {
-        guard let userId = AuthService.shared.currentUser?.id else { return }
+        guard let userId = authService.currentUser?.id else { return }
         
         let totalValue = trades.reduce(0) { $0 + $1.currentValue }
         let totalPL = trades.filter { !$0.isOpen }.reduce(0) { $0 + $1.profitLoss }
         let openPositions = trades.filter { $0.isOpen }.count
         let totalTrades = trades.count
-        let winningTrades = trades.filter { !$0.isOpen && $0.profitLoss > 0 }.count
-        let winRate = totalTrades > 0 ? Double(winningTrades) / Double(totalTrades) * 100 : 0
+        let closedTrades = trades.filter { !$0.isOpen }
+        let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
+        let winRate = closedTrades.count > 0 ? Double(winningTrades) / Double(closedTrades.count) * 100 : 0
         
-        var newPortfolio = Portfolio(userId: userId)
+        var newPortfolio = Portfolio(userId: UUID(uuidString: userId) ?? UUID())
         newPortfolio.totalValue = totalValue
         newPortfolio.totalProfitLoss = totalPL
         newPortfolio.openPositions = openPositions
         newPortfolio.totalTrades = totalTrades
         newPortfolio.winRate = winRate
-        newPortfolio.dayProfitLoss = 245.0 // Mock data - replace with real calculation
+        newPortfolio.dayProfitLoss = calculateDayProfitLoss()
         
         self.portfolio = newPortfolio
     }
     
-    // MARK: - Helper Functions
+    private func calculateDayProfitLoss() -> Double {
+        let today = Calendar.current.startOfDay(for: Date())
+        let todaysTrades = trades.filter { trade in
+            if let exitDate = trade.exitDate {
+                return Calendar.current.isDate(exitDate, inSameDayAs: today)
+            }
+            return false
+        }
+        return todaysTrades.reduce(0) { $0 + $1.profitLoss }
+    }
     
     func refreshData() {
         loadPortfolioData()
     }
     
-    func getBestPerformingTrade() -> Trade? {
+    func getBestPerformingTrade() -> FirebaseTrade? {
         return trades.filter { !$0.isOpen }.max(by: { $0.profitLoss < $1.profitLoss })
     }
     
@@ -176,13 +167,5 @@ class PortfolioViewModel: ObservableObject {
         return trades.reduce(0) { total, trade in
             total + (trade.entryPrice * Double(trade.quantity))
         }
-    }
-    
-    func getOpenPositionsCount() -> Int {
-        return trades.filter { $0.isOpen }.count
-    }
-    
-    func getClosedPositionsCount() -> Int {
-        return trades.filter { !$0.isOpen }.count
     }
 }

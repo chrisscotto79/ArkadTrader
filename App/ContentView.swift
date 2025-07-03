@@ -3,19 +3,19 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var authViewModel = AuthViewModel()
+    @StateObject private var authService = FirebaseAuthService.shared
     
     var body: some View {
         Group {
-            if authViewModel.isAuthenticated {
+            if authService.isAuthenticated {
                 TabBarView()
-                    .environmentObject(authViewModel)
+                    .environmentObject(authService)
             } else {
                 LoginView()
-                    .environmentObject(authViewModel)
+                    .environmentObject(authService)
             }
         }
-        .environmentObject(authViewModel)
+        .environmentObject(authService)
     }
 }
 
