@@ -78,12 +78,6 @@ struct LeaderboardView: View {
 
 
 
-enum TimeFrame: String, CaseIterable {
-    case daily = "Daily"
-    case weekly = "Weekly"
-    case monthly = "Monthly"
-    case allTime = "All Time"
-}
 
 #Preview {
     LeaderboardView()

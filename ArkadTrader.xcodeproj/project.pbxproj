@@ -54,8 +54,11 @@
 				Models/Portfolio.swift,
 				Models/Post.swift,
 				Models/SearchModels.swift,
-				Models/Trade.swift,
-				Models/User.swift,
+                                Models/Trade.swift,
+                                Models/User.swift,
+                                Models/TradingEnums.swift,
+                                Services/FirebaseServices.swift,
+                                Services/DataService.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
@@ -72,7 +75,6 @@
 				Home/Views/HomeView.swift,
 				Home/Views/MarketNewsFeedView.swift,
 				Home/Views/PostCardView.swift,
-				Home/Views/SocialFeedView.swift,
 				Leaderboard/ViewModels/LeaderboardViewModel.swift,
 				Leaderboard/Views/LeaderboardRowView.swift,
 				Leaderboard/Views/LeaderboardView.swift,
