@@ -223,10 +223,10 @@ enum PostType: String, CaseIterable, Codable {
 }
 
 enum PostVisibility: String, CaseIterable, Codable {
-    case public = "public"
+    case `public` = "public"
     case community = "community"
     case followers = "followers"
-    case private = "private"
+    case `private` = "private"
     
     var displayName: String {
         switch self {
