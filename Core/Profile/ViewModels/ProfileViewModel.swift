@@ -17,7 +17,7 @@ class ProfileViewModel: ObservableObject {
     @Published var showError = false
     @Published var showEditProfile = false
     
-    private let authService = AuthService.shared
+    private let authService = FirebaseAuthService.shared
     
     init() {
         loadUserProfile()
