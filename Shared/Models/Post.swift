@@ -5,7 +5,7 @@ import Foundation
 import FirebaseFirestore
 
 struct Post: Identifiable, Codable {
-    let id: UUID
+    var id: String
     var content: String
     var imageURL: String?
     var authorId: String
@@ -23,7 +23,7 @@ struct Post: Identifiable, Codable {
     var attachedTradeId: String?
     
     init(content: String, authorId: String, authorUsername: String) {
-        self.id = UUID()
+        self.id = UUID().uuidString
         self.content = content
         self.imageURL = nil
         self.authorId = authorId
@@ -129,7 +129,7 @@ struct Post: Identifiable, Codable {
         }
         
         var post = Post(content: content, authorId: authorId, authorUsername: authorUsername)
-        post.id = UUID(uuidString: id) ?? UUID()
+        post.id = id
         post.imageURL = data["imageURL"] as? String
         post.authorProfileImageURL = data["authorProfileImageURL"] as? String
         post.likesCount = likesCount

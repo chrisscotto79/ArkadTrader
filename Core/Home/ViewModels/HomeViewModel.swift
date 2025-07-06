@@ -14,8 +14,8 @@ class HomeViewModel: ObservableObject {
     @Published var errorMessage = ""
     @Published var showError = false
     
-    private let firestoreService = FirestoreService.shared
     private let authService = FirebaseAuthService.shared
+    private let firestoreService = FirestoreService.shared
     
     init() {
         loadPosts()
@@ -55,7 +55,7 @@ class HomeViewModel: ObservableObject {
     }
     
     func createPost(content: String, type: PostType = .text) {
-        guard let userId = authService.currentUser?.id.uuidString,
+        guard let userId = authService.currentUser?.id,
               let username = authService.currentUser?.username else {
             errorMessage = "User not authenticated"
             showError = true
@@ -80,7 +80,7 @@ class HomeViewModel: ObservableObject {
     }
     
     private func createMockPosts() -> [Post] {
-        guard let userId = authService.currentUser?.id.uuidString else { return [] }
+        guard let userId = authService.currentUser?.id else { return [] }
         
         return [
             Post(content: "Market looking bullish today! 📈 SPY hitting new highs", authorId: UUID().uuidString, authorUsername: "trader123"),
@@ -136,7 +136,7 @@ class LeaderboardViewModel: ObservableObject {
     }
     
     func followTrader(_ entry: LeaderboardEntry) {
-        guard let currentUserId = FirebaseAuthService.shared.currentUser?.id.uuidString,
+        guard let currentUserId = FirebaseAuthService.shared.currentUser?.id,
               let traderId = entry.userId else {
             errorMessage = "Unable to follow trader"
             showError = true

@@ -3,6 +3,9 @@
 
 import Foundation
 import SwiftUI
+import Firebase
+import FirebaseAuth
+import FirebaseFirestore
 
 @MainActor
 class PortfolioViewModel: ObservableObject {
@@ -12,8 +15,8 @@ class PortfolioViewModel: ObservableObject {
     @Published var errorMessage = ""
     @Published var showError = false
     
-    private let firestoreService = FirestoreService.shared
     private let authService = FirebaseAuthService.shared
+    private let firestoreService = FirestoreService.shared
     
     init() {
         setupTradesListener()
@@ -24,7 +27,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     func loadPortfolioData() {
-        guard let userId = authService.currentUser?.id.uuidString else { return }
+        guard let userId = authService.currentUser?.id else { return }
         
         isLoading = true
         
@@ -47,7 +50,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     private func setupTradesListener() {
-        guard let userId = authService.currentUser?.id.uuidString else { return }
+        guard let userId = authService.currentUser?.id else { return }
         
         firestoreService.listenToUserTrades(userId: userId) { [weak self] trades in
             Task { @MainActor in
@@ -72,7 +75,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     func addTradeSimple(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, notes: String? = nil) {
-        guard let userId = authService.currentUser?.id.uuidString else {
+        guard let userId = authService.currentUser?.id else {
             self.errorMessage = "User not authenticated"
             self.showError = true
             return
@@ -143,7 +146,7 @@ class PortfolioViewModel: ObservableObject {
     func deleteTrade(_ trade: Trade) {
         Task {
             do {
-                try await firestoreService.deleteTrade(tradeId: trade.id.uuidString)
+                try await firestoreService.deleteTrade(tradeId: trade.id)
                 // The listener will automatically update the trades array
             } catch {
                 await MainActor.run {
@@ -188,7 +191,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     private func updateUserStats() async {
-        guard let userId = authService.currentUser?.id.uuidString,
+        guard let userId = authService.currentUser?.id,
               let portfolio = portfolio else { return }
         
         do {

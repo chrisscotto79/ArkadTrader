@@ -8,6 +8,9 @@
 // File: Core/Leaderboard/ViewModels/LeaderboardViewModel.swift
 
 import Foundation
+import Firebase
+import FirebaseAuth
+import FirebaseFirestore
 
 @MainActor
 class LeaderboardViewModel: ObservableObject {
@@ -19,7 +22,8 @@ class LeaderboardViewModel: ObservableObject {
     @Published var marketSentiment: MarketSentiment = .bullish
     @Published var bullishPercentage: Double = 68.0
     
-    private let dataService = DataService.shared
+    private let authService = FirebaseAuthService.shared
+    private let firestoreService = FirestoreService.shared
     
     init() {
         loadLeaderboard()
@@ -28,9 +32,9 @@ class LeaderboardViewModel: ObservableObject {
     func loadLeaderboard() {
         isLoading = true
         
-        // For MVP, use mock data
+        // TODO: Load leaderboard from Firestore
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.leaderboard = self.dataService.leaderboard
+            self.leaderboard = []
             self.isLoading = false
         }
     }

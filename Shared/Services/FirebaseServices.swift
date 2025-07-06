@@ -222,12 +222,12 @@ class FirestoreService: ObservableObject {
     
     func addTrade(_ trade: Trade) async throws {
         let tradeData = trade.toFirestore()
-        try await db.collection("trades").document(trade.id.uuidString).setData(tradeData)
+        try await db.collection("trades").document(trade.id).setData(tradeData)
     }
     
     func updateTrade(_ trade: Trade) async throws {
         let tradeData = trade.toFirestore()
-        try await db.collection("trades").document(trade.id.uuidString).updateData(tradeData)
+        try await db.collection("trades").document(trade.id).updateData(tradeData)
     }
     
     func deleteTrade(tradeId: String) async throws {
@@ -339,7 +339,7 @@ class FirestoreService: ObservableObject {
     
     func createPost(_ post: Post) async throws {
         let postData = post.toFirestore()
-        try await db.collection("posts").document(post.id.uuidString).setData(postData)
+        try await db.collection("posts").document(post.id).setData(postData)
     }
     
     func getFeedPosts(communityId: String? = nil) async throws -> [Post] {

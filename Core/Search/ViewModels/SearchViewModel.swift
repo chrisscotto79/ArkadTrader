@@ -17,6 +17,7 @@ class SearchViewModel: ObservableObject {
     @Published var errorMessage = ""
     @Published var showError = false
     
+    private let authService = FirebaseAuthService.shared
     private let firestoreService = FirestoreService.shared
     
     init() {
