@@ -5,7 +5,7 @@ import Foundation
 import FirebaseFirestore
 
 struct Trade: Identifiable, Codable {
-    let id: UUID
+    var id: String
     var userId: String
     var ticker: String
     var tradeType: TradeType
@@ -71,7 +71,7 @@ struct Trade: Identifiable, Codable {
     // MARK: - Initializers
     
     init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: UUID) {
-        self.id = UUID()
+        self.id = UUID().uuidString
         self.userId = userId.uuidString
         self.ticker = ticker.uppercased()
         self.tradeType = tradeType
@@ -87,7 +87,7 @@ struct Trade: Identifiable, Codable {
     }
     
     init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: String) {
-        self.id = UUID()
+        self.id = UUID().uuidString
         self.userId = userId
         self.ticker = ticker.uppercased()
         self.tradeType = tradeType
@@ -134,7 +134,7 @@ struct Trade: Identifiable, Codable {
         }
         
         var trade = Trade(ticker: ticker, tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
-        trade.id = UUID(uuidString: id) ?? UUID()
+        trade.id = id
         trade.exitPrice = data["exitPrice"] as? Double
         trade.notes = data["notes"] as? String
         trade.strategy = data["strategy"] as? String

@@ -5,7 +5,7 @@ import Foundation
 import FirebaseFirestore
 
 struct User: Identifiable, Codable {
-    let id: UUID
+    let id: String
     var email: String
     var username: String
     var fullName: String
@@ -22,7 +22,7 @@ struct User: Identifiable, Codable {
     var communityIds: [String]
     
     init(email: String, username: String, fullName: String) {
-        self.id = UUID()
+        self.id = UUID().uuidString
         self.email = email
         self.username = username.lowercased()
         self.fullName = fullName
@@ -40,7 +40,7 @@ struct User: Identifiable, Codable {
     }
     
     init(id: String, email: String, username: String, fullName: String) {
-        self.id = UUID(uuidString: id) ?? UUID()
+        self.id = id
         self.email = email
         self.username = username.lowercased()
         self.fullName = fullName
@@ -71,12 +71,17 @@ struct User: Identifiable, Codable {
         let names = fullName.split(separator: " ")
         let firstInitial = names.first?.first ?? Character("U")
         let lastInitial = names.count > 1 ? names.last?.first : nil
-        
+
         if let lastInitial = lastInitial {
             return String(firstInitial) + String(lastInitial)
         } else {
             return String(firstInitial)
         }
+    }
+
+    // For backward compatibility with UUID
+    var uuid: UUID? {
+        UUID(uuidString: id)
     }
     
     // MARK: - Firebase Integration

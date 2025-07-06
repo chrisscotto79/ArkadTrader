@@ -3,6 +3,9 @@
 
 import Foundation
 import SwiftUI
+import Firebase
+import FirebaseAuth
+import FirebaseFirestore
 
 @MainActor
 class AuthViewModel: ObservableObject {
@@ -15,6 +18,7 @@ class AuthViewModel: ObservableObject {
     @Published var showError = false
     
     private let authService = FirebaseAuthService.shared
+    private let firestoreService = FirestoreService.shared
     
     var isAuthenticated: Bool {
         authService.isAuthenticated
