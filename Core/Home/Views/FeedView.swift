@@ -1,18 +1,15 @@
-//
-//  FeedView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
+// File: Core/Home/Views/FeedView.swift
+// Simplified Feed View
 
 import SwiftUI
 
 struct FeedView: View {
     var body: some View {
-        SocialFeedView() // Just use the new SocialFeedView component
+        SocialFeedView()
     }
 }
 
 #Preview {
     FeedView()
+        .environmentObject(FirebaseAuthService.shared)
 }

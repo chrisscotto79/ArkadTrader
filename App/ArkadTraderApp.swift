@@ -1,11 +1,12 @@
 // File: App/ArkadTraderApp.swift
-// Keep Firebase integration
+// Simplified App Entry Point
 
 import SwiftUI
 import Firebase
 
 @main
 struct ArkadTraderApp: App {
+    @StateObject private var authService = FirebaseAuthService.shared
     
     init() {
         FirebaseApp.configure()
@@ -14,7 +15,7 @@ struct ArkadTraderApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(FirebaseAuthService.shared)
+                .environmentObject(authService)
         }
     }
 }

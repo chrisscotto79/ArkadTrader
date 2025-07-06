@@ -1,42 +1,24 @@
-// Core/Portfolio/Views/AddTradeView.swift
-// Clean AddTradeView without conflicts
+// File: Core/Portfolio/Views/AddTradeView.swift
+// Simplified Add Trade View
 
 import SwiftUI
 
 struct AddTradeView: View {
+    @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
-    @EnvironmentObject var authViewModel: AuthViewModel
-    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     
     @State private var ticker = ""
-    @State private var tradeType: TradeType = .stock
     @State private var entryPrice = ""
     @State private var quantity = ""
+    @State private var tradeType: TradeType = .stock
     @State private var notes = ""
-    @State private var strategy = ""
-    @State private var selectedStrategy: AddTradeStrategy = .custom
-    
-    @State private var showingConfirmation = false
-    @State private var isValidating = false
-    @State private var validationMessage = ""
-    @State private var isAddingTrade = false
-    @State private var showSuccess = false
     
     var body: some View {
         NavigationView {
             Form {
-                Section("Trade Information") {
-                    HStack {
-                        Text("Ticker")
-                        Spacer()
-                        TextField("AAPL", text: $ticker)
-                            .textCase(.uppercase)
-                            .multilineTextAlignment(.trailing)
-                            .onChange(of: ticker) { _, newValue in
-                                ticker = newValue.uppercased()
-                                validateTicker()
-                            }
-                    }
+                Section("Trade Details") {
+                    TextField("Ticker (e.g. AAPL)", text: $ticker)
+                        .textCase(.uppercase)
                     
                     Picker("Trade Type", selection: $tradeType) {
                         ForEach(TradeType.allCases, id: \.self) { type in
@@ -44,109 +26,24 @@ struct AddTradeView: View {
                         }
                     }
                     
-                    HStack {
-                        Text("Entry Price")
-                        Spacer()
-                        TextField("0.00", text: $entryPrice)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                    }
+                    TextField("Entry Price", text: $entryPrice)
+                        .keyboardType(.decimalPad)
                     
-                    HStack {
-                        Text("Quantity")
-                        Spacer()
-                        TextField("0", text: $quantity)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    
-                    if !validationMessage.isEmpty {
-                        Text(validationMessage)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
+                    TextField("Quantity", text: $quantity)
+                        .keyboardType(.numberPad)
                 }
                 
-                Section("Strategy") {
-                    Picker("Trading Strategy", selection: $selectedStrategy) {
-                        ForEach(AddTradeStrategy.allCases, id: \.self) { strategy in
-                            Text(strategy.displayName).tag(strategy)
-                        }
-                    }
-                    
-                    if selectedStrategy == .custom {
-                        TextField("Custom strategy description", text: $strategy, axis: .vertical)
-                            .lineLimit(2...4)
-                    }
-                }
-                
-                Section("Notes") {
-                    TextField("Trade notes (optional)", text: $notes, axis: .vertical)
+                Section("Notes (Optional)") {
+                    TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(3...6)
-                }
-                
-                Section("Trade Summary") {
-                    if isFormValid {
-                        HStack {
-                            Text("Total Investment")
-                            Spacer()
-                            Text("$\(String(format: "%.2f", totalInvestment))")
-                                .fontWeight(.semibold)
-                        }
-                        
-                        HStack {
-                            Text("Position Size")
-                            Spacer()
-                            Text("\(quantity) shares")
-                                .fontWeight(.semibold)
-                        }
-                    }
                 }
             }
             .navigationTitle("Add Trade")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add Trade") {
-                        showingConfirmation = true
-                    }
-                    .disabled(!isFormValid || isAddingTrade)
-                    .overlay(
-                        Group {
-                            if isAddingTrade {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            }
-                        }
-                    )
-                }
-            }
-        }
-        .confirmationDialog("Confirm Trade", isPresented: $showingConfirmation, titleVisibility: .visible) {
-            Button("Add Trade") {
-                addTrade()
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Add \(quantity) shares of \(ticker) at \(entryPrice.isEmpty ? "$0.00" : "$\(entryPrice)") per share?")
-        }
-        .alert("Trade Added", isPresented: $showSuccess) {
-            Button("OK") {
-                dismiss()
-            }
-        } message: {
-            Text("Successfully added \(quantity) shares of \(ticker)")
-        }
-        .alert("Error", isPresented: $portfolioViewModel.showError) {
-            Button("OK") { }
-        } message: {
-            Text(portfolioViewModel.errorMessage)
+            .navigationBarItems(
+                leading: Button("Cancel") { dismiss() },
+                trailing: Button("Add") { addTrade() }
+                    .disabled(!isFormValid)
+            )
         }
     }
     
@@ -155,82 +52,37 @@ struct AddTradeView: View {
         !entryPrice.isEmpty &&
         !quantity.isEmpty &&
         Double(entryPrice) != nil &&
-        Int(quantity) != nil &&
-        Double(entryPrice)! > 0 &&
-        Int(quantity)! > 0 &&
-        validationMessage.isEmpty
-    }
-    
-    private var totalInvestment: Double {
-        guard let price = Double(entryPrice), let qty = Int(quantity) else { return 0 }
-        return price * Double(qty)
-    }
-    
-    private func validateTicker() {
-        isValidating = true
-        validationMessage = ""
-        
-        // Basic ticker validation
-        if ticker.count > 5 {
-            validationMessage = "Ticker too long"
-        } else if ticker.contains(where: { !$0.isLetter }) {
-            validationMessage = "Ticker should only contain letters"
-        }
-        
-        isValidating = false
+        Int(quantity) != nil
     }
     
     private func addTrade() {
-        guard let price = Double(entryPrice),
-              let qty = Int(quantity) else {
-            return
-        }
+        guard let userId = authService.currentUser?.id,
+              let price = Double(entryPrice),
+              let qty = Int(quantity) else { return }
         
-        isAddingTrade = true
-        
-        let finalStrategy = selectedStrategy == .custom ? strategy : selectedStrategy.displayName
-        
-        portfolioViewModel.addTradeSimple(
+        let trade = Trade(
             ticker: ticker,
             tradeType: tradeType,
             entryPrice: price,
             quantity: qty,
-            notes: notes.isEmpty ? nil : notes
+            userId: userId
         )
         
-        isAddingTrade = false
+        var newTrade = trade
+        newTrade.notes = notes.isEmpty ? nil : notes
         
-        if !portfolioViewModel.showError {
-            showSuccess = true
-        }
-    }
-}
-
-// MARK: - AddTrade Strategy Enum (renamed to avoid conflicts)
-enum AddTradeStrategy: CaseIterable {
-    case dayTrading
-    case swingTrading
-    case longTerm
-    case momentum
-    case valueInvesting
-    case technicalAnalysis
-    case custom
-    
-    var displayName: String {
-        switch self {
-        case .dayTrading: return "Day Trading"
-        case .swingTrading: return "Swing Trading"
-        case .longTerm: return "Long Term Hold"
-        case .momentum: return "Momentum"
-        case .valueInvesting: return "Value Investing"
-        case .technicalAnalysis: return "Technical Analysis"
-        case .custom: return "Custom Strategy"
+        Task {
+            do {
+                try await authService.addTrade(newTrade)
+                dismiss()
+            } catch {
+                print("Error adding trade: \(error)")
+            }
         }
     }
 }
 
 #Preview {
     AddTradeView()
-        .environmentObject(AuthViewModel())
-        .environmentObject(PortfolioViewModel())
+        .environmentObject(FirebaseAuthService.shared)
 }

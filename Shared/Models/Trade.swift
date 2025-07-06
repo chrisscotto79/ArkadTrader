@@ -1,5 +1,4 @@
 // File: Shared/Models/Trade.swift
-// Unified Trade model for Firebase integration
 
 import Foundation
 import FirebaseFirestore
@@ -32,60 +31,40 @@ struct Trade: Identifiable, Codable {
     }
     
     var currentValue: Double {
-        if let exitPrice = exitPrice {
-            return exitPrice * Double(quantity)
-        }
-        return entryPrice * Double(quantity)
+        (exitPrice ?? entryPrice) * Double(quantity)
     }
-    
-    // Additional computed properties for UI
+
     var daysHeld: Int {
         let endDate = exitDate ?? Date()
         return Calendar.current.dateComponents([.day], from: entryDate, to: endDate).day ?? 0
     }
-    
+
     var formattedEntryDate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         return formatter.string(from: entryDate)
     }
-    
+
     var statusText: String {
-        if isOpen {
-            return "OPEN"
-        } else {
-            return profitLoss >= 0 ? "PROFIT" : "LOSS"
-        }
+        isOpen ? "OPEN" : (profitLoss >= 0 ? "PROFIT" : "LOSS")
     }
-    
+
     var shareableContent: String {
         let performance = profitLoss >= 0 ? "📈 +\(profitLoss.asCurrency)" : "📉 \(profitLoss.asCurrency)"
         return "Just \(isOpen ? "opened" : "closed") my \(ticker) position! \(performance)"
     }
-    
+
     var isRecentlyUpdated: Bool {
         let oneDayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
         return entryDate > oneDayAgo
     }
-    
+
     // MARK: - Initializers
-    
+
     init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: UUID) {
-        self.id = UUID().uuidString
-        self.userId = userId.uuidString
-        self.ticker = ticker.uppercased()
-        self.tradeType = tradeType
-        self.entryPrice = entryPrice
-        self.exitPrice = nil
-        self.quantity = quantity
-        self.entryDate = Date()
-        self.exitDate = nil
-        self.notes = nil
-        self.strategy = nil
-        self.isOpen = true
-        self.sharedCommunityIds = []
+        self.init(ticker: ticker, tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId.uuidString)
     }
-    
+
     init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: String) {
         self.id = UUID().uuidString
         self.userId = userId
@@ -101,26 +80,27 @@ struct Trade: Identifiable, Codable {
         self.isOpen = true
         self.sharedCommunityIds = []
     }
-    
+
     // MARK: - Firebase Integration
-    
+
     func toFirestore() -> [String: Any] {
-        return [
+        let data: [String: Any?] = [
             "userId": userId,
             "ticker": ticker,
             "tradeType": tradeType.rawValue,
             "entryPrice": entryPrice,
-            "exitPrice": exitPrice as Any,
+            "exitPrice": exitPrice,
             "quantity": quantity,
             "entryDate": Timestamp(date: entryDate),
-            "exitDate": exitDate != nil ? Timestamp(date: exitDate!) : nil as Any,
-            "notes": notes as Any,
-            "strategy": strategy as Any,
+            "exitDate": exitDate.map { Timestamp(date: $0) },
+            "notes": notes,
+            "strategy": strategy,
             "isOpen": isOpen,
             "sharedCommunityIds": sharedCommunityIds
         ]
+        return data.compactMapValues { $0 }
     }
-    
+
     static func fromFirestore(data: [String: Any], id: String) throws -> Trade {
         guard let userId = data["userId"] as? String,
               let ticker = data["ticker"] as? String,
@@ -132,20 +112,17 @@ struct Trade: Identifiable, Codable {
               let isOpen = data["isOpen"] as? Bool else {
             throw FirestoreError.invalidData
         }
-        
+
         var trade = Trade(ticker: ticker, tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
         trade.id = id
         trade.exitPrice = data["exitPrice"] as? Double
         trade.notes = data["notes"] as? String
         trade.strategy = data["strategy"] as? String
-        trade.isOpen = isOpen
         trade.sharedCommunityIds = data["sharedCommunityIds"] as? [String] ?? []
         trade.entryDate = entryDateTimestamp.dateValue()
-        
-        if let exitDateTimestamp = data["exitDate"] as? Timestamp {
-            trade.exitDate = exitDateTimestamp.dateValue()
-        }
-        
+        trade.exitDate = (data["exitDate"] as? Timestamp)?.dateValue()
+        trade.isOpen = isOpen
+
         return trade
     }
 }
@@ -155,7 +132,7 @@ enum TradeType: String, CaseIterable, Codable {
     case option = "option"
     case crypto = "crypto"
     case forex = "forex"
-    
+
     var displayName: String {
         switch self {
         case .stock: return "Stock"
@@ -164,7 +141,7 @@ enum TradeType: String, CaseIterable, Codable {
         case .forex: return "Forex"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .stock: return "chart.line.uptrend.xyaxis"

@@ -1,3 +1,5 @@
+// File: Core/Messaging/ViewModels/MessagingViewModel.swift
+// Simplified Messaging ViewModel
 
 import Foundation
 import SwiftUI

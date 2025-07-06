@@ -1,17 +1,11 @@
-//
-//  Portfolio.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/18/25.
-//
-
 // File: Shared/Models/Portfolio.swift
+// Simplified Portfolio Model
 
 import Foundation
 
 struct Portfolio: Identifiable, Codable {
     let id: UUID
-    var userId: UUID
+    var userId: String
     var totalValue: Double
     var totalProfitLoss: Double
     var dayProfitLoss: Double
@@ -20,7 +14,7 @@ struct Portfolio: Identifiable, Codable {
     var winRate: Double
     var lastUpdated: Date
     
-    init(userId: UUID) {
+    init(userId: String) {
         self.id = UUID()
         self.userId = userId
         self.totalValue = 0.0

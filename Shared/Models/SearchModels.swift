@@ -1,3 +1,5 @@
+// File: Shared/Models/SearchModels.swift
+// Simplified Search Models
 
 import Foundation
 

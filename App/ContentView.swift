@@ -1,24 +1,21 @@
 // File: App/ContentView.swift
+// Simplified Content View
 
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var authService = FirebaseAuthService.shared
+    @EnvironmentObject var authService: FirebaseAuthService
     
     var body: some View {
-        Group {
-            if authService.isAuthenticated {
-                TabBarView()
-                    .environmentObject(authService)
-            } else {
-                LoginView()
-                    .environmentObject(authService)
-            }
+        if authService.isAuthenticated {
+            TabBarView()
+        } else {
+            LoginView()
         }
-        .environmentObject(authService)
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(FirebaseAuthService.shared)
 }

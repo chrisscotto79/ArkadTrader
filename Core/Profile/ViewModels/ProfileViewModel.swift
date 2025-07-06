@@ -1,11 +1,5 @@
-//
-//  ProfileViewModel.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
 // File: Core/Profile/ViewModels/ProfileViewModel.swift
+// Simplified Profile ViewModel
 
 import Foundation
 
@@ -13,11 +7,8 @@ import Foundation
 class ProfileViewModel: ObservableObject {
     @Published var user: User?
     @Published var isLoading = false
-    @Published var errorMessage = ""
-    @Published var showError = false
-    @Published var showEditProfile = false
     
-    private let authService = AuthService.shared
+    private let authService = FirebaseAuthService.shared
     
     init() {
         loadUserProfile()
@@ -28,21 +19,19 @@ class ProfileViewModel: ObservableObject {
     }
     
     func updateProfile(fullName: String, bio: String?) {
-        guard var currentUser = user else { return }
-        
-        currentUser.fullName = fullName
-        currentUser.bio = bio
-        
-        self.user = currentUser
-        authService.currentUser = currentUser
-        
-        // Save updated user
-        if let data = try? JSONEncoder().encode(currentUser) {
-            UserDefaults.standard.set(data, forKey: "currentUser")
+        Task {
+            do {
+                try await authService.updateProfile(fullName: fullName, bio: bio)
+                loadUserProfile()
+            } catch {
+                print("Error updating profile: \(error)")
+            }
         }
     }
     
     func logout() {
-        authService.logout()
+        Task {
+            await authService.logout()
+        }
     }
 }

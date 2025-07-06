@@ -1,72 +1,40 @@
-//
-//  LeaderboardView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 6/17/25.
-//
-
 // File: Core/Leaderboard/Views/LeaderboardView.swift
+// Simplified Leaderboard View
 
 import SwiftUI
 
 struct LeaderboardView: View {
-    @State private var selectedTimeframe: TimeFrame = .weekly
-    
-    let mockLeaderboard = [
-        LeaderboardEntry(rank: 1, username: "ProTrader", profitLoss: 15240.50, winRate: 78.5, isVerified: true),
-        LeaderboardEntry(rank: 2, username: "BullRunner", profitLoss: 12890.25, winRate: 72.3, isVerified: true),
-        LeaderboardEntry(rank: 3, username: "MarketMaster", profitLoss: 11650.00, winRate: 69.8, isVerified: false),
-        LeaderboardEntry(rank: 4, username: "TradingGuru", profitLoss: 9875.75, winRate: 68.2, isVerified: true),
-        LeaderboardEntry(rank: 5, username: "StockWiz", profitLoss: 8420.30, winRate: 65.7, isVerified: false)
-    ]
+    @StateObject private var viewModel = LeaderboardViewModel()
     
     var body: some View {
         NavigationView {
             VStack {
-                // Time frame picker
-                Picker("Timeframe", selection: $selectedTimeframe) {
+                // Timeframe Picker
+                Picker("Timeframe", selection: $viewModel.selectedTimeframe) {
                     ForEach(TimeFrame.allCases, id: \.self) { timeframe in
                         Text(timeframe.rawValue).tag(timeframe)
                     }
                 }
                 .pickerStyle(SegmentedPickerStyle())
-                .padding(.horizontal)
-                
-                // Market sentiment card
-                VStack {
-                    HStack {
-                        Text("Market Sentiment")
-                            .font(.headline)
-                        
-                        Spacer()
-                        
-                        HStack {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .foregroundColor(.green)
-                            Text("Bullish 68%")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    
-                    Text("Community is feeling optimistic about the markets")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
                 .padding()
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(12)
-                .padding(.horizontal)
                 
-                // Leaderboard list
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(mockLeaderboard, id: \.rank) { entry in
-                            LeaderboardRowView(entry: entry)
+                // Leaderboard List
+                if viewModel.isLoading {
+                    LoadingView()
+                        .padding(.top, 50)
+                } else if viewModel.leaderboard.isEmpty {
+                    Text("No data available")
+                        .foregroundColor(.gray)
+                        .padding(.top, 50)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(viewModel.leaderboard) { entry in
+                                LeaderboardRowView(entry: entry)
+                            }
                         }
+                        .padding()
                     }
-                    .padding(.horizontal)
                 }
                 
                 Spacer()
@@ -76,8 +44,57 @@ struct LeaderboardView: View {
     }
 }
 
-
-
+struct LeaderboardRowView: View {
+    let entry: LeaderboardEntry
+    
+    var body: some View {
+        HStack {
+            // Rank
+            Text("#\(entry.rank)")
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(.blue)
+                .frame(width: 40, alignment: .leading)
+            
+            // User info
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(entry.username)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    if entry.isVerified {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.blue)
+                            .font(.caption)
+                    }
+                }
+                
+                Text("Win Rate: \(entry.winRate, specifier: "%.1f")%")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+            
+            // P&L
+            VStack(alignment: .trailing) {
+                Text("+$\(entry.profitLoss, specifier: "%.0f")")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.green)
+                
+                Text("Total P&L")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(8)
+        .shadow(color: .gray.opacity(0.2), radius: 2)
+    }
+}
 
 #Preview {
     LeaderboardView()

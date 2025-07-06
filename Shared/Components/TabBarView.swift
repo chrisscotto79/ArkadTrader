@@ -1,4 +1,5 @@
 // File: Shared/Components/TabBarView.swift
+// Simplified TabBar View
 
 import SwiftUI
 
@@ -7,7 +8,6 @@ struct TabBarView: View {
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            // Home Tab
             HomeView()
                 .tabItem {
                     Image(systemName: "house.fill")
@@ -15,7 +15,6 @@ struct TabBarView: View {
                 }
                 .tag(0)
             
-            // Search Tab
             SearchView()
                 .tabItem {
                     Image(systemName: "magnifyingglass")
@@ -23,7 +22,6 @@ struct TabBarView: View {
                 }
                 .tag(1)
             
-            // Portfolio Tab
             PortfolioView()
                 .tabItem {
                     Image(systemName: "chart.line.uptrend.xyaxis")
@@ -31,15 +29,13 @@ struct TabBarView: View {
                 }
                 .tag(2)
             
-            // Messages Tab (Keep original for now)
-            MessagingView()
+            CommunitiesView()
                 .tabItem {
-                    Image(systemName: "envelope.fill")
-                    Text("Messages")
+                    Image(systemName: "person.3.fill")
+                    Text("Communities")
                 }
                 .tag(3)
             
-            // Profile Tab
             ProfileView()
                 .tabItem {
                     Image(systemName: "person.fill")
@@ -47,7 +43,7 @@ struct TabBarView: View {
                 }
                 .tag(4)
         }
-        .accentColor(.arkadGold)
+        .accentColor(.blue)
     }
 }
 
