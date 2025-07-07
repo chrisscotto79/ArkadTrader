@@ -1,5 +1,5 @@
 // File: Core/Profile/Views/ProfileTabContents.swift
-// Enhanced Trades Tab with Interactive Features
+// Fixed Profile Tab Contents - removed duplicate CloseTradeSheet
 
 import SwiftUI
 
@@ -63,7 +63,7 @@ struct ProfileTradesTab: View {
                                 Text("Filter")
                             }
                             .font(.caption)
-                            .foregroundColor(.arkadGold)
+                            .foregroundColor(.blue)
                         }
                     }
                     .padding(.horizontal)
@@ -73,25 +73,25 @@ struct ProfileTradesTab: View {
                             TradingStatCard(
                                 title: "Total Trades",
                                 value: "\(portfolioViewModel.trades.count)",
-                                color: .arkadGold,
+                                color: .blue,
                                 subtitle: "All time"
                             )
                             TradingStatCard(
                                 title: "Open Positions",
                                 value: "\(portfolioViewModel.trades.filter { $0.isOpen }.count)",
-                                color: .marketGreen,
+                                color: .green,
                                 subtitle: "Active"
                             )
                             TradingStatCard(
                                 title: "Closed Trades",
                                 value: "\(portfolioViewModel.trades.filter { !$0.isOpen }.count)",
-                                color: .arkadGold,
+                                color: .blue,
                                 subtitle: "Completed"
                             )
                             TradingStatCard(
                                 title: "Win Rate",
                                 value: "\(String(format: "%.0f", calculateWinRate()))%",
-                                color: .marketGreen,
+                                color: .green,
                                 subtitle: "Success"
                             )
                         }
@@ -120,7 +120,7 @@ struct ProfileTradesTab: View {
                             Image(systemName: "arrow.up.arrow.down")
                         }
                         .font(.caption)
-                        .foregroundColor(.arkadGold)
+                        .foregroundColor(.blue)
                     }
                 }
                 .padding(.horizontal)
@@ -146,7 +146,7 @@ struct ProfileTradesTab: View {
                 VStack(spacing: 20) {
                     Image(systemName: "chart.bar.doc.horizontal")
                         .font(.system(size: 64))
-                        .foregroundColor(.arkadGold.opacity(0.3))
+                        .foregroundColor(.blue.opacity(0.3))
                     
                     VStack(spacing: 8) {
                         Text("No Trades Yet")
@@ -168,10 +168,10 @@ struct ProfileTradesTab: View {
                         }
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.arkadBlack)
+                        .foregroundColor(.white)
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
-                        .background(Color.arkadGold)
+                        .background(Color.blue)
                         .cornerRadius(25)
                     }
                 }
@@ -238,7 +238,7 @@ struct EnhancedTradeRow: View {
             HStack(spacing: 16) {
                 // Trade Status Icon
                 Circle()
-                    .fill(trade.isOpen ? Color.arkadGold.opacity(0.2) : (trade.profitLoss >= 0 ? Color.marketGreen.opacity(0.2) : Color.marketRed.opacity(0.2)))
+                    .fill(trade.isOpen ? Color.blue.opacity(0.2) : (trade.profitLoss >= 0 ? Color.green.opacity(0.2) : Color.red.opacity(0.2)))
                     .frame(width: 50, height: 50)
                     .overlay(
                         VStack(spacing: 2) {
@@ -249,7 +249,7 @@ struct EnhancedTradeRow: View {
                                 .font(.caption2)
                                 .fontWeight(.semibold)
                         }
-                        .foregroundColor(trade.isOpen ? .arkadGold : (trade.profitLoss >= 0 ? .marketGreen : .marketRed))
+                        .foregroundColor(trade.isOpen ? .blue : (trade.profitLoss >= 0 ? .green : .red))
                     )
                 
                 // Trade Info
@@ -267,14 +267,14 @@ struct EnhancedTradeRow: View {
                                 .fontWeight(.bold)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
-                                .background(Color.arkadGold.opacity(0.2))
-                                .foregroundColor(.arkadGold)
+                                .background(Color.blue.opacity(0.2))
+                                .foregroundColor(.blue)
                                 .cornerRadius(4)
                         } else {
                             Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
                                 .font(.headline)
                                 .fontWeight(.bold)
-                                .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                                .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                         }
                     }
                     
@@ -289,7 +289,7 @@ struct EnhancedTradeRow: View {
                             Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.1f", trade.profitLossPercentage))%")
                                 .font(.caption)
                                 .fontWeight(.semibold)
-                                .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                                .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                         }
                     }
                     
@@ -337,7 +337,7 @@ struct ProfileTradeFilterSheet: View {
                             Spacer()
                             if selectedFilter == filter {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(.arkadGold)
+                                    .foregroundColor(.blue)
                             }
                         }
                     }
@@ -382,8 +382,8 @@ struct TradeDetailView: View {
                                     .fontWeight(.bold)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
-                                    .background(Color.arkadGold.opacity(0.2))
-                                    .foregroundColor(.arkadGold)
+                                    .background(Color.blue.opacity(0.2))
+                                    .foregroundColor(.blue)
                                     .cornerRadius(8)
                             }
                         }
@@ -393,11 +393,11 @@ struct TradeDetailView: View {
                                 Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.2f", trade.profitLoss))" : "-$\(String(format: "%.2f", abs(trade.profitLoss)))")
                                     .font(.title)
                                     .fontWeight(.bold)
-                                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                                    .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                                 
                                 Text("(\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.2f", trade.profitLossPercentage))%)")
                                     .font(.title3)
-                                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                                    .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                             }
                         }
                     }
@@ -447,7 +447,7 @@ struct TradeDetailView: View {
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding()
-                                .background(Color.arkadGold)
+                                .background(Color.blue)
                                 .cornerRadius(12)
                         }
                     }
@@ -465,6 +465,7 @@ struct TradeDetailView: View {
             }
         }
         .sheet(isPresented: $showCloseTradeSheet) {
+            // Use the CloseTradeSheet from TradeManagementSheets.swift
             CloseTradeSheet(trade: trade)
                 .environmentObject(portfolioViewModel)
         }
@@ -492,59 +493,6 @@ struct TradeDetailRow: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
         }
-    }
-}
-
-struct CloseTradeSheet: View {
-    let trade: Trade
-    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
-    @Environment(\.dismiss) var dismiss
-    @State private var exitPrice = ""
-    @State private var showAlert = false
-    @State private var alertMessage = ""
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section("Close Position") {
-                    TextField("Exit Price", text: $exitPrice)
-                        .keyboardType(.decimalPad)
-                }
-            }
-            .navigationTitle("Close \(trade.ticker)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Close") {
-                        closeTrade()
-                    }
-                    .disabled(exitPrice.isEmpty)
-                }
-            }
-        }
-        .alert("Success", isPresented: $showAlert) {
-            Button("OK") {
-                dismiss()
-            }
-        } message: {
-            Text(alertMessage)
-        }
-    }
-    
-    private func closeTrade() {
-        guard let price = Double(exitPrice) else { return }
-        
-        portfolioViewModel.closeTrade(trade, exitPrice: price)
-        
-        let profit = (price - trade.entryPrice) * Double(trade.quantity)
-        alertMessage = profit >= 0 ? "Position closed with a profit of $\(String(format: "%.2f", profit))" : "Position closed with a loss of $\(String(format: "%.2f", abs(profit)))"
-        showAlert = true
     }
 }
 

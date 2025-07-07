@@ -1,5 +1,5 @@
 // Core/Portfolio/Views/AllTradesView.swift
-// Simple All Trades View - removed duplicate AddTradeView definition
+// Fixed All Trades View - removed duplicate TradeFilter enum
 
 import SwiftUI
 
@@ -120,10 +120,10 @@ struct SimpleTradeCardView: View {
                         Text("OPEN")
                             .font(.caption2)
                             .fontWeight(.bold)
-                            .foregroundColor(.arkadGold)
+                            .foregroundColor(.blue)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.arkadGold.opacity(0.2))
+                            .background(Color.blue.opacity(0.2))
                             .cornerRadius(4)
                     }
                     
@@ -146,16 +146,16 @@ struct SimpleTradeCardView: View {
                     Text("$\(String(format: "%.0f", trade.currentValue))")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.arkadGold)
+                        .foregroundColor(.blue)
                 } else {
                     Text(trade.profitLoss >= 0 ? "+$\(String(format: "%.0f", trade.profitLoss))" : "-$\(String(format: "%.0f", abs(trade.profitLoss)))")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                        .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                     
                     Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.1f", trade.profitLossPercentage))%")
                         .font(.caption)
-                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                        .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                 }
             }
         }
@@ -167,9 +167,9 @@ struct SimpleTradeCardView: View {
     
     private var statusColor: Color {
         if trade.isOpen {
-            return .arkadGold
+            return .blue
         } else {
-            return trade.profitLoss >= 0 ? .marketGreen : .marketRed
+            return trade.profitLoss >= 0 ? .green : .red
         }
     }
     
@@ -177,21 +177,6 @@ struct SimpleTradeCardView: View {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         return formatter.string(from: date)
-    }
-}
-
-// MARK: - Trade Filter Enum
-enum TradeFilter: CaseIterable {
-    case all, open, closed, profitable, losses
-    
-    var displayName: String {
-        switch self {
-        case .all: return "All"
-        case .open: return "Open"
-        case .closed: return "Closed"
-        case .profitable: return "Profitable"
-        case .losses: return "Losses"
-        }
     }
 }
 

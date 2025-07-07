@@ -135,6 +135,7 @@ class FirebaseAuthService: ObservableObject {
     
     // MARK: - Trade Methods
     
+    
     func addTrade(_ trade: Trade) async throws {
         try await db.collection("trades").document(trade.id).setData(trade.toFirestore())
     }
@@ -240,6 +241,8 @@ class FirebaseAuthService: ObservableObject {
         listeners.forEach { $0.remove() }
         listeners.removeAll()
     }
+    
+    
 }
 
 // Keep the old name for compatibility
