@@ -40,6 +40,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		CE16D5A62E1CD5380062BCBD /* Exceptions for "Resources" folder in "ArkadTrader" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				assets.xcassets,
+			);
+			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
+		};
 		CED443042E028B970056B849 /* Exceptions for "Shared" folder in "ArkadTrader" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -140,6 +147,9 @@
 		};
 		CED4427F2E0272120056B849 /* Resources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CE16D5A62E1CD5380062BCBD /* Exceptions for "Resources" folder in "ArkadTrader" target */,
+			);
 			path = Resources;
 			sourceTree = "<group>";
 		};

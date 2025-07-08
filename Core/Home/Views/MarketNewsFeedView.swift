@@ -1,215 +1,218 @@
 // File: Core/Home/Views/MarketNewsFeedView.swift
-// Updated Market News Feed View with Polygon API Integration
+// Market News Feed View with Trending Section
 
 import SwiftUI
 
 struct MarketNewsFeedView: View {
     @StateObject private var homeViewModel = HomeViewModel()
+    @State private var selectedArticle: MarketNewsArticle?
+    @State private var showingArticleDetail = false
     
     var body: some View {
-        if homeViewModel.isLoadingNews {
-            LoadingNewsView()
-        } else if homeViewModel.marketNews.isEmpty {
-            EmptyNewsView {
-                Task {
-                    await homeViewModel.loadMarketNews()
-                }
-            }
-        } else {
-            ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 20) {
-                    // Trending News Horizontal Scroll
-                    trendingNewsSection
-                    
-                    // All News Vertical List
-                    ForEach(homeViewModel.getRegularNews(), id: \.id) { article in
-                        MarketNewsCard(article: article)
+        ZStack {
+            if homeViewModel.isLoadingNews {
+                LoadingNewsView()
+            } else if homeViewModel.marketNews.isEmpty {
+                EmptyNewsView {
+                    Task {
+                        await homeViewModel.loadMarketNews()
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 80) // Space for floating button
-            }
-            .refreshable {
-                await homeViewModel.loadMarketNews()
-            }
-            .onAppear {
-                Task {
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 24) {
+                        // Trending News Section
+                        trendingNewsSection
+                        
+                        // All News Section
+                        allNewsSection
+                    }
+                    .padding(.bottom, 80) // Space for tab bar
+                }
+                .refreshable {
                     await homeViewModel.loadMarketNews()
                 }
             }
         }
+        .onAppear {
+            Task {
+                await homeViewModel.loadMarketNews()
+            }
+        }
+        .sheet(isPresented: $showingArticleDetail) {
+            if let article = selectedArticle {
+                ArticleDetailView(article: article)
+            }
+        }
     }
     
+    // MARK: - Trending News Section
     private var trendingNewsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Trending")
-                    .font(.headline)
+                    .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
                 
-                Spacer()
+                Image(systemName: "flame.fill")
+                    .foregroundColor(.orange)
                 
-                Text("See All")
-                    .font(.caption)
-                    .foregroundColor(.blue)
+                Spacer()
             }
-            .padding(.top, 12) // Small padding to avoid being too close to tab bar
+            .padding(.horizontal)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(homeViewModel.getTrendingNews(), id: \.id) { article in
-                        TrendingNewsCard(article: article)
+                        TrendingNewsCard(article: article) {
+                            selectedArticle = article
+                            showingArticleDetail = true
+                        }
                     }
                 }
-                .padding(.horizontal, 1)
+                .padding(.horizontal)
+            }
+        }
+    }
+    
+    // MARK: - All News Section
+    private var allNewsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Latest News")
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
+                .padding(.horizontal)
+            
+            LazyVStack(spacing: 16) {
+                ForEach(homeViewModel.getRegularNews(), id: \.id) { article in
+                    NewsArticleCard(article: article) {
+                        selectedArticle = article
+                        showingArticleDetail = true
+                    }
+                    .padding(.horizontal)
+                }
             }
         }
     }
 }
 
-// MARK: - Market News Card (with improved image loading)
-struct MarketNewsCard: View {
+// MARK: - Trending News Card
+struct TrendingNewsCard: View {
     let article: MarketNewsArticle
-    @State private var showWebView = false
+    let onTap: () -> Void
     @State private var imageLoadError = false
     
     var body: some View {
-        Button(action: {
-            if let url = URL(string: article.articleUrl), UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-            }
-        }) {
+        Button(action: onTap) {
             VStack(alignment: .leading, spacing: 12) {
-                // Article image (if available)
+                // Image
                 if let imageUrl = article.imageUrl, !imageUrl.isEmpty, !imageLoadError {
                     AsyncImage(url: URL(string: imageUrl)) { phase in
                         switch phase {
                         case .empty:
                             Rectangle()
                                 .fill(Color.gray.opacity(0.2))
-                                .frame(height: 200)
+                                .frame(width: 280, height: 160)
                                 .overlay(
                                     ProgressView()
-                                        .scaleEffect(1.2)
+                                        .scaleEffect(0.8)
                                 )
                                 .cornerRadius(12)
                         case .success(let image):
                             image
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(height: 200)
+                                .frame(width: 280, height: 160)
                                 .clipped()
                                 .cornerRadius(12)
                         case .failure(_):
-                            Rectangle()
-                                .fill(Color.blue.opacity(0.1))
-                                .frame(height: 200)
-                                .overlay(
-                                    VStack(spacing: 8) {
-                                        Image(systemName: "newspaper")
-                                            .font(.title)
-                                            .foregroundColor(.blue)
-                                        Text("Market News")
-                                            .font(.caption)
-                                            .foregroundColor(.blue)
-                                    }
-                                )
-                                .cornerRadius(12)
-                                .onAppear {
-                                    imageLoadError = true
-                                }
+                            newsImagePlaceholder
+                                .onAppear { imageLoadError = true }
                         @unknown default:
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(height: 200)
-                                .cornerRadius(12)
+                            newsImagePlaceholder
                         }
                     }
                 } else {
-                    // Fallback for no image
-                    Rectangle()
-                        .fill(Color.blue.opacity(0.1))
-                        .frame(height: 200)
-                        .overlay(
-                            VStack(spacing: 8) {
-                                Image(systemName: "newspaper")
-                                    .font(.title)
-                                    .foregroundColor(.blue)
-                                Text("Market News")
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
-                            }
-                        )
-                        .cornerRadius(12)
+                    newsImagePlaceholder
                 }
                 
-                // News header
-                HStack {
-                    Image(systemName: "newspaper")
-                        .font(.title3)
-                        .foregroundColor(.blue)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(article.author ?? "Market News")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
+                // Content
+                VStack(alignment: .leading, spacing: 8) {
+                    // Source and Time
+                    HStack {
+                        Text(article.source ?? "Market News")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.blue)
+                        
+                        Spacer()
                         
                         Text(formatNewsDate(article.publishedUtc))
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
                     
-                    Spacer()
-                    
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-                
-                // Article title and description
-                VStack(alignment: .leading, spacing: 8) {
+                    // Title
                     Text(article.title)
                         .font(.headline)
                         .fontWeight(.semibold)
-                        .lineLimit(3)
+                        .lineLimit(2)
                         .multilineTextAlignment(.leading)
+                        .foregroundColor(.primary)
                     
-                    if let description = article.description {
-                        Text(description)
-                            .font(.body)
-                            .foregroundColor(.gray)
-                            .lineLimit(4)
-                            .multilineTextAlignment(.leading)
+                    // Category Tag
+                    if let category = article.category {
+                        Text(category.uppercased())
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(categoryColor(for: category))
+                            .cornerRadius(4)
                     }
                 }
-                
-                // Keywords/tags
-                if !article.keywords.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(article.keywords.prefix(5)), id: \.self) { keyword in
-                                Text(keyword)
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.blue)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.blue.opacity(0.1))
-                                    .cornerRadius(12)
-                            }
-                        }
-                        .padding(.horizontal, 1)
-                    }
-                }
+                .padding(.horizontal, 4)
             }
-            .padding()
-            .background(Color.white)
-            .cornerRadius(16)
-            .shadow(color: .gray.opacity(0.1), radius: 4, x: 0, y: 2)
         }
+        .frame(width: 280)
         .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var newsImagePlaceholder: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [Color.blue.opacity(0.1), Color.blue.opacity(0.2)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: 280, height: 160)
+            .overlay(
+                VStack(spacing: 8) {
+                    Image(systemName: "newspaper.fill")
+                        .font(.largeTitle)
+                        .foregroundColor(.blue.opacity(0.5))
+                    Text("ArkadTrader News")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue.opacity(0.7))
+                }
+            )
+            .cornerRadius(12)
+    }
+    
+    private func categoryColor(for category: String) -> Color {
+        switch category.lowercased() {
+        case "general": return .blue
+        case "forex": return .green
+        case "crypto": return .orange
+        case "merger": return .purple
+        default: return .gray
+        }
     }
     
     private func formatNewsDate(_ dateString: String) -> String {
@@ -224,105 +227,108 @@ struct MarketNewsCard: View {
     }
 }
 
-// MARK: - Trending News Card (improved image loading)
-struct TrendingNewsCard: View {
+// MARK: - News Article Card
+struct NewsArticleCard: View {
     let article: MarketNewsArticle
+    let onTap: () -> Void
     @State private var imageLoadError = false
     
     var body: some View {
-        Button(action: {
-            if let url = URL(string: article.articleUrl), UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-            }
-        }) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Article image
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 16) {
+                // Article Image
                 if let imageUrl = article.imageUrl, !imageUrl.isEmpty, !imageLoadError {
                     AsyncImage(url: URL(string: imageUrl)) { phase in
                         switch phase {
                         case .empty:
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(width: 200, height: 120)
+                            imagePlaceholder
                                 .overlay(
                                     ProgressView()
-                                        .scaleEffect(0.8)
+                                        .scaleEffect(0.6)
                                 )
-                                .cornerRadius(8)
                         case .success(let image):
                             image
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 200, height: 120)
+                                .frame(width: 100, height: 100)
                                 .clipped()
-                                .cornerRadius(8)
+                                .cornerRadius(12)
                         case .failure(_):
-                            Rectangle()
-                                .fill(Color.blue.opacity(0.1))
-                                .frame(width: 200, height: 120)
-                                .overlay(
-                                    Image(systemName: "newspaper")
-                                        .foregroundColor(.blue)
-                                        .font(.title2)
-                                )
-                                .cornerRadius(8)
-                                .onAppear {
-                                    imageLoadError = true
-                                }
+                            imagePlaceholder
+                                .onAppear { imageLoadError = true }
                         @unknown default:
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(width: 200, height: 120)
-                                .cornerRadius(8)
+                            imagePlaceholder
                         }
                     }
                 } else {
-                    Rectangle()
-                        .fill(Color.blue.opacity(0.1))
-                        .frame(width: 200, height: 120)
-                        .overlay(
-                            Image(systemName: "newspaper")
-                                .foregroundColor(.blue)
-                                .font(.title2)
-                        )
-                        .cornerRadius(8)
+                    imagePlaceholder
                 }
                 
-                // Article info
-                VStack(alignment: .leading, spacing: 4) {
+                // Article Content
+                VStack(alignment: .leading, spacing: 8) {
+                    // Source
+                    HStack {
+                        Image(systemName: "newspaper")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                        
+                        Text(article.source ?? "Market News")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.blue)
+                    }
+                    
+                    // Title
                     Text(article.title)
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .lineLimit(3)
+                        .lineLimit(2)
                         .multilineTextAlignment(.leading)
+                        .foregroundColor(.primary)
                     
-                    Text(formatTrendingDate(article.publishedUtc))
+                    // Description
+                    if let description = article.description {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    
+                    // Time
+                    Text(formatNewsDate(article.publishedUtc))
                         .font(.caption)
                         .foregroundColor(.gray)
-                    
-                    // Top keyword
-                    if let firstKeyword = article.keywords.first {
-                        Text(firstKeyword)
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(8)
-                    }
                 }
+                
+                Spacer()
+                
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray.opacity(0.5))
             }
-            .frame(width: 200)
-            .padding(12)
+            .padding()
             .background(Color.white)
-            .cornerRadius(12)
-            .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
+            .cornerRadius(16)
+            .shadow(color: .gray.opacity(0.1), radius: 4, x: 0, y: 2)
         }
         .buttonStyle(PlainButtonStyle())
     }
     
-    private func formatTrendingDate(_ dateString: String) -> String {
+    private var imagePlaceholder: some View {
+        Rectangle()
+            .fill(Color.blue.opacity(0.1))
+            .frame(width: 100, height: 100)
+            .overlay(
+                Image(systemName: "newspaper")
+                    .font(.title2)
+                    .foregroundColor(.blue.opacity(0.5))
+            )
+            .cornerRadius(12)
+    }
+    
+    private func formatNewsDate(_ dateString: String) -> String {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
@@ -334,6 +340,164 @@ struct TrendingNewsCard: View {
     }
 }
 
+// MARK: - Article Detail View
+struct ArticleDetailView: View {
+    let article: MarketNewsArticle
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.openURL) var openURL
+    @State private var imageLoadError = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Article Image
+                    if let imageUrl = article.imageUrl, !imageUrl.isEmpty, !imageLoadError {
+                        AsyncImage(url: URL(string: imageUrl)) { phase in
+                            switch phase {
+                            case .empty:
+                                detailImagePlaceholder
+                                    .overlay(ProgressView())
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(maxHeight: 250)
+                                    .clipped()
+                                    .cornerRadius(16)
+                            case .failure(_):
+                                detailImagePlaceholder
+                                    .onAppear { imageLoadError = true }
+                            @unknown default:
+                                detailImagePlaceholder
+                            }
+                        }
+                    } else {
+                        detailImagePlaceholder
+                    }
+                    
+                    // Article Info
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Source and Date
+                        HStack {
+                            Label(article.source ?? "Market News", systemImage: "newspaper")
+                                .font(.subheadline)
+                                .foregroundColor(.blue)
+                            
+                            Spacer()
+                            
+                            Text(formatDetailDate(article.publishedUtc))
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                        }
+                        
+                        // Title
+                        Text(article.title)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .lineSpacing(4)
+                        
+                        // Category Tags
+                        if !article.keywords.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(Array(article.keywords.prefix(5)), id: \.self) { keyword in
+                                        Text(keyword)
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.blue)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(Color.blue.opacity(0.1))
+                                            .cornerRadius(16)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Description
+                        if let description = article.description {
+                            Text(description)
+                                .font(.body)
+                                .lineSpacing(6)
+                        }
+                        
+                        // Read Full Article Button
+                        Button(action: {
+                            if let url = URL(string: article.articleUrl), UIApplication.shared.canOpenURL(url) {
+                                openURL(url)
+                            }
+                        }) {
+                            HStack {
+                                Text("Read Full Article")
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(12)
+                        }
+                        .padding(.top, 20)
+                    }
+                    .padding(.horizontal)
+                    
+                    Spacer(minLength: 50)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    ShareLink(item: URL(string: article.articleUrl) ?? URL(string: "https://arkadtrader.com")!) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+            }
+        }
+    }
+    
+    private var detailImagePlaceholder: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [Color.blue.opacity(0.1), Color.blue.opacity(0.2)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(height: 250)
+            .overlay(
+                VStack(spacing: 12) {
+                    Image(systemName: "newspaper.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(.blue.opacity(0.5))
+                    Text("ArkadTrader News")
+                        .font(.headline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue.opacity(0.7))
+                }
+            )
+            .cornerRadius(16)
+    }
+    
+    private func formatDetailDate(_ dateString: String) -> String {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        guard let date = isoFormatter.date(from: dateString) else { return "Recent" }
+        
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
 // MARK: - Empty State Views
 
 struct EmptyNewsView: View {
@@ -342,20 +506,20 @@ struct EmptyNewsView: View {
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "newspaper")
-                .font(.system(size: 48))
+                .font(.system(size: 64))
                 .foregroundColor(.blue.opacity(0.7))
             
             VStack(spacing: 8) {
-                Text("No Market News Available")
+                Text("No Market News")
                     .font(.title2)
                     .fontWeight(.bold)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.primary)
                 
-                Text("We're having trouble fetching the latest market news. Please try again later.")
+                Text("We couldn't fetch the latest market news. Please check your connection and try again.")
                     .font(.subheadline)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 40)
             }
             
             Button(action: onRetry) {
@@ -366,14 +530,14 @@ struct EmptyNewsView: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
                 .background(Color.blue)
                 .cornerRadius(20)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 80) // Reduced to minimize white space
+        .padding(.top, 100)
     }
 }
 
@@ -388,7 +552,7 @@ struct LoadingNewsView: View {
                 .foregroundColor(.gray)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 100) // Reduced from default to minimize white space
+        .padding(.top, 100)
     }
 }
 

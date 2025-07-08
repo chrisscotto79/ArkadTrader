@@ -1,6 +1,3 @@
-// File: Core/Authentication/Views/LoginView.swift
-// Simplified Login View
-
 import SwiftUI
 
 struct LoginView: View {
@@ -10,27 +7,26 @@ struct LoginView: View {
     @State private var showRegister = false
     @State private var showError = false
     @State private var errorMessage = ""
-    
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                // Logo
-                Text("ArkadTrader")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(.blue)
-                    .padding(.bottom, 40)
-                
+            VStack(spacing: 10) {
+                // Logo Image
+                Image("arkad_logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 350, height: 150)
+                    .padding(.top, 90)
                 // Email Field
                 TextField("Email", text: $email)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .autocapitalization(.none)
                     .keyboardType(.emailAddress)
-                
+
                 // Password Field
                 SecureField("Password", text: $password)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
-                
+
                 // Login Button
                 Button(action: login) {
                     if authService.isLoading {
@@ -43,21 +39,20 @@ struct LoginView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
-                .background(Color.blue)
-                .foregroundColor(.white)
+                .background(Color.arkadGold)
+                .foregroundColor(.arkadBlack)
                 .cornerRadius(10)
                 .disabled(authService.isLoading || email.isEmpty || password.isEmpty)
-                
+
                 // Register Link
                 Button("Don't have an account? Register") {
                     showRegister = true
                 }
-                .foregroundColor(.blue)
-                
+                .foregroundColor(.arkadGold)
+
                 Spacer()
             }
             .padding()
-            .navigationTitle("Welcome")
             .alert("Error", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -68,7 +63,7 @@ struct LoginView: View {
             }
         }
     }
-    
+
     private func login() {
         Task {
             do {
