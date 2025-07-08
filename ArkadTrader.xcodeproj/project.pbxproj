@@ -83,6 +83,7 @@
 				Authentication/Views/RegisterView.swift,
 				Communities/Views/CommunitiesView.swift,
 				Home/ViewModels/HomeViewModel.swift,
+				Home/Views/CreatePostView.swift,
 				Home/Views/FeedView.swift,
 				Home/Views/HomeView.swift,
 				Home/Views/MarketNewsFeedView.swift,
