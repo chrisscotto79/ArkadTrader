@@ -1,17 +1,9 @@
-//
-//  EnhancedTradeCard.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/7/25.
-//
-
-
 // File: Shared/Components/TradeComponents.swift
-// Enhanced trade-related components used throughout the app
+// Fixed trade components - avoids naming conflicts with existing components
 
 import SwiftUI
 
-// MARK: - Enhanced Trade Card (used in multiple places)
+// MARK: - Enhanced Trade Card (no conflicts)
 struct EnhancedTradeCard: View {
     let trade: Trade
     let style: TradeCardStyle
@@ -32,7 +24,7 @@ struct EnhancedTradeCard: View {
     var body: some View {
         Button(action: { onTap?() }) {
             HStack(spacing: 16) {
-                // Status Indicator with animation
+                // Status Indicator
                 statusIndicator
                 
                 // Trade Info
@@ -152,86 +144,41 @@ struct EnhancedTradeCard: View {
     }
 }
 
-// MARK: - Analytics Card Component
-struct AnalyticsCard: View {
+// MARK: - Simple Metric Card (renamed to avoid conflicts)
+struct MetricDisplayCard: View {
     let title: String
     let value: String
-    let subtitle: String?
     let color: Color
     let icon: String
-    let trend: TrendDirection?
-    
-    enum TrendDirection {
-        case up, down, neutral
-        
-        var icon: String {
-            switch self {
-            case .up: return "arrow.up.right"
-            case .down: return "arrow.down.right"
-            case .neutral: return "minus"
-            }
-        }
-        
-        var color: Color {
-            switch self {
-            case .up: return .green
-            case .down: return .red
-            case .neutral: return .gray
-            }
-        }
-    }
     
     var body: some View {
-        VStack(spacing: 12) {
-            // Header with icon and trend
-            HStack {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(color)
-                
-                Spacer()
-                
-                if let trend = trend {
-                    Image(systemName: trend.icon)
-                        .font(.caption)
-                        .foregroundColor(trend.color)
-                }
-            }
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundColor(color)
             
-            // Value section
-            VStack(alignment: .leading, spacing: 4) {
-                Text(value)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(color)
-                
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                
-                if let subtitle = subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(value)
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
         }
         .padding()
-        .background(
+        .background(color.opacity(0.1))
+        .cornerRadius(12)
+        .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .fill(color.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(color.opacity(0.3), lineWidth: 1)
-                )
+                .stroke(color.opacity(0.3), lineWidth: 1)
         )
     }
 }
 
-// MARK: - Insight Card Component  
-struct InsightCard: View {
+// MARK: - Trading Insight Card (renamed to avoid conflicts)
+struct TradingInsightCard: View {
     let title: String
     let message: String
     let type: InsightType
@@ -300,8 +247,8 @@ struct InsightCard: View {
     }
 }
 
-// MARK: - Performance Badge Component
-struct PerformanceBadge: View {
+// MARK: - Performance Badge Component (simple version)
+struct TradingPerformanceBadge: View {
     let value: Double
     let type: BadgeType
     
@@ -369,16 +316,14 @@ struct PerformanceBadge: View {
         
         EnhancedTradeCard(trade: sampleTrade, style: .standard, onTap: {})
         
-        AnalyticsCard(
+        MetricDisplayCard(
             title: "Total Portfolio",
             value: "$52,345",
-            subtitle: "Up from last month",
             color: .green,
-            icon: "chart.pie.fill",
-            trend: .up
+            icon: "chart.pie.fill"
         )
         
-        InsightCard(
+        TradingInsightCard(
             title: "Great Performance!",
             message: "Your win rate of 75% is excellent. Keep up the great work!",
             type: .success,
@@ -386,9 +331,9 @@ struct PerformanceBadge: View {
         )
         
         HStack {
-            PerformanceBadge(value: 1250.50, type: .profitLoss)
-            PerformanceBadge(value: 15.8, type: .percentage)
-            PerformanceBadge(value: 72.5, type: .winRate)
+            TradingPerformanceBadge(value: 1250.50, type: .profitLoss)
+            TradingPerformanceBadge(value: 15.8, type: .percentage)
+            TradingPerformanceBadge(value: 72.5, type: .winRate)
         }
     }
     .padding()

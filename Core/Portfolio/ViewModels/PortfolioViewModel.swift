@@ -1,5 +1,5 @@
 // File: Core/Portfolio/ViewModels/PortfolioViewModel.swift
-// Enhanced Portfolio ViewModel with comprehensive analytics and profile sync
+// Fixed Portfolio ViewModel - removes unused variables and async warnings
 
 import Foundation
 import SwiftUI
@@ -62,9 +62,7 @@ class PortfolioViewModel: ObservableObject {
         
         // Calculate portfolio values
         let totalValue = openTrades.reduce(0) { $0 + $1.currentValue }
-        let totalInvested = openTrades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
         let totalPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
-        let unrealizedPL = openTrades.reduce(0) { $0 + (($0 - $1.entryPrice) * Double($1.quantity)) }
         
         // Calculate win rate
         let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
@@ -186,7 +184,8 @@ class PortfolioViewModel: ObservableObject {
     
     // MARK: - Analytics Calculations
     private func calculateTotalReturnPercentage() -> Double {
-        let totalInvested = trades.filter { !$0.isOpen }.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
+        let closedTrades = trades.filter { !$0.isOpen }
+        let totalInvested = closedTrades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
         guard totalInvested > 0 else { return 0 }
         return (portfolio?.totalProfitLoss ?? 0) / totalInvested * 100
     }
@@ -331,7 +330,7 @@ class PortfolioViewModel: ObservableObject {
     }
 }
 
-// MARK: - Supporting Models
+// MARK: - Supporting Models (no changes needed)
 
 struct PortfolioAnalytics {
     let totalReturn: Double

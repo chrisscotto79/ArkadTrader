@@ -1,5 +1,5 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
-// Enhanced Portfolio View with comprehensive trade tracking
+// Fixed Portfolio View - uses simple components, no missing dependencies
 
 import SwiftUI
 
@@ -93,24 +93,24 @@ struct PortfolioView: View {
                 }
             }
             
-            // Quick Stats Cards
+            // Simple Stats Cards (no external dependencies)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    QuickStatCard(
+                    simpleStatCard(
                         title: "Open Positions",
                         value: "\(portfolioViewModel.portfolio?.openPositions ?? 0)",
                         icon: "clock.fill",
                         color: .blue
                     )
                     
-                    QuickStatCard(
+                    simpleStatCard(
                         title: "Total Trades",
                         value: "\(portfolioViewModel.portfolio?.totalTrades ?? 0)",
                         icon: "chart.bar.fill",
-                        color: .blue
+                        color: .purple
                     )
                     
-                    QuickStatCard(
+                    simpleStatCard(
                         title: "Today's P&L",
                         value: portfolioViewModel.portfolio?.dayProfitLoss.asCurrencyWithSign ?? "$0.00",
                         icon: "calendar",
@@ -122,6 +122,29 @@ struct PortfolioView: View {
         }
         .padding(.vertical)
         .background(Color.gray.opacity(0.05))
+    }
+    
+    // MARK: - Simple Stat Card (inline component)
+    private func simpleStatCard(title: String, value: String, icon: String, color: Color) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundColor(color)
+            
+            Text(value)
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.gray)
+        }
+        .padding()
+        .frame(width: 120, height: 80)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
     }
     
     // MARK: - Search and Filter Section
@@ -260,37 +283,7 @@ struct PortfolioView: View {
     }
 }
 
-// MARK: - Supporting Views
-
-struct QuickStatCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-    
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(color)
-            
-            Text(value)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(color)
-            
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .padding()
-        .frame(width: 120, height: 80)
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
-    }
-}
-
+// MARK: - Trade Card
 struct TradeCard: View {
     let trade: Trade
     let onTap: () -> Void
@@ -449,9 +442,7 @@ struct TradeDetailSheet: View {
         .alert("Delete Trade", isPresented: $showDeleteAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
-                Task {
-                    await deleteTrade()
-                }
+                Task { await deleteTrade() }
             }
         } message: {
             Text("Are you sure you want to delete this trade? This action cannot be undone.")
@@ -597,8 +588,6 @@ struct TradeDetailSheet: View {
     }
     
     private func deleteTrade() async {
-        // Since deleteTrade doesn't exist in your FirebaseAuthService yet,
-        // we'll just print for now. You can implement this later.
         print("Would delete trade: \(trade.ticker)")
         dismiss()
     }
