@@ -1,5 +1,5 @@
 // File: Shared/Services/FirebaseServices.swift
-// Updated Firebase Services with Complete User Interactions
+// Updated Firebase Services with Market News Caching
 
 import Foundation
 import Firebase
@@ -192,6 +192,61 @@ class FirebaseAuthService: ObservableObject {
         
         return snapshot.documents.compactMap { document in
             try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    // MARK: - Market News Methods
+    
+    func cacheMarketNews(articles: [MarketNewsArticle]) async throws {
+        let batch = db.batch()
+        
+        // First, delete old cached news (keep only last 50 articles)
+        let oldNewsSnapshot = try await db.collection("marketNews")
+            .order(by: "cachedAt", descending: false)
+            .getDocuments()
+        
+        // Delete old news if we have more than 50 articles
+        if oldNewsSnapshot.documents.count > 50 {
+            let documentsToDelete = oldNewsSnapshot.documents.prefix(oldNewsSnapshot.documents.count - 30)
+            for document in documentsToDelete {
+                batch.deleteDocument(document.reference)
+            }
+        }
+        
+        // Add new articles
+        for article in articles {
+            let docRef = db.collection("marketNews").document(article.id)
+            batch.setData(article.toFirestore(), forDocument: docRef)
+        }
+        
+        try await batch.commit()
+    }
+    
+    func getCachedMarketNews() async throws -> [MarketNewsArticle] {
+        let snapshot = try await db.collection("marketNews")
+            .order(by: "cachedAt", descending: true)
+            .limit(to: 20)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func clearOldMarketNews() async throws {
+        // Delete news older than 24 hours
+        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
+        let snapshot = try await db.collection("marketNews")
+            .whereField("cachedAt", isLessThan: oneDayAgo)
+            .getDocuments()
+        
+        let batch = db.batch()
+        for document in snapshot.documents {
+            batch.deleteDocument(document.reference)
+        }
+        
+        if !snapshot.documents.isEmpty {
+            try await batch.commit()
         }
     }
     
@@ -455,6 +510,59 @@ class FirebaseAuthService: ObservableObject {
         }
     }
     
+    func searchMarketNews(query: String) async throws -> [MarketNewsArticle] {
+        // Search cached market news
+        let snapshot = try await db.collection("marketNews")
+            .order(by: "cachedAt", descending: true)
+            .limit(to: 100)
+            .getDocuments()
+        
+        let articles = snapshot.documents.compactMap { document in
+            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        return articles.filter { article in
+            article.title.localizedCaseInsensitiveContains(query) ||
+            (article.description?.localizedCaseInsensitiveContains(query) ?? false) ||
+            article.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+    
+    // MARK: - News Analytics Methods
+    
+    func getMarketNewsAnalytics() async throws -> NewsAnalytics {
+        let snapshot = try await db.collection("marketNews")
+            .order(by: "cachedAt", descending: true)
+            .limit(to: 100)
+            .getDocuments()
+        
+        let articles = snapshot.documents.compactMap { document in
+            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        let totalArticles = articles.count
+        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
+        
+        let recentArticles = articles.filter { article in
+            article.cachedAt > oneDayAgo
+        }.count
+        
+        // Get most common keywords
+        let allKeywords = articles.flatMap { $0.keywords }
+        let keywordCounts = Dictionary(grouping: allKeywords, by: { $0 })
+            .mapValues { $0.count }
+            .sorted { $0.value > $1.value }
+        
+        let topKeywords = Array(keywordCounts.prefix(10).map { $0.key })
+        
+        return NewsAnalytics(
+            totalArticles: totalArticles,
+            recentArticles: recentArticles,
+            topKeywords: topKeywords,
+            lastUpdated: articles.first?.cachedAt ?? Date()
+        )
+    }
+    
     // MARK: - Clean up
     
     func removeAllListeners() {
@@ -462,6 +570,8 @@ class FirebaseAuthService: ObservableObject {
         listeners.removeAll()
     }
 }
+
+// MARK: - Supporting Models
 
 // MARK: - Comment Model
 struct Comment: Identifiable, Codable {
@@ -528,6 +638,13 @@ struct Comment: Identifiable, Codable {
     }
 }
 
+// MARK: - News Analytics Model
+struct NewsAnalytics {
+    let totalArticles: Int
+    let recentArticles: Int
+    let topKeywords: [String]
+    let lastUpdated: Date
+}
 
 // Keep the old name for compatibility
 typealias FirestoreService = FirebaseAuthService

@@ -1,11 +1,11 @@
 // File: Core/Home/Views/FeedView.swift
-// Simplified Feed View
+// Updated to use MarketNewsFeedView
 
 import SwiftUI
 
 struct FeedView: View {
     var body: some View {
-        SocialFeedView()
+        MarketNewsFeedView()
     }
 }
 

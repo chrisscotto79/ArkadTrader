@@ -1,5 +1,5 @@
 // File: Core/Home/Views/HomeView.swift
-// Clean Home View - Real User Content Only, No Mock Data
+// Updated Home View with Market News replacing Trending
 
 import SwiftUI
 
@@ -11,13 +11,13 @@ struct HomeView: View {
     @State private var newPostContent = ""
     
     enum HomeFeedTab: CaseIterable {
-        case feed, following, trending
+        case feed, following, marketNews
         
         var title: String {
             switch self {
             case .feed: return "Feed"
             case .following: return "Following"
-            case .trending: return "Trending"
+            case .marketNews: return "Market News"
             }
         }
         
@@ -25,37 +25,62 @@ struct HomeView: View {
             switch self {
             case .feed: return "house.fill"
             case .following: return "person.2.fill"
-            case .trending: return "flame.fill"
+            case .marketNews: return "newspaper.fill"
             }
         }
     }
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Header with greeting and actions
-                headerSection
-                
-                // Tab selector
-                tabSelectorSection
-                
-                // Content based on selected tab
-                ScrollView {
-                    LazyVStack(spacing: 16) {
-                        switch selectedTab {
-                        case .feed:
-                            allPostsContent
-                        case .following:
-                            followingPostsContent
-                        case .trending:
-                            trendingPostsContent
+            ZStack {
+                VStack(spacing: 0) {
+                    // Simplified tab selector (icons with text)
+                    simplifiedTabSelector
+                    
+                    // Content based on selected tab
+                    if selectedTab == .marketNews {
+                        // Market News Feed takes full space
+                        MarketNewsFeedView()
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 16) {
+                                switch selectedTab {
+                                case .feed:
+                                    allPostsContent
+                                case .following:
+                                    followingPostsContent
+                                case .marketNews:
+                                    EmptyView() // This won't be reached
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.top, 16)
+                            .padding(.bottom, 80) // Space for floating button at bottom
+                        }
+                        .refreshable {
+                            await refreshContent()
                         }
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 16)
                 }
-                .refreshable {
-                    await refreshContent()
+                
+                // Floating Action Button (very bottom right)
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: { showCreatePost = true }) {
+                            Image(systemName: "plus")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .frame(width: 56, height: 56)
+                                .background(Color.blue)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20) // Very bottom
+                    }
                 }
             }
             .navigationBarHidden(true)
@@ -74,63 +99,22 @@ struct HomeView: View {
         }
     }
     
-    // MARK: - Header Section
-    private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(getGreeting())
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                Text(authService.currentUser?.fullName ?? "Trader")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            HStack(spacing: 16) {
-                Button(action: { showCreatePost = true }) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                }
-                
-                Button(action: {}) {
-                    ZStack(alignment: .topTrailing) {
-                        Circle()
-                            .fill(Color.blue.opacity(0.2))
-                            .frame(width: 36, height: 36)
-                            .overlay(
-                                Text(getInitials())
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.blue)
-                            )
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [Color.blue.opacity(0.1), Color.clear]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-    }
-    
-    // MARK: - Tab Selector
-    private var tabSelectorSection: some View {
+    // MARK: - Tab Selector (with text labels)
+    private var simplifiedTabSelector: some View {
         HStack(spacing: 0) {
             ForEach(HomeFeedTab.allCases, id: \.self) { tab in
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         selectedTab = tab
+                        // Trigger market news loading when tab is selected
+                        if tab == .marketNews {
+                            Task {
+                                await homeViewModel.loadMarketNews()
+                            }
+                        }
                     }
                 }) {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         Image(systemName: tab.icon)
                             .font(.title3)
                         
@@ -182,44 +166,14 @@ struct HomeView: View {
         }
     }
     
-    private var trendingPostsContent: some View {
-        Group {
-            if homeViewModel.trendingPosts.isEmpty {
-                EmptyTrendingView()
-            } else {
-                ForEach(homeViewModel.trendingPosts, id: \.id) { post in
-                    UserPostCard(post: post, homeViewModel: homeViewModel)
-                }
-            }
-        }
-    }
-    
     // MARK: - Helper Methods
-    private func getGreeting() -> String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 6..<12: return "Good Morning"
-        case 12..<17: return "Good Afternoon"
-        case 17..<22: return "Good Evening"
-        default: return "Good Night"
-        }
-    }
-    
-    private func getInitials() -> String {
-        guard let user = authService.currentUser else { return "U" }
-        let names = user.fullName.split(separator: " ")
-        let firstInitial = names.first?.first ?? Character("U")
-        let lastInitial = names.count > 1 ? names.last?.first ?? Character("") : Character("")
-        return String(firstInitial) + String(lastInitial)
-    }
-    
     @MainActor
     private func refreshContent() async {
         await homeViewModel.loadPosts()
     }
 }
 
-// MARK: - User Post Card
+// MARK: - User Post Card (existing)
 struct UserPostCard: View {
     let post: Post
     @ObservedObject var homeViewModel: HomeViewModel
@@ -362,7 +316,7 @@ struct PostTypeLabel: View {
     }
 }
 
-// MARK: - Create Post View
+// MARK: - Create Post View (existing)
 struct CreatePostView: View {
     let onPost: (String) -> Void
     @Environment(\.dismiss) var dismiss
@@ -497,30 +451,6 @@ struct EmptyFollowingView: View {
                     .foregroundColor(.gray)
                 
                 Text("Follow other traders to see their posts here. Discover traders in the search tab.")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
-            }
-        }
-        .padding(.vertical, 40)
-    }
-}
-
-struct EmptyTrendingView: View {
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "flame")
-                .font(.system(size: 48))
-                .foregroundColor(.orange.opacity(0.7))
-            
-            VStack(spacing: 8) {
-                Text("No Trending Posts Yet")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.gray)
-                
-                Text("Posts that get lots of engagement will appear here. Be the first to start a trend!")
                     .font(.subheadline)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)

@@ -1,16 +1,135 @@
 // File: Core/Home/ViewModels/HomeViewModel.swift
-// Fixed Home View Model - Firebase Storage Only, No Local Storage
+// Updated Home View Model with Market News from Finnhub API
 
 import Foundation
 import SwiftUI
+import Firebase
+
+// MARK: - Market News Article Model (Updated for Finnhub)
+struct MarketNewsArticle: Identifiable, Codable {
+    let id: String
+    let title: String
+    let author: String?
+    let publishedUtc: String
+    let articleUrl: String
+    let description: String?
+    let keywords: [String]
+    let imageUrl: String?
+    let cachedAt: Date
+    let source: String?
+    let category: String?
+    
+    // For creating from Finnhub API response
+    init(from finnhubData: [String: Any]) {
+        self.id = finnhubData["id"] as? String ?? UUID().uuidString
+        self.title = finnhubData["headline"] as? String ?? "Market Update"
+        self.author = finnhubData["source"] as? String
+        
+        // Convert Unix timestamp to ISO string for consistency
+        if let unixTime = finnhubData["datetime"] as? TimeInterval {
+            let date = Date(timeIntervalSince1970: unixTime)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            self.publishedUtc = formatter.string(from: date)
+        } else {
+            self.publishedUtc = ISO8601DateFormatter().string(from: Date())
+        }
+        
+        self.articleUrl = finnhubData["url"] as? String ?? ""
+        self.description = finnhubData["summary"] as? String
+        
+        // Finnhub doesn't provide keywords, so we'll extract from category/source
+        var extractedKeywords: [String] = []
+        if let category = finnhubData["category"] as? String {
+            extractedKeywords.append(category)
+        }
+        if let source = finnhubData["source"] as? String {
+            extractedKeywords.append(source)
+        }
+        // Add some default financial keywords
+        extractedKeywords.append(contentsOf: ["finance", "market", "news"])
+        self.keywords = extractedKeywords
+        
+        self.imageUrl = finnhubData["image"] as? String
+        self.source = finnhubData["source"] as? String
+        self.category = finnhubData["category"] as? String
+        self.cachedAt = Date()
+        
+        print("📰 Created Finnhub article: \(title)")
+        print("🖼️ Image URL: \(imageUrl ?? "none")")
+    }
+    
+    // For Firebase storage/retrieval
+    func toFirestore() -> [String: Any] {
+        return [
+            "title": title,
+            "author": author as Any,
+            "publishedUtc": publishedUtc,
+            "articleUrl": articleUrl,
+            "description": description as Any,
+            "keywords": keywords,
+            "imageUrl": imageUrl as Any,
+            "source": source as Any,
+            "category": category as Any,
+            "cachedAt": Timestamp(date: cachedAt)
+        ]
+    }
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> MarketNewsArticle {
+        guard let title = data["title"] as? String,
+              let publishedUtc = data["publishedUtc"] as? String,
+              let articleUrl = data["articleUrl"] as? String,
+              let keywords = data["keywords"] as? [String] else {
+            throw NSError(domain: "MarketNewsDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid news data"])
+        }
+        
+        let cachedAt: Date
+        if let timestamp = data["cachedAt"] as? Timestamp {
+            cachedAt = timestamp.dateValue()
+        } else if let date = data["cachedAt"] as? Date {
+            cachedAt = date
+        } else {
+            cachedAt = Date()
+        }
+        
+        return MarketNewsArticle(
+            id: id,
+            title: title,
+            author: data["author"] as? String,
+            publishedUtc: publishedUtc,
+            articleUrl: articleUrl,
+            description: data["description"] as? String,
+            keywords: keywords,
+            imageUrl: data["imageUrl"] as? String,
+            cachedAt: cachedAt,
+            source: data["source"] as? String,
+            category: data["category"] as? String
+        )
+    }
+    
+    private init(id: String, title: String, author: String?, publishedUtc: String, articleUrl: String, description: String?, keywords: [String], imageUrl: String?, cachedAt: Date, source: String?, category: String?) {
+        self.id = id
+        self.title = title
+        self.author = author
+        self.publishedUtc = publishedUtc
+        self.articleUrl = articleUrl
+        self.description = description
+        self.keywords = keywords
+        self.imageUrl = imageUrl
+        self.cachedAt = cachedAt
+        self.source = source
+        self.category = category
+    }
+}
 
 @MainActor
 class HomeViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var posts: [Post] = []
     @Published var followingPosts: [Post] = []
-    @Published var trendingPosts: [Post] = []
+    @Published var marketNews: [MarketNewsArticle] = []
     @Published var isLoading = false
+    @Published var isLoadingNews = false
     @Published var isRefreshing = false
     @Published var errorMessage = ""
     @Published var showError = false
@@ -26,6 +145,13 @@ class HomeViewModel: ObservableObject {
     private let authService = FirebaseAuthService.shared
     private var currentPage = 0
     private let postsPerPage = 20
+    
+    // Finnhub API configuration
+    private let finnhubApiKey = "ct73so9r01qr3sdtkf20ct73so9r01qr3sdtkf2g"
+    private let finnhubBaseUrl = "https://finnhub.io/api/v1"
+    
+    // News caching - refresh every 30 minutes
+    private let newsCacheInterval: TimeInterval = 30 * 60
     
     // MARK: - Initialization
     init() {
@@ -108,6 +234,147 @@ class HomeViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Market News Management (Updated for Finnhub)
+    func loadMarketNews() async {
+        isLoadingNews = true
+        
+        do {
+            // First, try to load cached news from Firebase
+            let cachedNews = try await authService.getCachedMarketNews()
+            
+            // Check if cached news is still fresh (less than 30 minutes old)
+            if let latestNews = cachedNews.first,
+               Date().timeIntervalSince(latestNews.cachedAt) < newsCacheInterval {
+                marketNews = cachedNews
+                isLoadingNews = false
+                return
+            }
+            
+            // If no fresh cached news, fetch from Finnhub API
+            await fetchMarketNewsFromFinnhub()
+            
+        } catch {
+            print("Error loading cached news, fetching fresh: \(error)")
+            await fetchMarketNewsFromFinnhub()
+        }
+        
+        isLoadingNews = false
+    }
+    
+    private func fetchMarketNewsFromFinnhub() async {
+        print("🔄 Fetching news from Finnhub API...")
+        
+        // Finnhub general news endpoint
+        guard let url = URL(string: "\(finnhubBaseUrl)/news?category=general&token=\(finnhubApiKey)") else {
+            print("❌ Invalid URL")
+            errorMessage = "Invalid news URL"
+            showError = true
+            return
+        }
+        
+        print("🌐 Finnhub API URL: \(url)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            // Check HTTP response
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 HTTP Status: \(httpResponse.statusCode)")
+                if httpResponse.statusCode != 200 {
+                    print("❌ HTTP Error: \(httpResponse.statusCode)")
+                    errorMessage = "API returned status code: \(httpResponse.statusCode)"
+                    showError = true
+                    return
+                }
+            }
+            
+            // Parse JSON response - Finnhub returns an array directly
+            guard let newsArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                print("❌ Failed to parse JSON array")
+                errorMessage = "Invalid JSON response"
+                showError = true
+                return
+            }
+            
+            print("✅ Found \(newsArray.count) articles from Finnhub")
+            
+            // Convert API response to MarketNewsArticle objects
+            let newsArticles = newsArray.compactMap { articleData in
+                print("📰 Processing article: \(articleData["headline"] ?? "No headline")")
+                return MarketNewsArticle(from: articleData)
+            }
+            
+            print("✅ Successfully created \(newsArticles.count) articles")
+            
+            // Sort by recency and relevance
+            let sortedArticles = newsArticles.sorted { article1, article2 in
+                let score1 = calculateTrendingScore(for: article1)
+                let score2 = calculateTrendingScore(for: article2)
+                return score1 > score2
+            }
+            
+            // Update local state
+            marketNews = sortedArticles
+            print("🎉 Market news updated with \(sortedArticles.count) articles")
+            
+            // Cache news in Firebase for future use
+            await cacheNewsInFirebase(articles: sortedArticles)
+            
+        } catch {
+            print("❌ Network error: \(error)")
+            print("🔍 Error details: \(error.localizedDescription)")
+            errorMessage = "Network error: \(error.localizedDescription)"
+            showError = true
+        }
+    }
+    
+    private func calculateTrendingScore(for article: MarketNewsArticle) -> Int {
+        var score = 0
+        
+        // Boost for having an image
+        if article.imageUrl != nil && !article.imageUrl!.isEmpty {
+            score += 10
+        }
+        
+        // Boost for trending keywords and sources
+        let trendingKeywords = ["earnings", "stock", "market", "trading", "investment", "financial", "nasdaq", "sp500", "dow", "tesla", "apple", "microsoft", "amazon"]
+        let trendingSources = ["Reuters", "Bloomberg", "MarketWatch", "CNBC", "Yahoo Finance"]
+        
+        for keyword in article.keywords {
+            if trendingKeywords.contains(keyword.lowercased()) {
+                score += 5
+            }
+        }
+        
+        if let source = article.source, trendingSources.contains(source) {
+            score += 8
+        }
+        
+        // Boost for recent articles (within last 6 hours)
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        if let publishedDate = isoFormatter.date(from: article.publishedUtc) {
+            let hoursAgo = Date().timeIntervalSince(publishedDate) / 3600
+            if hoursAgo < 6 {
+                score += 8
+            } else if hoursAgo < 24 {
+                score += 3
+            }
+        }
+        
+        return score
+    }
+    
+    private func cacheNewsInFirebase(articles: [MarketNewsArticle]) async {
+        do {
+            try await authService.cacheMarketNews(articles: articles)
+        } catch {
+            print("Failed to cache news in Firebase: \(error)")
+            // Don't show error to user since this is just caching
+        }
+    }
+    
     // MARK: - Post Interactions (Firebase Storage)
     func toggleLike(for postId: String) {
         let wasLiked = likedPosts.contains(postId)
@@ -151,7 +418,6 @@ class HomeViewModel: ObservableObject {
             // Remove post from local arrays
             posts.removeAll { $0.id == postId }
             followingPosts.removeAll { $0.id == postId }
-            trendingPosts.removeAll { $0.id == postId }
             
         } catch {
             errorMessage = "Failed to report post: \(error.localizedDescription)"
@@ -169,7 +435,6 @@ class HomeViewModel: ObservableObject {
             // Remove posts from blocked user
             posts.removeAll { $0.authorId == userId }
             followingPosts.removeAll { $0.authorId == userId }
-            trendingPosts.removeAll { $0.authorId == userId }
             
         } catch {
             errorMessage = "Failed to block user: \(error.localizedDescription)"
@@ -253,20 +518,10 @@ class HomeViewModel: ObservableObject {
                 followingUserIds.contains(post.authorId)
             }
             
-            // Filter trending posts (posts with high engagement)
-            trendingPosts = posts.filter { post in
-                let engagementScore = post.likesCount + (post.commentsCount * 2)
-                return engagementScore >= 5 // Lower threshold since we're starting fresh
-            }.sorted { $0.likesCount > $1.likesCount }
-            
         } catch {
             print("Failed to filter posts: \(error)")
             // Fallback to empty arrays if Firebase call fails
             followingPosts = []
-            trendingPosts = posts.filter { post in
-                let engagementScore = post.likesCount + (post.commentsCount * 2)
-                return engagementScore >= 5
-            }.sorted { $0.likesCount > $1.likesCount }
         }
     }
     
@@ -305,11 +560,6 @@ class HomeViewModel: ObservableObject {
         if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
             followingPosts[index].likesCount = max(0, followingPosts[index].likesCount + change)
         }
-        
-        // Update in trending posts array
-        if let index = trendingPosts.firstIndex(where: { $0.id == postId }) {
-            trendingPosts[index].likesCount = max(0, trendingPosts[index].likesCount + change)
-        }
     }
     
     // MARK: - Search and Filter
@@ -319,6 +569,16 @@ class HomeViewModel: ObservableObject {
         return posts.filter { post in
             post.content.localizedCaseInsensitiveContains(query) ||
             post.authorUsername.localizedCaseInsensitiveContains(query)
+        }
+    }
+    
+    func searchNews(query: String) -> [MarketNewsArticle] {
+        guard !query.isEmpty else { return marketNews }
+        
+        return marketNews.filter { article in
+            article.title.localizedCaseInsensitiveContains(query) ||
+            (article.description?.localizedCaseInsensitiveContains(query) ?? false) ||
+            article.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
         }
     }
     
@@ -345,5 +605,39 @@ class HomeViewModel: ObservableObject {
             let engagement2 = post2.likesCount + post2.commentsCount
             return engagement1 < engagement2
         }
+    }
+    
+    func getTrendingNews() -> [MarketNewsArticle] {
+        // For trending, prioritize articles with images but don't exclude others
+        let articlesWithImages = marketNews.filter { article in
+            article.imageUrl != nil && !article.imageUrl!.isEmpty
+        }
+        
+        // If we have articles with images, use those, otherwise use all articles
+        let trendingSource = articlesWithImages.isEmpty ? marketNews : articlesWithImages
+        
+        return Array(trendingSource.prefix(10))
+    }
+    
+    func getRegularNews() -> [MarketNewsArticle] {
+        // Return all news for the main feed
+        return marketNews
+    }
+    
+    func getNewsStats() -> (totalArticles: Int, recentArticles: Int) {
+        let totalArticles = marketNews.count
+        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
+        
+        let recentArticles = marketNews.filter { article in
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            
+            if let publishedDate = isoFormatter.date(from: article.publishedUtc) {
+                return publishedDate > oneDayAgo
+            }
+            return false
+        }.count
+        
+        return (totalArticles, recentArticles)
     }
 }
