@@ -1,74 +1,272 @@
-//
-//  SocialFeedView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/6/25.
-//
-
-
 // File: Core/Home/Views/SocialFeedView.swift
-// Simplified Social Feed View
+// Clean Social Feed View - Real User Content Only
 
 import SwiftUI
 
 struct SocialFeedView: View {
     @EnvironmentObject var authService: FirebaseAuthService
-    @State private var posts: [Post] = []
+    @StateObject private var homeViewModel = HomeViewModel()
+    @State private var showCreatePost = false
     
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(posts) { post in
-                    PostCardView(post: post)
+        NavigationView {
+            VStack(spacing: 0) {
+                // Header
+                headerSection
+                
+                // Feed content
+                feedContent
+            }
+            .navigationBarHidden(true)
+        }
+        .sheet(isPresented: $showCreatePost) {
+            CreatePostView { content in
+                Task {
+                    await homeViewModel.createPost(content: content)
                 }
             }
-            .padding()
         }
         .onAppear {
-            loadPosts()
+            Task {
+                await homeViewModel.loadPosts()
+            }
         }
     }
     
-    private func loadPosts() {
-        Task {
-            do {
-                posts = try await authService.getFeedPosts()
-            } catch {
-                print("Error loading posts: \(error)")
+    // MARK: - Header Section
+    private var headerSection: some View {
+        HStack {
+            Text("Social Feed")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            
+            Spacer()
+            
+            Button(action: { showCreatePost = true }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .overlay(
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+    
+    // MARK: - Feed Content
+    private var feedContent: some View {
+        Group {
+            if homeViewModel.isLoading {
+                LoadingView()
+            } else if homeViewModel.posts.isEmpty {
+                EmptyFeedView {
+                    showCreatePost = true
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        ForEach(homeViewModel.posts, id: \.id) { post in
+                            UserPostCard(post: post, homeViewModel: homeViewModel)
+                        }
+                        
+                        // Load more indicator
+                        if homeViewModel.hasMorePosts {
+                            LoadMoreButton {
+                                Task {
+                                    await homeViewModel.loadMorePosts()
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 16)
+                }
+                .refreshable {
+                    await homeViewModel.refreshPosts()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Supporting Views
+    
+    struct LoadingView: View {
+        var body: some View {
+            VStack(spacing: 20) {
+                ProgressView()
+                    .scaleEffect(1.2)
+                
+                Text("Loading posts...")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 100)
+        }
+    }
+    
+    struct LoadMoreButton: View {
+        let action: () -> Void
+        
+        var body: some View {
+            Button(action: action) {
+                HStack {
+                    Text("Load More Posts")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Image(systemName: "arrow.down.circle")
+                        .font(.subheadline)
+                }
+                .foregroundColor(.blue)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.blue.opacity(0.1))
+                .cornerRadius(12)
             }
         }
     }
 }
 
-struct PostCardView: View {
-    let post: Post
+// MARK: - Feed Statistics View
+struct FeedStatsView: View {
+    @ObservedObject var homeViewModel: HomeViewModel
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("@\(post.authorUsername)")
-                    .font(.headline)
-                Spacer()
-            }
-            
-            Text(post.content)
-                .font(.body)
-            
-            HStack {
-                Image(systemName: "heart")
-                Text("\(post.likesCount)")
-                
-                Spacer()
-                
-                Image(systemName: "message")
-                Text("\(post.commentsCount)")
-            }
-            .font(.caption)
-            .foregroundColor(.gray)
+        let stats = homeViewModel.getEngagementStats()
+        
+        HStack {
+            StatItem(title: "Posts", value: "\(stats.totalPosts)")
+            StatItem(title: "Likes", value: "\(stats.totalLikes)")
+            StatItem(title: "Comments", value: "\(stats.totalComments)")
         }
         .padding()
         .background(Color.gray.opacity(0.1))
-        .cornerRadius(10)
+        .cornerRadius(12)
+    }
+    
+    struct StatItem: View {
+        let title: String
+        let value: String
+        
+        var body: some View {
+            VStack(spacing: 4) {
+                Text(value)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.blue)
+                
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+// MARK: - User Engagement Card
+struct UserEngagementCard: View {
+    @ObservedObject var homeViewModel: HomeViewModel
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Your Activity")
+                .font(.headline)
+                .fontWeight(.bold)
+            
+            VStack(spacing: 8) {
+                HStack {
+                    Text("Posts Liked")
+                    Spacer()
+                    Text("\(homeViewModel.likedPosts.count)")
+                        .fontWeight(.medium)
+                        .foregroundColor(.red)
+                }
+                
+                HStack {
+                    Text("Posts Bookmarked")
+                    Spacer()
+                    Text("\(homeViewModel.bookmarkedPosts.count)")
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue)
+                }
+            }
+            .font(.subheadline)
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .gray.opacity(0.1), radius: 2, x: 0, y: 1)
+    }
+}
+
+// MARK: - Post Filter Options
+struct PostFilterView: View {
+    @ObservedObject var homeViewModel: HomeViewModel
+    @State private var selectedFilter: PostTypeFilter = .all
+    
+    enum PostTypeFilter: CaseIterable {
+        case all, trades, analysis, discussions
+        
+        var title: String {
+            switch self {
+            case .all: return "All"
+            case .trades: return "Trades"
+            case .analysis: return "Analysis"
+            case .discussions: return "Discussions"
+            }
+        }
+        
+        var postType: PostType? {
+            switch self {
+            case .all: return nil
+            case .trades: return .tradeResult
+            case .analysis: return .marketAnalysis
+            case .discussions: return .text
+            }
+        }
+    }
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(PostTypeFilter.allCases, id: \.self) { filter in
+                    FilterChip(
+                        title: filter.title,
+                        isSelected: selectedFilter == filter
+                    ) {
+                        selectedFilter = filter
+                        // Apply filter logic here
+                    }
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    struct FilterChip: View {
+        let title: String
+        let isSelected: Bool
+        let action: () -> Void
+        
+        var body: some View {
+            Button(action: action) {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(isSelected ? .white : .blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(isSelected ? Color.blue : Color.blue.opacity(0.1))
+                    .cornerRadius(16)
+            }
+        }
     }
 }
 

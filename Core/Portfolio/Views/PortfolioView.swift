@@ -1,5 +1,6 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
 // Fixed Portfolio View - uses simple components, no missing dependencies
+// Removed duplicate TradeFilter enum - uses the one from TradingEnums.swift
 
 import SwiftUI
 
@@ -608,21 +609,6 @@ struct DetailRow: View {
                 .fontWeight(.medium)
         }
         .padding(.vertical, 2)
-    }
-}
-
-// MARK: - Filter Enum
-enum TradeFilter: CaseIterable {
-    case all, open, closed, profitable, losses
-    
-    var displayName: String {
-        switch self {
-        case .all: return "All"
-        case .open: return "Open"
-        case .closed: return "Closed"
-        case .profitable: return "Profitable"
-        case .losses: return "Losses"
-        }
     }
 }
 

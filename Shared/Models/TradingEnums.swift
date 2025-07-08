@@ -1,5 +1,5 @@
 // File: Shared/Models/TradingEnums.swift
-// Simplified Trading Enums
+// Centralized Trading Enums - TradeFilter is defined here to avoid duplicates
 
 import Foundation
 
@@ -20,6 +20,21 @@ enum MarketSentiment: String, CaseIterable, Codable {
         case .bullish: return "Bullish"
         case .bearish: return "Bearish"
         case .neutral: return "Neutral"
+        }
+    }
+}
+
+// MARK: - Trade Filter (Centralized Definition)
+enum TradeFilter: CaseIterable {
+    case all, open, closed, profitable, losses
+    
+    var displayName: String {
+        switch self {
+        case .all: return "All"
+        case .open: return "Open"
+        case .closed: return "Closed"
+        case .profitable: return "Profitable"
+        case .losses: return "Losses"
         }
     }
 }

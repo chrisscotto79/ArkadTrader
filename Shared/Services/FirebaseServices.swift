@@ -1,5 +1,5 @@
 // File: Shared/Services/FirebaseServices.swift
-// Combined Firebase Services - Simplified
+// Updated Firebase Services with Complete User Interactions
 
 import Foundation
 import Firebase
@@ -135,7 +135,6 @@ class FirebaseAuthService: ObservableObject {
     
     // MARK: - Trade Methods
     
-    
     func addTrade(_ trade: Trade) async throws {
         try await db.collection("trades").document(trade.id).setData(trade.toFirestore())
     }
@@ -188,12 +187,165 @@ class FirebaseAuthService: ObservableObject {
     func getFeedPosts() async throws -> [Post] {
         let snapshot = try await db.collection("posts")
             .order(by: "createdAt", descending: true)
-            .limit(to: 20)
+            .limit(to: 50)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
             try? Post.fromFirestore(data: document.data(), id: document.documentID)
         }
+    }
+    
+    // MARK: - Like/Unlike Methods
+    
+    func likePost(postId: String, userId: String) async throws {
+        let batch = db.batch()
+        
+        // Add to user's likes subcollection
+        let userLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+        batch.setData([
+            "postId": postId,
+            "likedAt": Timestamp(date: Date())
+        ], forDocument: userLikeRef)
+        
+        // Increment post's like count
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData([
+            "likesCount": FieldValue.increment(Int64(1))
+        ], forDocument: postRef)
+        
+        try await batch.commit()
+    }
+    
+    func unlikePost(postId: String, userId: String) async throws {
+        let batch = db.batch()
+        
+        // Remove from user's likes subcollection
+        let userLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+        batch.deleteDocument(userLikeRef)
+        
+        // Decrement post's like count
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData([
+            "likesCount": FieldValue.increment(Int64(-1))
+        ], forDocument: postRef)
+        
+        try await batch.commit()
+    }
+    
+    func getUserLikedPosts(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId).collection("likes").getDocuments()
+        return Set(snapshot.documents.map { $0.documentID })
+    }
+    
+    // MARK: - Bookmark Methods
+    
+    func bookmarkPost(postId: String, userId: String) async throws {
+        let userBookmarkRef = db.collection("users").document(userId).collection("bookmarks").document(postId)
+        try await userBookmarkRef.setData([
+            "postId": postId,
+            "bookmarkedAt": Timestamp(date: Date())
+        ])
+    }
+    
+    func unbookmarkPost(postId: String, userId: String) async throws {
+        let userBookmarkRef = db.collection("users").document(userId).collection("bookmarks").document(postId)
+        try await userBookmarkRef.delete()
+    }
+    
+    func getUserBookmarkedPosts(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId).collection("bookmarks").getDocuments()
+        return Set(snapshot.documents.map { $0.documentID })
+    }
+    
+    // MARK: - Following Methods
+    
+    func followUser(userId: String, targetUserId: String) async throws {
+        let batch = db.batch()
+        
+        // Add to user's following
+        let followingRef = db.collection("users").document(userId).collection("following").document(targetUserId)
+        batch.setData([
+            "userId": targetUserId,
+            "followedAt": Timestamp(date: Date())
+        ], forDocument: followingRef)
+        
+        // Add to target user's followers
+        let followerRef = db.collection("users").document(targetUserId).collection("followers").document(userId)
+        batch.setData([
+            "userId": userId,
+            "followedAt": Timestamp(date: Date())
+        ], forDocument: followerRef)
+        
+        // Update counts
+        let userRef = db.collection("users").document(userId)
+        batch.updateData(["followingCount": FieldValue.increment(Int64(1))], forDocument: userRef)
+        
+        let targetUserRef = db.collection("users").document(targetUserId)
+        batch.updateData(["followersCount": FieldValue.increment(Int64(1))], forDocument: targetUserRef)
+        
+        try await batch.commit()
+    }
+    
+    func unfollowUser(userId: String, targetUserId: String) async throws {
+        let batch = db.batch()
+        
+        // Remove from user's following
+        let followingRef = db.collection("users").document(userId).collection("following").document(targetUserId)
+        batch.deleteDocument(followingRef)
+        
+        // Remove from target user's followers
+        let followerRef = db.collection("users").document(targetUserId).collection("followers").document(userId)
+        batch.deleteDocument(followerRef)
+        
+        // Update counts
+        let userRef = db.collection("users").document(userId)
+        batch.updateData(["followingCount": FieldValue.increment(Int64(-1))], forDocument: userRef)
+        
+        let targetUserRef = db.collection("users").document(targetUserId)
+        batch.updateData(["followersCount": FieldValue.increment(Int64(-1))], forDocument: targetUserRef)
+        
+        try await batch.commit()
+    }
+    
+    func getUserFollowing(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId).collection("following").getDocuments()
+        return Set(snapshot.documents.map { $0.documentID })
+    }
+    
+    func getUserFollowers(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId).collection("followers").getDocuments()
+        return Set(snapshot.documents.map { $0.documentID })
+    }
+    
+    // MARK: - Report and Block Methods
+    
+    func reportPost(postId: String, reportedBy: String, reason: String) async throws {
+        let reportRef = db.collection("reports").document()
+        try await reportRef.setData([
+            "postId": postId,
+            "reportedBy": reportedBy,
+            "reason": reason,
+            "reportedAt": Timestamp(date: Date()),
+            "status": "pending"
+        ])
+    }
+    
+    func blockUser(userId: String, blockedBy: String) async throws {
+        let blockRef = db.collection("users").document(blockedBy).collection("blocked").document(userId)
+        try await blockRef.setData([
+            "userId": userId,
+            "blockedAt": Timestamp(date: Date())
+        ])
+    }
+    
+    func unblockUser(userId: String, unblockedBy: String) async throws {
+        let blockRef = db.collection("users").document(unblockedBy).collection("blocked").document(userId)
+        try await blockRef.delete()
+    }
+    
+    func getUserBlockedUsers(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId).collection("blocked").getDocuments()
+        return Set(snapshot.documents.map { $0.documentID })
     }
     
     // MARK: - Community Methods
@@ -225,6 +377,42 @@ class FirebaseAuthService: ObservableObject {
         ])
     }
     
+    // MARK: - Comment Methods
+    
+    func addComment(postId: String, content: String, authorId: String, authorUsername: String) async throws {
+        let comment = Comment(
+            postId: postId,
+            content: content,
+            authorId: authorId,
+            authorUsername: authorUsername
+        )
+        
+        let batch = db.batch()
+        
+        // Add comment to comments collection
+        let commentRef = db.collection("comments").document(comment.id)
+        batch.setData(comment.toFirestore(), forDocument: commentRef)
+        
+        // Increment post's comment count
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData([
+            "commentsCount": FieldValue.increment(Int64(1))
+        ], forDocument: postRef)
+        
+        try await batch.commit()
+    }
+    
+    func getCommentsForPost(postId: String) async throws -> [Comment] {
+        let snapshot = try await db.collection("comments")
+            .whereField("postId", isEqualTo: postId)
+            .order(by: "createdAt", descending: false)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
     // MARK: - User Methods
     
     func updateUserStats(userId: String, totalProfitLoss: Double, winRate: Double) async throws {
@@ -235,15 +423,111 @@ class FirebaseAuthService: ObservableObject {
         ])
     }
     
+    // MARK: - Search Methods
+    
+    func searchUsers(query: String) async throws -> [User] {
+        // Note: Firestore doesn't have full-text search, so this is a simple prefix search
+        let snapshot = try await db.collection("users")
+            .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
+            .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
+            .limit(to: 20)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func searchPosts(query: String) async throws -> [Post] {
+        // Simple search implementation - in production you'd use Algolia or similar
+        let snapshot = try await db.collection("posts")
+            .order(by: "createdAt", descending: true)
+            .limit(to: 100)
+            .getDocuments()
+        
+        let posts = snapshot.documents.compactMap { document in
+            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        return posts.filter { post in
+            post.content.localizedCaseInsensitiveContains(query) ||
+            post.authorUsername.localizedCaseInsensitiveContains(query)
+        }
+    }
+    
     // MARK: - Clean up
     
     func removeAllListeners() {
         listeners.forEach { $0.remove() }
         listeners.removeAll()
     }
-    
-    
 }
+
+// MARK: - Comment Model
+struct Comment: Identifiable, Codable {
+    let id: String
+    let postId: String
+    let content: String
+    let authorId: String
+    let authorUsername: String
+    let createdAt: Date
+    let likesCount: Int
+
+    // Initializer for creating a new comment
+    init(postId: String, content: String, authorId: String, authorUsername: String) {
+        self.id = UUID().uuidString
+        self.postId = postId
+        self.content = content
+        self.authorId = authorId
+        self.authorUsername = authorUsername
+        self.createdAt = Date()
+        self.likesCount = 0
+    }
+
+    // Initializer for loading from Firestore
+    init(id: String, postId: String, content: String, authorId: String, authorUsername: String, createdAt: Date, likesCount: Int) {
+        self.id = id
+        self.postId = postId
+        self.content = content
+        self.authorId = authorId
+        self.authorUsername = authorUsername
+        self.createdAt = createdAt
+        self.likesCount = likesCount
+    }
+
+    func toFirestore() -> [String: Any] {
+        return [
+            "postId": postId,
+            "content": content,
+            "authorId": authorId,
+            "authorUsername": authorUsername,
+            "createdAt": Timestamp(date: createdAt),
+            "likesCount": likesCount
+        ]
+    }
+
+    static func fromFirestore(data: [String: Any], id: String) throws -> Comment {
+        guard let postId = data["postId"] as? String,
+              let content = data["content"] as? String,
+              let authorId = data["authorId"] as? String,
+              let authorUsername = data["authorUsername"] as? String,
+              let createdAtTimestamp = data["createdAt"] as? Timestamp,
+              let likesCount = data["likesCount"] as? Int else {
+            throw FirestoreError.invalidData
+        }
+
+        return Comment(
+            id: id,
+            postId: postId,
+            content: content,
+            authorId: authorId,
+            authorUsername: authorUsername,
+            createdAt: createdAtTimestamp.dateValue(),
+            likesCount: likesCount
+        )
+    }
+}
+
 
 // Keep the old name for compatibility
 typealias FirestoreService = FirebaseAuthService

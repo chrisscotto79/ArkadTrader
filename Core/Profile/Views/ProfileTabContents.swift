@@ -1,5 +1,5 @@
 // File: Core/Profile/Views/ProfileTabContents.swift
-// Fixed ProfileTab contents - uses simple components, no missing dependencies
+// Fixed ProfileTab contents - uses centralized TradeFilter from TradingEnums.swift
 
 import SwiftUI
 
@@ -102,6 +102,114 @@ struct ProfileOverviewTab: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(color.opacity(0.3), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Profile Trades Tab
+struct ProfileTradesTab: View {
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
+    @State private var selectedFilter: TradeFilter = .all
+    @State private var searchText = ""
+    
+    var filteredTrades: [Trade] {
+        var trades = portfolioViewModel.trades
+        
+        // Apply search filter
+        if !searchText.isEmpty {
+            trades = trades.filter { trade in
+                trade.ticker.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+        
+        // Apply status filter
+        switch selectedFilter {
+        case .all:
+            break
+        case .open:
+            trades = trades.filter { $0.isOpen }
+        case .closed:
+            trades = trades.filter { !$0.isOpen }
+        case .profitable:
+            trades = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
+        case .losses:
+            trades = trades.filter { !$0.isOpen && $0.profitLoss < 0 }
+        }
+        
+        return trades.sorted { $0.entryDate > $1.entryDate }
+    }
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Search and Filter Controls
+            VStack(spacing: 12) {
+                // Search Bar
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                    
+                    TextField("Search trades...", text: $searchText)
+                        .textFieldStyle(PlainTextFieldStyle())
+                    
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                .padding()
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(12)
+                
+                // Filter Picker
+                Picker("Filter", selection: $selectedFilter) {
+                    ForEach(TradeFilter.allCases, id: \.self) { filter in
+                        Text(filter.displayName).tag(filter)
+                    }
+                }
+                .pickerStyle(SegmentedPickerStyle())
+            }
+            .padding(.horizontal)
+            
+            // Trades List
+            if filteredTrades.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                        .font(.system(size: 48))
+                        .foregroundColor(.gray.opacity(0.5))
+                    
+                    Text(searchText.isEmpty ? "No trades yet" : "No trades match your search")
+                        .font(.headline)
+                        .foregroundColor(.gray)
+                    
+                    if searchText.isEmpty {
+                        NavigationLink(destination: PortfolioView().environmentObject(portfolioViewModel)) {
+                            Text("Add Your First Trade")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .background(Color.blue)
+                                .cornerRadius(20)
+                        }
+                    }
+                }
+                .padding(.top, 60)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(filteredTrades, id: \.id) { trade in
+                            ProfileTradeCard(trade: trade)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            
+            Spacer(minLength: 50)
+        }
+        .padding(.top, 20)
     }
 }
 
@@ -270,6 +378,97 @@ struct RecentTradeCard: View {
         .background(Color.white)
         .cornerRadius(10)
         .shadow(color: .gray.opacity(0.1), radius: 3, x: 0, y: 1)
+    }
+}
+
+struct ProfileTradeCard: View {
+    let trade: Trade
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Status indicator
+            Circle()
+                .fill(statusColor)
+                .frame(width: 12, height: 12)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(trade.ticker)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    Text(trade.tradeType.displayName)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(4)
+                    
+                    if trade.isOpen {
+                        Text("OPEN")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.2))
+                            .cornerRadius(4)
+                    }
+                    
+                    Spacer()
+                }
+                
+                Text("\(trade.quantity) shares @ \(trade.entryPrice.asCurrency)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                
+                Text(formatDate(trade.entryDate))
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 4) {
+                if trade.isOpen {
+                    Text(trade.currentValue.asCurrency)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.blue)
+                    
+                    Text("Current")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                } else {
+                    Text(trade.profitLoss.asCurrencyWithSign)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
+                    
+                    Text("\(trade.profitLossPercentage >= 0 ? "+" : "")\(String(format: "%.1f", trade.profitLossPercentage))%")
+                        .font(.caption)
+                        .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .gray.opacity(0.1), radius: 4, x: 0, y: 2)
+    }
+    
+    private var statusColor: Color {
+        if trade.isOpen {
+            return .blue
+        } else {
+            return trade.profitLoss >= 0 ? .green : .red
+        }
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        return formatter.string(from: date)
     }
 }
 

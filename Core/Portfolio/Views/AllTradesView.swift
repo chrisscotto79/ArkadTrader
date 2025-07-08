@@ -1,5 +1,6 @@
 // Core/Portfolio/Views/AllTradesView.swift
 // Fixed All Trades View - removed duplicate TradeFilter enum
+// Uses TradeFilter from TradingEnums.swift
 
 import SwiftUI
 
