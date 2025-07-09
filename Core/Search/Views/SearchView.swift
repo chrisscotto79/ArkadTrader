@@ -354,22 +354,86 @@ struct SearchView: View {
         .padding(.top, 60)
     }
     
-    // MARK: - Search Results
-    private var searchResults: some View {
+
+    // MARK: - Search Results Section
+    private var searchResultsSection: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
-                ForEach(filteredSearchResults, id: \.id) { result in
-                    SearchResultCard(result: result) {
-                        // Handle result tap
-                        addToRecentSearches(searchText)
+            LazyVStack(spacing: 8) {
+                if searchType == .all {
+                    // Show grouped results
+                    ForEach(SearchResultType.allCases, id: \.self) { type in
+                        let filteredResults = searchViewModel.filteredResults(for: type)
+                        if !filteredResults.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                // Section header
+                                HStack {
+                                    Image(systemName: type.icon)
+                                        .foregroundColor(type.color)
+                                    Text(type.displayName + "s")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    Text("(\(filteredResults.count))")
+                                        .font(.subheadline)
+                                        .foregroundColor(.gray)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.top, 16)
+                                
+                                // Results
+                                ForEach(filteredResults.prefix(3)) { result in
+                                    SearchResultView(result: result)
+                                        .padding(.horizontal, 16)
+                                }
+                                
+                                // Show more button if needed
+                                if filteredResults.count > 3 {
+                                    Button(action: {
+                                        // Switch to specific tab
+                                        withAnimation {
+                                            searchType = SearchType(from: type)
+                                        }
+                                    }) {
+                                        Text("Show all \(filteredResults.count) \(type.displayName.lowercased())s")
+                                            .font(.subheadline)
+                                            .foregroundColor(.blue)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Show filtered results
+                    let results = filteredSearchResults
+                    ForEach(results) { result in
+                        SearchResultView(result: result)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 4)
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
             .padding(.bottom, 100)
         }
     }
+
+    // Helper extension to convert SearchResultType to SearchType
+    extension SearchView.SearchType {
+        init(from resultType: SearchResultType) {
+            switch resultType {
+            case .user:
+                self = .users
+            case .post:
+                self = .posts
+            case .trade:
+                self = .stocks
+            case .group:
+                self = .stocks // or add a .groups case to SearchType
+            }
+        }
+    }
+
     
     // MARK: - Search Suggestions
     private var searchSuggestions: some View {
@@ -547,46 +611,34 @@ struct SearchView: View {
     
     // MARK: - Computed Properties
     private var filteredSearchResults: [SearchResult] {
-        var results = searchViewModel.searchResults
+        let results: [SearchResult]
         
-        // Apply type filter
-        if selectedSearchType != .all {
-            results = results.filter { result in
-                switch selectedSearchType {
-                case .users: return result.type == .user
-                case .posts: return result.type == .post
-                case .stocks: return false // Would filter stock results
-                case .news: return false // Would filter news results
-                case .all: return true
-                }
-            }
+        switch searchType {
+        case .all:
+            results = searchViewModel.searchResults
+        case .users:
+            results = searchViewModel.filteredResults(for: .user)
+        case .posts:
+            results = searchViewModel.filteredResults(for: .post)
+        case .stocks:
+            results = searchViewModel.filteredResults(for: .trade)
+        case .news:
+            results = [] // No news search implemented yet
         }
         
-        // Apply additional filters
-        for filter in selectedFilters {
-            switch filter {
-            case .verified:
-                results = results.filter { result in
-                    if case .user = result.type {
-                        return result.user?.isVerified == true
-                    }
-                    return true
+        // Apply filters
+        if activeFilters.contains(.verified) {
+            // Filter verified users
+            return results.filter { result in
+                if case .user = result.type {
+                    return result.user?.isVerified == true
                 }
-            case .recent:
-                // Would filter by recency
-                break
-            case .trending:
-                // Would filter by trending score
-                break
-            case .followed:
-                // Would filter by followed users
-                break
+                return true
             }
         }
         
         return results
     }
-    
     // MARK: - Helper Methods
     private func performSearch() {
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -855,6 +907,231 @@ struct TrendingTopicCard: View {
             .background(Color.white)
             .cornerRadius(8)
             .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        }
+    }
+}
+
+struct SearchResultView: View {
+    let result: SearchResult
+    @State private var showDetail = false
+    
+    var body: some View {
+        Button(action: { showDetail = true }) {
+            HStack(spacing: 12) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(result.type.color.opacity(0.2))
+                        .frame(width: 44, height: 44)
+                    
+                    Image(systemName: result.type.icon)
+                        .font(.title3)
+                        .foregroundColor(result.type.color)
+                }
+                
+                // Content
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(primaryText)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
+                    Text(secondaryText)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.gray.opacity(0.05))
+            .cornerRadius(12)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .sheet(isPresented: $showDetail) {
+            NavigationView {
+                destinationView
+                    .navigationBarItems(trailing: Button("Done") { showDetail = false })
+            }
+        }
+    }
+    
+    private var primaryText: String {
+        switch result.type {
+        case .user:
+            return result.user?.fullName ?? "Unknown User"
+        case .post:
+            return String(result.post?.content.prefix(50) ?? "Post")
+        case .trade:
+            return result.trade?.ticker ?? "Trade"
+        case .group:
+            return result.community?.name ?? "Group"
+        }
+    }
+    
+    private var secondaryText: String {
+        switch result.type {
+        case .user:
+            return "@\(result.user?.username ?? "username")"
+        case .post:
+            return "by @\(result.post?.authorUsername ?? "unknown")"
+        case .trade:
+            let trade = result.trade
+            return trade?.isOpen ?? true ? "Open Position" : "Closed Position"
+        case .group:
+            return "\(result.community?.memberCount ?? 0) members"
+        }
+    }
+    
+    @ViewBuilder
+    private var destinationView: some View {
+        switch result.type {
+        case .user:
+            if let user = result.user {
+                UserProfileDetailView(user: user)
+            }
+        case .post:
+            if let post = result.post {
+                Text("Post: \(post.content)")
+                    .padding()
+            }
+        case .trade:
+            if let trade = result.trade {
+                Text("Trade: \(trade.ticker)")
+                    .padding()
+            }
+        case .group:
+            if let community = result.community {
+                Text("Community: \(community.name)")
+                    .padding()
+            }
+        }
+    }
+}
+
+// Simple User Profile View for search results
+struct UserProfileDetailView: View {
+    let user: User
+    @EnvironmentObject var authService: FirebaseAuthService
+    @State private var isFollowing = false
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Profile Header
+                VStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 80, height: 80)
+                        .overlay(
+                            Text(user.fullName.prefix(1).uppercased())
+                                .font(.largeTitle)
+                                .foregroundColor(.blue)
+                        )
+                    
+                    Text(user.fullName)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("@\(user.username)")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    
+                    if let bio = user.bio, !bio.isEmpty {
+                        Text(bio)
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                }
+                
+                // Stats
+                HStack(spacing: 40) {
+                    VStack {
+                        Text("\(user.followersCount)")
+                            .font(.headline)
+                        Text("Followers")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    VStack {
+                        Text("\(user.followingCount)")
+                            .font(.headline)
+                        Text("Following")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    VStack {
+                        Text("\(user.postsCount)")
+                            .font(.headline)
+                        Text("Posts")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                // Follow Button
+                if user.id != authService.currentUser?.id {
+                    Button(action: toggleFollow) {
+                        Text(isFollowing ? "Following" : "Follow")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(isFollowing ? Color.gray : Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                    }
+                    .padding(.horizontal)
+                }
+                
+                Spacer()
+            }
+            .padding()
+        }
+        .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            checkFollowStatus()
+        }
+    }
+    
+    private func checkFollowStatus() {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        Task {
+            do {
+                let following = try await authService.getUserFollowing(userId: currentUserId)
+                isFollowing = following.contains(user.id)
+            } catch {
+                print("Error checking follow status: \(error)")
+            }
+        }
+    }
+    
+    private func toggleFollow() {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        Task {
+            do {
+                if isFollowing {
+                    try await authService.unfollowUser(userId: user.id, followerId: currentUserId)
+                } else {
+                    try await authService.followUser(userId: user.id, followerId: currentUserId)
+                }
+                isFollowing.toggle()
+            } catch {
+                print("Error toggling follow: \(error)")
+            }
         }
     }
 }
