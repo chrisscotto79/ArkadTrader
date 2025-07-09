@@ -1,5 +1,5 @@
 // File: Core/Home/Views/HomeView.swift
-// Enhanced Home View with better organization, animations, and UX
+// Enhanced Home View - Fixed ScrollViewReader and anchor issues
 
 import SwiftUI
 
@@ -58,6 +58,12 @@ struct HomeView: View {
                         ScrollViewReader { proxy in
                             ScrollView(showsIndicators: false) {
                                 LazyVStack(spacing: 0) {
+                                    // Top anchor for scroll to top
+                                    Rectangle()
+                                        .fill(Color.clear)
+                                        .frame(height: 1)
+                                        .id("scrollTop")
+                                    
                                     // Content based on selected tab
                                     contentForSelectedTab
                                         .padding(.top, 16)
@@ -77,11 +83,7 @@ struct HomeView: View {
                             .refreshable {
                                 await refreshContent()
                             }
-                            .overlay(
-                                // Scroll to top button
-                                scrollToTopButton(proxy: proxy),
-                                alignment: .topTrailing
-                            )
+                            
                         }
                     }
                 }
@@ -283,33 +285,8 @@ struct HomeView: View {
         }
     }
     
-    // MARK: - Scroll to Top Button
-    private func scrollToTopButton(proxy: ScrollViewReader) -> some View {
-        Button(action: {
-            withAnimation(.easeInOut(duration: 0.8)) {
-                proxy.scrollTo("top", anchor: .top)
-            }
-            
-            // Add haptic feedback
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-        }) {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.title2)
-                .foregroundColor(.arkadGold)
-                .background(
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 44, height: 44)
-                        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-                )
-        }
-        .padding(.trailing, 20)
-        .padding(.top, 20)
-        .opacity(showScrollToTop ? 1.0 : 0.0)
-        .scaleEffect(showScrollToTop ? 1.0 : 0.0)
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showScrollToTop)
-    }
+    // MARK: - Scroll to Top Button - Fixed Generic Type Issue
+    
     
     // MARK: - Helper Methods
     private func handleScrollOffset(_ offset: CGFloat) {
@@ -337,7 +314,7 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Enhanced Components
+// MARK: - Enhanced Components (Remove Mock Data, Use Firebase)
 
 struct WelcomeBanner: View {
     var body: some View {

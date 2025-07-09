@@ -1,5 +1,5 @@
 // File: Core/Search/Views/SearchView.swift
-// Enhanced Search View with comprehensive search functionality and better UX
+// Enhanced Search View with comprehensive search functionality and better UX - Fixed SearchViewModel and @objc issues
 
 import SwiftUI
 
@@ -11,6 +11,7 @@ struct SearchView: View {
     @State private var isSearching = false
     @State private var showFilters = false
     @State private var selectedFilters: Set<SearchFilter> = []
+    @State private var searchWorkItem: DispatchWorkItem?
     
     @FocusState private var isSearchFieldFocused: Bool
     
@@ -590,6 +591,7 @@ struct SearchView: View {
         isSearching = true
         
         Task {
+            searchViewModel.searchText = searchText
             await searchViewModel.performSearch()
             
             DispatchQueue.main.async {
@@ -600,13 +602,19 @@ struct SearchView: View {
     }
     
     private func debounceSearch() {
-        // Implement debouncing for real-time search
-        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(performSearchDelayed), object: nil)
-        perform(#selector(performSearchDelayed), with: nil, afterDelay: 0.5)
-    }
-    
-    @objc private func performSearchDelayed() {
-        performSearch()
+        // Cancel previous work item
+        searchWorkItem?.cancel()
+        
+        // Create new work item
+        let workItem = DispatchWorkItem { [weak self] in
+            DispatchQueue.main.async {
+                self?.performSearch()
+            }
+        }
+        
+        // Store and execute after delay
+        searchWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
     }
     
     private func clearSearch() {
@@ -615,6 +623,7 @@ struct SearchView: View {
             searchViewModel.searchResults = []
             isSearching = false
         }
+        searchWorkItem?.cancel()
     }
     
     private func hideKeyboard() {

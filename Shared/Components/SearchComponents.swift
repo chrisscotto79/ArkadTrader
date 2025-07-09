@@ -1,5 +1,5 @@
 // File: Shared/Components/SearchComponents.swift
-// Fixed search components - removes deprecation warnings
+// Fixed search components - removes deprecation warnings and conflicts
 
 import SwiftUI
 
@@ -116,8 +116,8 @@ struct EmptySearchState: View {
     }
 }
 
-// MARK: - Search Result Card
-struct SearchResultCard: View {
+// MARK: - Search Result Card (Fixed - removed conflicts)
+struct SearchResultItem: View {
     let title: String
     let subtitle: String
     let icon: String
@@ -226,7 +226,7 @@ struct RecentSearches: View {
     VStack(spacing: 20) {
         EnhancedSearchBar(searchText: .constant("AAPL"))
         
-        SearchResultCard(
+        SearchResultItem(
             title: "Apple Inc.",
             subtitle: "AAPL • Technology",
             icon: "chart.line.uptrend.xyaxis",

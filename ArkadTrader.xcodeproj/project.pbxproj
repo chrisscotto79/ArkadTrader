@@ -106,6 +106,7 @@
 				Profile/Views/ProfileTabContents.swift,
 				Profile/Views/ProfileView.swift,
 				Profile/Views/UserListView.swift,
+				Search/ViewModel/SearchViewModel.swift,
 				Search/Views/SearchView.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;

@@ -178,7 +178,7 @@ struct RegisterView: View {
                 keyboardType: .default,
                 textContentType: .username,
                 submitLabel: .next,
-                autocapitalization: .none
+
             ) {
                 nextStep()
             }
@@ -224,7 +224,6 @@ struct RegisterView: View {
                 keyboardType: .emailAddress,
                 textContentType: .emailAddress,
                 submitLabel: .next,
-                autocapitalization: .none
             ) {
                 passwordFieldFocused = true
             }
