@@ -1,7 +1,7 @@
-// File: Core/Home/Views/HomeView.swift
-// Enhanced Home View - Fixed ScrollViewReader and anchor issues
-
+// Fixed HomeView.swift - Only modifying existing file, no new files
 import SwiftUI
+
+// Colors are already defined elsewhere in the project
 
 struct HomeView: View {
     @EnvironmentObject var authService: FirebaseAuthService
@@ -83,30 +83,31 @@ struct HomeView: View {
                             .refreshable {
                                 await refreshContent()
                             }
-                            
                         }
                     }
                 }
                 
-                // Enhanced Floating Action Button
+                // FIXED: Floating Action Button - properly positioned at bottom right
                 floatingActionButton
             }
             .navigationBarHidden(true)
-            .onAppear {
-                Task {
-                    await homeViewModel.loadPosts()
-                }
-            }
         }
         .sheet(isPresented: $showCreatePost) {
             CreatePostView { content in
                 Task {
                     await homeViewModel.createPost(content: content)
-                    // Add haptic feedback
-                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                    impactFeedback.impactOccurred()
                 }
             }
+        }
+        .onAppear {
+            Task {
+                await homeViewModel.loadPosts()
+            }
+        }
+        .alert("Error", isPresented: $homeViewModel.showError) {
+            Button("OK") { homeViewModel.showError = false }
+        } message: {
+            Text(homeViewModel.errorMessage)
         }
     }
     
@@ -117,43 +118,20 @@ struct HomeView: View {
                 Button(action: {
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
                         selectedTab = tab
-                        
-                        // Trigger market news loading when tab is selected
-                        if tab == .marketNews {
-                            Task {
-                                await homeViewModel.loadMarketNews()
-                            }
-                        }
-                        
-                        // Add haptic feedback
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                        impactFeedback.impactOccurred()
                     }
                 }) {
                     VStack(spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: selectedTab == tab ? tab.activeIcon : tab.icon)
-                                .font(.title3)
-                                .symbolEffect(.bounce, value: selectedTab == tab)
-                            
-                            if selectedTab == tab {
-                                Text(tab.title)
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .transition(.asymmetric(
-                                        insertion: .opacity.combined(with: .scale(scale: 0.8)),
-                                        removal: .opacity.combined(with: .scale(scale: 0.8))
-                                    ))
-                            }
-                        }
-                        .foregroundColor(selectedTab == tab ? .white : .gray)
-                        .padding(.horizontal, selectedTab == tab ? 16 : 8)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
-                                .shadow(color: selectedTab == tab ? Color.arkadGold.opacity(0.3) : Color.clear, radius: 4, x: 0, y: 2)
-                        )
+                        Text(tab.title)
+                            .font(.subheadline)
+                            .fontWeight(selectedTab == tab ? .bold : .medium)
+                            .foregroundColor(selectedTab == tab ? .white : .gray)
+                            .padding(.horizontal, selectedTab == tab ? 16 : 8)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
+                                    .shadow(color: selectedTab == tab ? Color.arkadGold.opacity(0.3) : Color.clear, radius: 4, x: 0, y: 2)
+                            )
                         
                         // Indicator dot
                         Circle()
@@ -240,7 +218,7 @@ struct HomeView: View {
         .padding(.horizontal, 16)
     }
     
-    // MARK: - Floating Action Button
+    // MARK: - FIXED: Floating Action Button - Properly positioned at bottom right
     private var floatingActionButton: some View {
         VStack {
             Spacer()
@@ -280,13 +258,10 @@ struct HomeView: View {
                     .scaleEffect(showCreatePost ? 0.95 : 1.0)
                 }
                 .padding(.trailing, 20)
-                .padding(.bottom, 100) // Account for tab bar
+                .padding(.bottom, 35) // Closer to tab bar
             }
         }
     }
-    
-    // MARK: - Scroll to Top Button - Fixed Generic Type Issue
-    
     
     // MARK: - Helper Methods
     private func handleScrollOffset(_ offset: CGFloat) {
@@ -314,7 +289,7 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Enhanced Components (Remove Mock Data, Use Firebase)
+// MARK: - Enhanced Components (added to existing file instead of creating new ones)
 
 struct WelcomeBanner: View {
     var body: some View {
@@ -371,43 +346,24 @@ struct EnhancedUserPostCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Enhanced User Header
+            // User info header
             HStack(spacing: 12) {
-                // Profile Avatar with gradient border
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.arkadGold, Color.arkadGold.opacity(0.6)]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 46, height: 46)
-                    
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 42, height: 42)
-                        .overlay(
-                            Text(String(post.authorUsername.prefix(1)).uppercased())
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.arkadGold)
-                        )
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("@\(post.authorUsername)")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
-                        // Verified badge (placeholder)
-                        Image(systemName: "checkmark.seal.fill")
+                // Profile picture placeholder
+                Circle()
+                    .fill(Color.arkadGold.opacity(0.2))
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Text(post.authorUsername.prefix(1).uppercased())
+                            .font(.headline)
+                            .fontWeight(.bold)
                             .foregroundColor(.arkadGold)
-                            .font(.caption)
-                    }
+                    )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("@\(post.authorUsername)")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
                     
                     HStack(spacing: 4) {
                         Text(formatDate(post.createdAt))
