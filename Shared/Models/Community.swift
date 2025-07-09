@@ -1,5 +1,5 @@
 // File: Shared/Models/Community.swift
-// Simplified Community Model
+// Fixed Community Model with isPrivate support
 
 import Foundation
 import FirebaseFirestore
@@ -9,19 +9,27 @@ struct Community: Identifiable, Codable {
     var name: String
     var description: String
     var type: CommunityType
-    var createdBy: String
+    var createdBy: String  // This is the creatorId
+    var creatorId: String { createdBy }  // Computed property for compatibility
     var memberCount: Int
+    var isPrivate: Bool
     var createdAt: Date
     
     // Initializer
-    init(name: String, description: String, type: CommunityType, createdBy: String) {
+    init(name: String, description: String, type: CommunityType = .general, creatorId: String, memberCount: Int = 1, isPrivate: Bool = false) {
         self.id = UUID().uuidString
         self.name = name
         self.description = description
         self.type = type
-        self.createdBy = createdBy
-        self.memberCount = 1
+        self.createdBy = creatorId
+        self.memberCount = memberCount
+        self.isPrivate = isPrivate
         self.createdAt = Date()
+    }
+    
+    // Compatibility initializer for existing code
+    init(name: String, description: String, type: CommunityType, createdBy: String) {
+        self.init(name: name, description: description, type: type, creatorId: createdBy, memberCount: 1, isPrivate: false)
     }
     
     // Firebase conversion
@@ -32,6 +40,7 @@ struct Community: Identifiable, Codable {
             "type": type.rawValue,
             "createdBy": createdBy,
             "memberCount": memberCount,
+            "isPrivate": isPrivate,
             "createdAt": Timestamp(date: createdAt)
         ]
     }
@@ -47,9 +56,17 @@ struct Community: Identifiable, Codable {
             throw FirestoreError.invalidData
         }
         
-        var community = Community(name: name, description: description, type: type, createdBy: createdBy)
+        let isPrivate = data["isPrivate"] as? Bool ?? false
+        
+        var community = Community(
+            name: name,
+            description: description,
+            type: type,
+            creatorId: createdBy,
+            memberCount: memberCount,
+            isPrivate: isPrivate
+        )
         community.id = id
-        community.memberCount = memberCount
         community.createdAt = createdAtTimestamp.dateValue()
         
         return community
@@ -75,3 +92,6 @@ enum CommunityType: String, CaseIterable, Codable {
         }
     }
 }
+
+// Firestore error enum if not already defined
+

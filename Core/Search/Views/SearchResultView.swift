@@ -1,25 +1,14 @@
-//
-//  SearchResultView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/9/25.
-//
-
-
 // File: Core/Search/Views/SearchResultView.swift
-// Search Result View Component with proper navigation
+// Clean Search Result View without conflicting dependencies
 
 import SwiftUI
 
 struct SearchResultView: View {
     let result: SearchResult
-    @State private var showUserProfile = false
-    @State private var showCommunityDetail = false
-    @State private var showTradeDetail = false
-    @State private var showPostDetail = false
+    @State private var showDetail = false
     
     var body: some View {
-        Button(action: handleResultTap) {
+        Button(action: { showDetail = true }) {
             HStack(spacing: 12) {
                 // Icon
                 ZStack {
@@ -58,22 +47,28 @@ struct SearchResultView: View {
             .cornerRadius(12)
         }
         .buttonStyle(PlainButtonStyle())
-        .background(
-            NavigationLink(
-                destination: destinationView,
-                isActive: navigationBinding,
-                label: { EmptyView() }
-            )
-            .hidden()
-        )
+        .sheet(isPresented: $showDetail) {
+            NavigationView {
+                destinationView
+                    .navigationBarTitle("Details", displayMode: .inline)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") { showDetail = false }
+                        }
+                    }
+            }
+        }
     }
+    
+    // MARK: - Content Properties
     
     private var primaryText: String {
         switch result.type {
         case .user:
             return result.user?.fullName ?? "Unknown User"
         case .post:
-            return result.post?.content ?? "Post"
+            return String(result.post?.content.prefix(50) ?? "Post")
         case .trade:
             return result.trade?.ticker ?? "Trade"
         case .group:
@@ -95,281 +90,327 @@ struct SearchResultView: View {
         }
     }
     
-    private func handleResultTap() {
-        switch result.type {
-        case .user:
-            showUserProfile = true
-        case .post:
-            showPostDetail = true
-        case .trade:
-            showTradeDetail = true
-        case .group:
-            showCommunityDetail = true
-        }
-    }
-    
-    private var navigationBinding: Binding<Bool> {
-        switch result.type {
-        case .user:
-            return $showUserProfile
-        case .post:
-            return $showPostDetail
-        case .trade:
-            return $showTradeDetail
-        case .group:
-            return $showCommunityDetail
-        }
-    }
+    // MARK: - Destination Views
     
     @ViewBuilder
     private var destinationView: some View {
         switch result.type {
         case .user:
             if let user = result.user {
-                UserProfileView(userId: user.id)
+                SimpleUserProfileView(user: user)
+            } else {
+                Text("User not found")
             }
         case .post:
             if let post = result.post {
-                PostDetailView(post: post)
+                SimplePostDetailView(post: post)
+            } else {
+                Text("Post not found")
             }
         case .trade:
             if let trade = result.trade {
-                TradeDetailView(trade: trade)
+                SimpleTradeDetailView(trade: trade)
+            } else {
+                Text("Trade not found")
             }
         case .group:
             if let community = result.community {
-                CommunityDetailView(community: community)
+                SimpleCommunityDetailView(community: community)
+            } else {
+                Text("Community not found")
             }
         }
     }
 }
 
-// MARK: - User Profile View for Navigation
-struct UserProfileView: View {
-    let userId: String
-    @StateObject private var viewModel = UserProfileViewModel()
+// MARK: - Simple Detail Views
+
+struct SimpleUserProfileView: View {
+    let user: User
     @EnvironmentObject var authService: FirebaseAuthService
+    @State private var isFollowing = false
+    @State private var isLoading = false
     
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 // Profile Header
-                ProfileHeaderView(user: viewModel.user)
+                VStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 80, height: 80)
+                        .overlay(
+                            Text(user.fullName.prefix(1).uppercased())
+                                .font(.largeTitle)
+                                .foregroundColor(.blue)
+                        )
+                    
+                    Text(user.fullName)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("@\(user.username)")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    
+                    if let bio = user.bio, !bio.isEmpty {
+                        Text(bio)
+                            .font(.body)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                }
                 
                 // Stats
-                if let user = viewModel.user {
-                    UserStatsView(user: user)
+                HStack(spacing: 40) {
+                    VStack(spacing: 4) {
+                        Text("\(user.followersCount)")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text("Followers")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    VStack(spacing: 4) {
+                        Text("\(user.followingCount)")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text("Following")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    VStack(spacing: 4) {
+                        Text(String(format: "%.1f%%", user.winRate))
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text("Win Rate")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+                .padding()
+                
+                // Follow Button (if not current user)
+                if user.id != authService.currentUser?.id {
+                    Button(action: toggleFollow) {
+                        HStack {
+                            if isLoading {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                            Text(isFollowing ? "Following" : "Follow")
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 8)
+                        .background(isFollowing ? Color.gray : Color.blue)
+                        .cornerRadius(20)
+                    }
+                    .disabled(isLoading)
                 }
                 
-                // Recent Activity
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Recent Activity")
-                        .font(.headline)
-                        .padding(.horizontal)
-                    
-                    if viewModel.userPosts.isEmpty {
-                        Text("No posts yet")
-                            .foregroundColor(.gray)
-                            .padding()
-                    } else {
-                        ForEach(viewModel.userPosts) { post in
-                            PostRowView(post: post)
-                                .padding(.horizontal)
-                        }
-                    }
-                }
+                Spacer()
             }
-        }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                if viewModel.user?.id != authService.currentUser?.id {
-                    Button(viewModel.isFollowing ? "Following" : "Follow") {
-                        viewModel.toggleFollow()
-                    }
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(viewModel.isFollowing ? Color.gray : Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(20)
-                }
-            }
+            .padding()
         }
         .onAppear {
-            viewModel.loadUser(userId: userId)
-        }
-    }
-}
-
-// Simple view models for the profile
-@MainActor
-class UserProfileViewModel: ObservableObject {
-    @Published var user: User?
-    @Published var userPosts: [Post] = []
-    @Published var isFollowing = false
-    
-    private let authService = FirebaseAuthService.shared
-    
-    func loadUser(userId: String) {
-        Task {
-            do {
-                self.user = try await authService.getUserById(userId: userId)
-                self.userPosts = try await authService.getUserPosts(userId: userId)
-                
-                // Check if following
-                if let currentUserId = authService.currentUser?.id {
-                    let following = try await authService.getUserFollowing(userId: currentUserId)
-                    self.isFollowing = following.contains(userId)
-                }
-            } catch {
-                print("Error loading user: \(error)")
-            }
+            checkFollowingStatus()
         }
     }
     
-    func toggleFollow() {
-        guard let userId = user?.id,
-              let currentUserId = authService.currentUser?.id else { return }
+    private func checkFollowingStatus() {
+        guard let currentUserId = authService.currentUser?.id else { return }
         
         Task {
             do {
-                if isFollowing {
-                    try await authService.unfollowUser(userId: userId, followerId: currentUserId)
-                } else {
-                    try await authService.followUser(userId: userId, followerId: currentUserId)
+                let following = try await authService.getUserFollowing(userId: currentUserId)
+                await MainActor.run {
+                    isFollowing = following.contains(user.id)
                 }
-                isFollowing.toggle()
             } catch {
+                print("Error checking follow status: \(error)")
+            }
+        }
+    }
+    
+    private func toggleFollow() {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        isLoading = true
+        Task {
+            do {
+                if isFollowing {
+                    try await authService.unfollowUser(userId: user.id, followerId: currentUserId)
+                } else {
+                    try await authService.followUser(userId: user.id, followerId: currentUserId)
+                }
+                
+                await MainActor.run {
+                    isFollowing.toggle()
+                    isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                }
                 print("Error toggling follow: \(error)")
             }
         }
     }
 }
 
-// Placeholder views for other destinations
-struct PostDetailView: View {
+struct SimplePostDetailView: View {
     let post: Post
-    var body: some View {
-        Text("Post Detail: \(post.content)")
-    }
-}
-
-struct TradeDetailView: View {
-    let trade: Trade
-    var body: some View {
-        Text("Trade Detail: \(trade.ticker)")
-    }
-}
-
-struct CommunityDetailView: View {
-    let community: Community
-    var body: some View {
-        Text("Community: \(community.name)")
-    }
-}
-
-// Helper views
-struct ProfileHeaderView: View {
-    let user: User?
     
     var body: some View {
-        VStack(spacing: 12) {
-            // Profile picture
-            Circle()
-                .fill(Color.blue.opacity(0.2))
-                .frame(width: 80, height: 80)
-                .overlay(
-                    Text(user?.fullName.prefix(1).uppercased() ?? "?")
-                        .font(.largeTitle)
-                        .foregroundColor(.blue)
-                )
-            
-            // Name and username
-            VStack(spacing: 4) {
-                Text(user?.fullName ?? "Loading...")
-                    .font(.title2)
-                    .fontWeight(.bold)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Author info
+                HStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Text(post.authorUsername.prefix(1).uppercased())
+                                .font(.headline)
+                                .foregroundColor(.blue)
+                        )
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("@\(post.authorUsername)")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        
+                        Text(post.createdAt.timeAgoDisplay)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                }
                 
-                Text("@\(user?.username ?? "...")")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-            }
-            
-            // Bio
-            if let bio = user?.bio, !bio.isEmpty {
-                Text(bio)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-        }
-        .padding()
-    }
-}
-
-struct UserStatsView: View {
-    let user: User
-    
-    var body: some View {
-        HStack(spacing: 40) {
-            StatColumn(value: "\(user.followersCount)", label: "Followers")
-            StatColumn(value: "\(user.followingCount)", label: "Following")
-            StatColumn(value: "\(user.postsCount)", label: "Posts")
-        }
-        .padding()
-    }
-}
-
-struct StatColumn: View {
-    let value: String
-    let label: String
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.headline)
-                .fontWeight(.bold)
-            
-            Text(label)
+                // Post content
+                Text(post.content)
+                    .font(.body)
+                
+                // Post stats
+                HStack(spacing: 20) {
+                    Label("\(post.likesCount)", systemImage: "heart")
+                        .foregroundColor(.red)
+                    
+                    Label("\(post.commentsCount)", systemImage: "bubble.right")
+                        .foregroundColor(.blue)
+                    
+                    Spacer()
+                }
                 .font(.caption)
-                .foregroundColor(.gray)
+                
+                Spacer()
+            }
+            .padding()
         }
     }
 }
 
-struct PostRowView: View {
-    let post: Post
+struct SimpleTradeDetailView: View {
+    let trade: Trade
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(post.content)
-                .font(.subheadline)
-                .lineLimit(3)
-            
-            HStack {
-                Label("\(post.likeCount)", systemImage: "heart")
-                Label("\(post.commentCount)", systemImage: "bubble.right")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Trade header
+                HStack {
+                    Text(trade.ticker)
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    
+                    Spacer()
+                    
+                    Text(trade.isOpen ? "OPEN" : "CLOSED")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(trade.isOpen ? Color.blue : Color.gray)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                
+                // Trade details
+                VStack(alignment: .leading, spacing: 12) {
+                    DetailRow(label: "Type", value: trade.tradeType.displayName)
+                    DetailRow(label: "Entry Price", value: "$\(String(format: "%.2f", trade.entryPrice))")
+                    DetailRow(label: "Quantity", value: "\(trade.quantity)")
+                    DetailRow(label: "Entry Date", value: trade.formattedEntryDate)
+                    
+                    if let notes = trade.notes {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Notes")
+                                .font(.headline)
+                            Text(notes)
+                                .font(.body)
+                        }
+                    }
+                    
+                    if !trade.isOpen {
+                        DetailRow(label: "P&L", value: String(format: "%.2f%%", trade.profitLossPercentage))
+                    }
+                }
+                
                 Spacer()
-                Text(post.createdAt.timeAgoDisplay())
-                    .font(.caption)
-                    .foregroundColor(.gray)
             }
-            .font(.caption)
-            .foregroundColor(.gray)
+            .padding()
         }
-        .padding()
-        .background(Color.gray.opacity(0.05))
-        .cornerRadius(12)
     }
 }
 
-// Extension for time ago display
-extension Date {
-    func timeAgoDisplay() -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: self, relativeTo: Date())
+struct SimpleCommunityDetailView: View {
+    let community: Community
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Community header
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(community.name)
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    
+                    Text(community.description)
+                        .font(.body)
+                        .foregroundColor(.gray)
+                    
+                    Text("\(community.memberCount) members")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+                
+                Spacer()
+            }
+            .padding()
+        }
+    }
+}
+
+// MARK: - Helper Views
+
+struct DetailRow: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.headline)
+                .foregroundColor(.gray)
+            
+            Spacer()
+            
+            Text(value)
+                .font(.body)
+                .fontWeight(.medium)
+        }
     }
 }
