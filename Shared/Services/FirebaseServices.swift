@@ -1,5 +1,5 @@
 // File: Shared/Services/FirebaseServices.swift
-// Updated Firebase Services with Market News Caching
+// Comprehensive Firebase Services with full coverage for all features
 
 import Foundation
 import Firebase
@@ -21,7 +21,7 @@ class FirebaseAuthService: ObservableObject {
         checkAuth()
     }
     
-    // MARK: - Auth Methods
+    // MARK: - Authentication Methods
     
     func checkAuth() {
         if let firebaseUser = Auth.auth().currentUser {
@@ -43,7 +43,6 @@ class FirebaseAuthService: ObservableObject {
             if snapshot.exists {
                 await loadUser(uid: result.user.uid)
             } else {
-                // If no user doc exists, create a basic one
                 let user = User(id: result.user.uid, email: email, username: email.components(separatedBy: "@")[0], fullName: "")
                 try await docRef.setData(user.toFirestore())
                 currentUser = user
@@ -108,7 +107,6 @@ class FirebaseAuthService: ObservableObject {
         
         try await db.collection("users").document(userId).updateData(updates)
         
-        // Update local user
         if var user = currentUser {
             if let fullName = fullName {
                 user.fullName = fullName
@@ -133,7 +131,42 @@ class FirebaseAuthService: ObservableObject {
         }
     }
     
-    // MARK: - Trade Methods
+    // MARK: - User Management Methods
+    
+    func getUserById(userId: String) async throws -> User? {
+        let document = try await db.collection("users").document(userId).getDocument()
+        guard let data = document.data() else { return nil }
+        return try User.fromFirestore(data: data, id: userId)
+    }
+    
+    func updateUserStats(userId: String, totalProfitLoss: Double, winRate: Double) async throws {
+        try await db.collection("users").document(userId).updateData([
+            "totalProfitLoss": totalProfitLoss,
+            "winRate": winRate,
+            "updatedAt": Timestamp(date: Date())
+        ])
+    }
+    
+    func searchUsers(query: String) async throws -> [User] {
+        let snapshot = try await db.collection("users")
+            .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
+            .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
+            .limit(to: 20)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func updateUserOnlineStatus(userId: String, isOnline: Bool) async throws {
+        try await db.collection("users").document(userId).updateData([
+            "isOnline": isOnline,
+            "lastSeen": Timestamp(date: Date())
+        ])
+    }
+    
+    // MARK: - Trade Management Methods
     
     func addTrade(_ trade: Trade) async throws {
         try await db.collection("trades").document(trade.id).setData(trade.toFirestore())
@@ -178,16 +211,63 @@ class FirebaseAuthService: ObservableObject {
         listeners.append(listener)
     }
     
-    // MARK: - Post Methods
+    func getTradeById(tradeId: String) async throws -> Trade? {
+        let document = try await db.collection("trades").document(tradeId).getDocument()
+        guard let data = document.data() else { return nil }
+        return try Trade.fromFirestore(data: data, id: tradeId)
+    }
+    
+    func copyTrade(tradeId: String, userId: String) async throws {
+        guard let originalTrade = try await getTradeById(tradeId: tradeId) else {
+            throw NSError(domain: "TradeNotFound", code: 404, userInfo: [NSLocalizedDescriptionKey: "Original trade not found"])
+        }
+        
+        var copiedTrade = Trade(
+            ticker: originalTrade.ticker,
+            tradeType: originalTrade.tradeType,
+            entryPrice: originalTrade.entryPrice,
+            quantity: originalTrade.quantity,
+            userId: userId
+        )
+        copiedTrade.notes = "Copied from @\(originalTrade.userId)"
+        copiedTrade.strategy = originalTrade.strategy
+        
+        try await addTrade(copiedTrade)
+    }
+    
+    // MARK: - Post/Feed Management Methods
     
     func createPost(_ post: Post) async throws {
         try await db.collection("posts").document(post.id).setData(post.toFirestore())
     }
     
-    func getFeedPosts() async throws -> [Post] {
+    func updatePost(_ post: Post) async throws {
+        try await db.collection("posts").document(post.id).setData(post.toFirestore())
+    }
+    
+    func deletePost(postId: String) async throws {
+        let batch = db.batch()
+        
+        // Delete post
+        let postRef = db.collection("posts").document(postId)
+        batch.deleteDocument(postRef)
+        
+        // Delete all comments for this post
+        let commentsSnapshot = try await db.collection("comments")
+            .whereField("postId", isEqualTo: postId)
+            .getDocuments()
+        
+        for commentDoc in commentsSnapshot.documents {
+            batch.deleteDocument(commentDoc.reference)
+        }
+        
+        try await batch.commit()
+    }
+    
+    func getFeedPosts(limit: Int = 50) async throws -> [Post] {
         let snapshot = try await db.collection("posts")
             .order(by: "createdAt", descending: true)
-            .limit(to: 50)
+            .limit(to: limit)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
@@ -195,59 +275,340 @@ class FirebaseAuthService: ObservableObject {
         }
     }
     
-    // MARK: - Market News Methods
-    
-    func cacheMarketNews(articles: [MarketNewsArticle]) async throws {
-        let batch = db.batch()
-        
-        // First, delete old cached news (keep only last 50 articles)
-        let oldNewsSnapshot = try await db.collection("marketNews")
-            .order(by: "cachedAt", descending: false)
+    func getUserPosts(userId: String) async throws -> [Post] {
+        let snapshot = try await db.collection("posts")
+            .whereField("authorId", isEqualTo: userId)
+            .order(by: "createdAt", descending: true)
             .getDocuments()
         
-        // Delete old news if we have more than 50 articles
-        if oldNewsSnapshot.documents.count > 50 {
-            let documentsToDelete = oldNewsSnapshot.documents.prefix(oldNewsSnapshot.documents.count - 30)
-            for document in documentsToDelete {
-                batch.deleteDocument(document.reference)
-            }
+        return snapshot.documents.compactMap { document in
+            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getFollowingPosts(userId: String) async throws -> [Post] {
+        let followingIds = try await getUserFollowing(userId: userId)
+        guard !followingIds.isEmpty else { return [] }
+        
+        let snapshot = try await db.collection("posts")
+            .whereField("authorId", in: Array(followingIds))
+            .order(by: "createdAt", descending: true)
+            .limit(to: 100)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func searchPosts(query: String) async throws -> [Post] {
+        let snapshot = try await db.collection("posts")
+            .order(by: "createdAt", descending: true)
+            .limit(to: 100)
+            .getDocuments()
+        
+        let posts = snapshot.documents.compactMap { document in
+            try? Post.fromFirestore(data: document.data(), id: document.documentID)
         }
         
-        // Add new articles
-        for article in articles {
-            let docRef = db.collection("marketNews").document(article.id)
-            batch.setData(article.toFirestore(), forDocument: docRef)
+        return posts.filter { post in
+            post.content.localizedCaseInsensitiveContains(query) ||
+            post.authorUsername.localizedCaseInsensitiveContains(query)
+        }
+    }
+    
+    // MARK: - Community Management Methods
+    
+    func createCommunity(_ community: Community) async throws {
+        try await db.collection("communities").document(community.id).setData(community.toFirestore())
+        
+        // Add creator as first member
+        try await joinCommunity(communityId: community.id, userId: community.createdBy)
+    }
+    
+    func updateCommunity(_ community: Community) async throws {
+        try await db.collection("communities").document(community.id).setData(community.toFirestore())
+    }
+    
+    func deleteCommunity(communityId: String) async throws {
+        let batch = db.batch()
+        
+        // Delete community
+        let communityRef = db.collection("communities").document(communityId)
+        batch.deleteDocument(communityRef)
+        
+        // Remove community from all users
+        let membersSnapshot = try await db.collection("communities").document(communityId)
+            .collection("members").getDocuments()
+        
+        for memberDoc in membersSnapshot.documents {
+            let userId = memberDoc.documentID
+            batch.updateData([
+                "communityIds": FieldValue.arrayRemove([communityId])
+            ], forDocument: db.collection("users").document(userId))
         }
         
         try await batch.commit()
     }
     
-    func getCachedMarketNews() async throws -> [MarketNewsArticle] {
-        let snapshot = try await db.collection("marketNews")
-            .order(by: "cachedAt", descending: true)
-            .limit(to: 20)
+    func getCommunities(limit: Int = 20) async throws -> [Community] {
+        let snapshot = try await db.collection("communities")
+            .order(by: "memberCount", descending: true)
+            .limit(to: limit)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
-            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
+            try? Community.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
     
-    func clearOldMarketNews() async throws {
-        // Delete news older than 24 hours
-        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
-        let snapshot = try await db.collection("marketNews")
-            .whereField("cachedAt", isLessThan: oneDayAgo)
+    func getUserCommunities(userId: String) async throws -> [Community] {
+        let user = try await getUserById(userId: userId)
+        guard let communityIds = user?.communityIds, !communityIds.isEmpty else { return [] }
+        
+        let snapshot = try await db.collection("communities")
+            .whereField(FieldPath.documentID(), in: communityIds)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Community.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func joinCommunity(communityId: String, userId: String) async throws {
+        let batch = db.batch()
+        
+        // Add user to community members
+        let memberRef = db.collection("communities").document(communityId).collection("members").document(userId)
+        batch.setData([
+            "userId": userId,
+            "joinedAt": Timestamp(date: Date()),
+            "role": "member"
+        ], forDocument: memberRef)
+        
+        // Update community member count
+        let communityRef = db.collection("communities").document(communityId)
+        batch.updateData([
+            "memberCount": FieldValue.increment(Int64(1))
+        ], forDocument: communityRef)
+        
+        // Add community to user's communities
+        let userRef = db.collection("users").document(userId)
+        batch.updateData([
+            "communityIds": FieldValue.arrayUnion([communityId])
+        ], forDocument: userRef)
+        
+        try await batch.commit()
+    }
+    
+    func leaveCommunity(communityId: String, userId: String) async throws {
+        let batch = db.batch()
+        
+        // Remove user from community members
+        let memberRef = db.collection("communities").document(communityId).collection("members").document(userId)
+        batch.deleteDocument(memberRef)
+        
+        // Update community member count
+        let communityRef = db.collection("communities").document(communityId)
+        batch.updateData([
+            "memberCount": FieldValue.increment(Int64(-1))
+        ], forDocument: communityRef)
+        
+        // Remove community from user's communities
+        let userRef = db.collection("users").document(userId)
+        batch.updateData([
+            "communityIds": FieldValue.arrayRemove([communityId])
+        ], forDocument: userRef)
+        
+        try await batch.commit()
+    }
+    
+    func getCommunityMembers(communityId: String) async throws -> [User] {
+        let snapshot = try await db.collection("communities").document(communityId)
+            .collection("members").getDocuments()
+        
+        let userIds = snapshot.documents.map { $0.documentID }
+        guard !userIds.isEmpty else { return [] }
+        
+        let usersSnapshot = try await db.collection("users")
+            .whereField(FieldPath.documentID(), in: userIds)
+            .getDocuments()
+        
+        return usersSnapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func updateCommunityMemberRole(communityId: String, userId: String, role: String) async throws {
+        try await db.collection("communities").document(communityId)
+            .collection("members").document(userId)
+            .updateData(["role": role])
+    }
+    
+    // MARK: - Group Management Methods (Enhanced Communities)
+    
+    func createGroup(name: String, description: String, isPrivate: Bool, createdBy: String) async throws -> Community {
+        let groupType: CommunityType = isPrivate ? .general : .general // You can add private type
+        let group = Community(name: name, description: description, type: groupType, createdBy: createdBy)
+        
+        var groupData = group.toFirestore()
+        groupData["isPrivate"] = isPrivate
+        groupData["groupType"] = "group"
+        
+        try await db.collection("communities").document(group.id).setData(groupData)
+        try await joinCommunity(communityId: group.id, userId: createdBy)
+        
+        return group
+    }
+    
+    func getGroups(userId: String) async throws -> [Community] {
+        let snapshot = try await db.collection("communities")
+            .whereField("groupType", isEqualTo: "group")
+            .whereField("members", arrayContains: userId)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Community.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func inviteToGroup(groupId: String, inviterId: String, inviteeId: String) async throws {
+        let inviteRef = db.collection("groupInvites").document()
+        try await inviteRef.setData([
+            "groupId": groupId,
+            "inviterId": inviterId,
+            "inviteeId": inviteeId,
+            "status": "pending",
+            "createdAt": Timestamp(date: Date())
+        ])
+    }
+    
+    func respondToGroupInvite(inviteId: String, accept: Bool) async throws {
+        let inviteRef = db.collection("groupInvites").document(inviteId)
+        let inviteDoc = try await inviteRef.getDocument()
+        
+        guard let inviteData = inviteDoc.data(),
+              let groupId = inviteData["groupId"] as? String,
+              let inviteeId = inviteData["inviteeId"] as? String else {
+            throw NSError(domain: "InvalidInvite", code: 400, userInfo: nil)
+        }
+        
+        if accept {
+            try await joinCommunity(communityId: groupId, userId: inviteeId)
+        }
+        
+        try await inviteRef.updateData([
+            "status": accept ? "accepted" : "declined",
+            "respondedAt": Timestamp(date: Date())
+        ])
+    }
+    
+    // MARK: - Messaging Methods
+    
+    func sendMessage(to recipientId: String, content: String, senderId: String) async throws {
+        let conversationId = generateConversationId(user1: senderId, user2: recipientId)
+        let message = Message(senderId: senderId, recipientId: recipientId, content: content)
+        
+        let batch = db.batch()
+        
+        // Add message to messages collection
+        let messageRef = db.collection("messages").document(message.id.uuidString)
+        batch.setData([
+            "senderId": message.senderId,
+            "recipientId": message.recipientId,
+            "content": message.content,
+            "timestamp": Timestamp(date: message.timestamp),
+            "conversationId": conversationId,
+            "isRead": false
+        ], forDocument: messageRef)
+        
+        // Update conversation
+        let conversationRef = db.collection("conversations").document(conversationId)
+        batch.setData([
+            "participants": [senderId, recipientId],
+            "lastMessage": content,
+            "lastMessageTimestamp": Timestamp(date: message.timestamp),
+            "lastMessageSenderId": senderId,
+            "updatedAt": Timestamp(date: Date())
+        ], forDocument: conversationRef, merge: true)
+        
+        try await batch.commit()
+    }
+    
+    func getConversations(userId: String) async throws -> [Conversation] {
+        let snapshot = try await db.collection("conversations")
+            .whereField("participants", arrayContains: userId)
+            .order(by: "lastMessageTimestamp", descending: true)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Conversation.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getMessages(conversationId: String, limit: Int = 50) async throws -> [Message] {
+        let snapshot = try await db.collection("messages")
+            .whereField("conversationId", isEqualTo: conversationId)
+            .order(by: "timestamp", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? MessageFirestore.fromFirestore(data: document.data(), id: document.documentID)
+        }.reversed()
+    }
+    
+    func markMessagesAsRead(conversationId: String, userId: String) async throws {
+        let snapshot = try await db.collection("messages")
+            .whereField("conversationId", isEqualTo: conversationId)
+            .whereField("recipientId", isEqualTo: userId)
+            .whereField("isRead", isEqualTo: false)
             .getDocuments()
         
         let batch = db.batch()
         for document in snapshot.documents {
-            batch.deleteDocument(document.reference)
+            batch.updateData(["isRead": true], forDocument: document.reference)
         }
         
-        if !snapshot.documents.isEmpty {
-            try await batch.commit()
-        }
+        try await batch.commit()
+    }
+    
+    func listenToConversation(conversationId: String, completion: @escaping ([Message]) -> Void) {
+        let listener = db.collection("messages")
+            .whereField("conversationId", isEqualTo: conversationId)
+            .order(by: "timestamp", descending: false)
+            .addSnapshotListener { snapshot, error in
+                guard let documents = snapshot?.documents else {
+                    print("Error fetching messages: \(error?.localizedDescription ?? "Unknown error")")
+                    return
+                }
+                
+                let messages = documents.compactMap { document in
+                    try? MessageFirestore.fromFirestore(data: document.data(), id: document.documentID)
+                }
+                
+                completion(messages)
+            }
+        
+        listeners.append(listener)
+    }
+    
+    func deleteMessage(messageId: String) async throws {
+        try await db.collection("messages").document(messageId).delete()
+    }
+    
+    func getUnreadMessageCount(userId: String) async throws -> Int {
+        let snapshot = try await db.collection("messages")
+            .whereField("recipientId", isEqualTo: userId)
+            .whereField("isRead", isEqualTo: false)
+            .getDocuments()
+        
+        return snapshot.documents.count
+    }
+    
+    private func generateConversationId(user1: String, user2: String) -> String {
+        let sortedIds = [user1, user2].sorted()
+        return sortedIds.joined(separator: "_")
     }
     
     // MARK: - Like/Unlike Methods
@@ -372,64 +733,9 @@ class FirebaseAuthService: ObservableObject {
         return Set(snapshot.documents.map { $0.documentID })
     }
     
-    // MARK: - Report and Block Methods
-    
-    func reportPost(postId: String, reportedBy: String, reason: String) async throws {
-        let reportRef = db.collection("reports").document()
-        try await reportRef.setData([
-            "postId": postId,
-            "reportedBy": reportedBy,
-            "reason": reason,
-            "reportedAt": Timestamp(date: Date()),
-            "status": "pending"
-        ])
-    }
-    
-    func blockUser(userId: String, blockedBy: String) async throws {
-        let blockRef = db.collection("users").document(blockedBy).collection("blocked").document(userId)
-        try await blockRef.setData([
-            "userId": userId,
-            "blockedAt": Timestamp(date: Date())
-        ])
-    }
-    
-    func unblockUser(userId: String, unblockedBy: String) async throws {
-        let blockRef = db.collection("users").document(unblockedBy).collection("blocked").document(userId)
-        try await blockRef.delete()
-    }
-    
-    func getUserBlockedUsers(userId: String) async throws -> Set<String> {
-        let snapshot = try await db.collection("users").document(userId).collection("blocked").getDocuments()
-        return Set(snapshot.documents.map { $0.documentID })
-    }
-    
-    // MARK: - Community Methods
-    
-    func createCommunity(_ community: Community) async throws {
-        try await db.collection("communities").document(community.id).setData(community.toFirestore())
-    }
-    
-    func getCommunities() async throws -> [Community] {
-        let snapshot = try await db.collection("communities")
-            .order(by: "memberCount", descending: true)
-            .limit(to: 20)
-            .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Community.fromFirestore(data: document.data(), id: document.documentID)
-        }
-    }
-    
-    func joinCommunity(communityId: String, userId: String) async throws {
-        // Add user to community members
-        try await db.collection("communities").document(communityId).updateData([
-            "memberCount": FieldValue.increment(Int64(1))
-        ])
-        
-        // Add community to user's communities
-        try await db.collection("users").document(userId).updateData([
-            "communityIds": FieldValue.arrayUnion([communityId])
-        ])
+    func isFollowing(userId: String, targetUserId: String) async throws -> Bool {
+        let document = try await db.collection("users").document(userId).collection("following").document(targetUserId).getDocument()
+        return document.exists
     }
     
     // MARK: - Comment Methods
@@ -468,45 +774,123 @@ class FirebaseAuthService: ObservableObject {
         }
     }
     
-    // MARK: - User Methods
+    func deleteComment(commentId: String, postId: String) async throws {
+        let batch = db.batch()
+        
+        // Delete comment
+        let commentRef = db.collection("comments").document(commentId)
+        batch.deleteDocument(commentRef)
+        
+        // Decrement post's comment count
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData([
+            "commentsCount": FieldValue.increment(Int64(-1))
+        ], forDocument: postRef)
+        
+        try await batch.commit()
+    }
     
-    func updateUserStats(userId: String, totalProfitLoss: Double, winRate: Double) async throws {
-        try await db.collection("users").document(userId).updateData([
-            "totalProfitLoss": totalProfitLoss,
-            "winRate": winRate,
-            "updatedAt": Timestamp(date: Date())
+    // MARK: - Report and Block Methods
+    
+    func reportPost(postId: String, reportedBy: String, reason: String) async throws {
+        let reportRef = db.collection("reports").document()
+        try await reportRef.setData([
+            "postId": postId,
+            "reportedBy": reportedBy,
+            "reason": reason,
+            "reportedAt": Timestamp(date: Date()),
+            "status": "pending",
+            "type": "post"
         ])
     }
     
-    // MARK: - Search Methods
+    func reportUser(userId: String, reportedBy: String, reason: String) async throws {
+        let reportRef = db.collection("reports").document()
+        try await reportRef.setData([
+            "userId": userId,
+            "reportedBy": reportedBy,
+            "reason": reason,
+            "reportedAt": Timestamp(date: Date()),
+            "status": "pending",
+            "type": "user"
+        ])
+    }
     
-    func searchUsers(query: String) async throws -> [User] {
-        // Note: Firestore doesn't have full-text search, so this is a simple prefix search
-        let snapshot = try await db.collection("users")
-            .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
-            .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
+    func blockUser(userId: String, blockedBy: String) async throws {
+        let blockRef = db.collection("users").document(blockedBy).collection("blocked").document(userId)
+        try await blockRef.setData([
+            "userId": userId,
+            "blockedAt": Timestamp(date: Date())
+        ])
+    }
+    
+    func unblockUser(userId: String, unblockedBy: String) async throws {
+        let blockRef = db.collection("users").document(unblockedBy).collection("blocked").document(userId)
+        try await blockRef.delete()
+    }
+    
+    func getUserBlockedUsers(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId).collection("blocked").getDocuments()
+        return Set(snapshot.documents.map { $0.documentID })
+    }
+    
+    func isUserBlocked(userId: String, by blockedBy: String) async throws -> Bool {
+        let document = try await db.collection("users").document(blockedBy).collection("blocked").document(userId).getDocument()
+        return document.exists
+    }
+    
+    // MARK: - Market News Methods
+    
+    func cacheMarketNews(articles: [MarketNewsArticle]) async throws {
+        let batch = db.batch()
+        
+        // First, delete old cached news (keep only last 50 articles)
+        let oldNewsSnapshot = try await db.collection("marketNews")
+            .order(by: "cachedAt", descending: false)
+            .getDocuments()
+        
+        // Delete old news if we have more than 50 articles
+        if oldNewsSnapshot.documents.count > 50 {
+            let documentsToDelete = oldNewsSnapshot.documents.prefix(oldNewsSnapshot.documents.count - 30)
+            for document in documentsToDelete {
+                batch.deleteDocument(document.reference)
+            }
+        }
+        
+        // Add new articles
+        for article in articles {
+            let docRef = db.collection("marketNews").document(article.id)
+            batch.setData(article.toFirestore(), forDocument: docRef)
+        }
+        
+        try await batch.commit()
+    }
+    
+    func getCachedMarketNews() async throws -> [MarketNewsArticle] {
+        let snapshot = try await db.collection("marketNews")
+            .order(by: "cachedAt", descending: true)
             .limit(to: 20)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
-            try? User.fromFirestore(data: document.data(), id: document.documentID)
+            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
     
-    func searchPosts(query: String) async throws -> [Post] {
-        // Simple search implementation - in production you'd use Algolia or similar
-        let snapshot = try await db.collection("posts")
-            .order(by: "createdAt", descending: true)
-            .limit(to: 100)
+    func clearOldMarketNews() async throws {
+        // Delete news older than 24 hours
+        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
+        let snapshot = try await db.collection("marketNews")
+            .whereField("cachedAt", isLessThan: oneDayAgo)
             .getDocuments()
         
-        let posts = snapshot.documents.compactMap { document in
-            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        let batch = db.batch()
+        for document in snapshot.documents {
+            batch.deleteDocument(document.reference)
         }
         
-        return posts.filter { post in
-            post.content.localizedCaseInsensitiveContains(query) ||
-            post.authorUsername.localizedCaseInsensitiveContains(query)
+        if !snapshot.documents.isEmpty {
+            try await batch.commit()
         }
     }
     
@@ -528,7 +912,48 @@ class FirebaseAuthService: ObservableObject {
         }
     }
     
-    // MARK: - News Analytics Methods
+    // MARK: - Notification Methods
+    
+    func sendNotification(to userId: String, type: String, title: String, body: String, data: [String: Any] = [:]) async throws {
+        let notificationRef = db.collection("notifications").document()
+        try await notificationRef.setData([
+            "userId": userId,
+            "type": type,
+            "title": title,
+            "body": body,
+            "data": data,
+            "isRead": false,
+            "createdAt": Timestamp(date: Date())
+        ])
+    }
+    
+    func getUserNotifications(userId: String, limit: Int = 50) async throws -> [UserNotification] {
+        let snapshot = try await db.collection("notifications")
+            .whereField("userId", isEqualTo: userId)
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? UserNotification.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func markNotificationAsRead(notificationId: String) async throws {
+        try await db.collection("notifications").document(notificationId)
+            .updateData(["isRead": true])
+    }
+    
+    func getUnreadNotificationCount(userId: String) async throws -> Int {
+        let snapshot = try await db.collection("notifications")
+            .whereField("userId", isEqualTo: userId)
+            .whereField("isRead", isEqualTo: false)
+            .getDocuments()
+        
+        return snapshot.documents.count
+    }
+    
+    // MARK: - Analytics Methods
     
     func getMarketNewsAnalytics() async throws -> NewsAnalytics {
         let snapshot = try await db.collection("marketNews")
@@ -563,6 +988,16 @@ class FirebaseAuthService: ObservableObject {
         )
     }
     
+    func trackUserActivity(userId: String, action: String, details: [String: Any] = [:]) async throws {
+        let activityRef = db.collection("userActivity").document()
+        try await activityRef.setData([
+            "userId": userId,
+            "action": action,
+            "details": details,
+            "timestamp": Timestamp(date: Date())
+        ])
+    }
+    
     // MARK: - Clean up
     
     func removeAllListeners() {
@@ -573,7 +1008,93 @@ class FirebaseAuthService: ObservableObject {
 
 // MARK: - Supporting Models
 
-// MARK: - Comment Model
+// MARK: - Message Models for Firestore
+struct MessageFirestore {
+    let id: String
+    let senderId: String
+    let recipientId: String
+    let content: String
+    let timestamp: Date
+    let conversationId: String
+    let isRead: Bool
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> Message {
+        guard let senderId = data["senderId"] as? String,
+              let recipientId = data["recipientId"] as? String,
+              let content = data["content"] as? String,
+              let timestamp = data["timestamp"] as? Timestamp else {
+            throw NSError(domain: "MessageDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid message data"])
+        }
+        
+        return Message(senderId: senderId, recipientId: recipientId, content: content)
+    }
+}
+
+// MARK: - Conversation Model
+struct Conversation: Identifiable, Codable {
+    let id: String
+    let participants: [String]
+    let lastMessage: String
+    let lastMessageTimestamp: Date
+    let lastMessageSenderId: String
+    let updatedAt: Date
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> Conversation {
+        guard let participants = data["participants"] as? [String],
+              let lastMessage = data["lastMessage"] as? String,
+              let lastMessageTimestamp = data["lastMessageTimestamp"] as? Timestamp,
+              let lastMessageSenderId = data["lastMessageSenderId"] as? String,
+              let updatedAt = data["updatedAt"] as? Timestamp else {
+            throw NSError(domain: "ConversationDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid conversation data"])
+        }
+        
+        return Conversation(
+            id: id,
+            participants: participants,
+            lastMessage: lastMessage,
+            lastMessageTimestamp: lastMessageTimestamp.dateValue(),
+            lastMessageSenderId: lastMessageSenderId,
+            updatedAt: updatedAt.dateValue()
+        )
+    }
+}
+
+// MARK: - User Notification Model
+struct UserNotification: Identifiable {
+    let id: String
+    let userId: String
+    let type: String
+    let title: String
+    let body: String
+    let data: [String: Any]
+    let isRead: Bool
+    let createdAt: Date
+
+    static func fromFirestore(data: [String: Any], id: String) throws -> UserNotification {
+        guard let userId = data["userId"] as? String,
+              let type = data["type"] as? String,
+              let title = data["title"] as? String,
+              let body = data["body"] as? String,
+              let isRead = data["isRead"] as? Bool,
+              let createdAt = data["createdAt"] as? Timestamp else {
+            throw NSError(domain: "NotificationDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid notification data"])
+        }
+
+        return UserNotification(
+            id: id,
+            userId: userId,
+            type: type,
+            title: title,
+            body: body,
+            data: data["data"] as? [String: Any] ?? [:],
+            isRead: isRead,
+            createdAt: createdAt.dateValue()
+        )
+    }
+}
+
+
+// MARK: - Comment Model (Enhanced)
 struct Comment: Identifiable, Codable {
     let id: String
     let postId: String

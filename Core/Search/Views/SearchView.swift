@@ -1,5 +1,5 @@
 // File: Core/Search/Views/SearchView.swift
-// Enhanced Search View with comprehensive search functionality and better UX - Fixed SearchViewModel and @objc issues
+// Fixed Search View - addresses compilation errors
 
 import SwiftUI
 
@@ -92,8 +92,6 @@ struct SearchView: View {
                     searchContent
                 }
             }
-            .navigationTitle("Search")
-            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showFilters.toggle() }) {
@@ -568,7 +566,12 @@ struct SearchView: View {
         for filter in selectedFilters {
             switch filter {
             case .verified:
-                results = results.filter { $0.user?.isVerified == true }
+                results = results.filter { result in
+                    if case .user = result.type {
+                        return result.user?.isVerified == true
+                    }
+                    return true
+                }
             case .recent:
                 // Would filter by recency
                 break
@@ -589,14 +592,13 @@ struct SearchView: View {
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
         isSearching = true
+        searchViewModel.searchText = searchText
         
         Task {
-            searchViewModel.searchText = searchText
             await searchViewModel.performSearch()
-            
-            DispatchQueue.main.async {
-                self.isSearching = false
-                self.addToRecentSearches(self.searchText)
+            await MainActor.run {
+                isSearching = false
+                addToRecentSearches(searchText)
             }
         }
     }
@@ -606,9 +608,9 @@ struct SearchView: View {
         searchWorkItem?.cancel()
         
         // Create new work item
-        let workItem = DispatchWorkItem { [weak self] in
-            DispatchQueue.main.async {
-                self?.performSearch()
+        let workItem = DispatchWorkItem {
+            Task { @MainActor in
+                performSearch()
             }
         }
         
@@ -789,12 +791,13 @@ struct SearchResultCard: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(result.user?.username ?? "Result")
+                    Text(result.user?.username ?? String(result.post?.content.prefix(30) ?? "Result"))
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.textPrimary)
+                        .lineLimit(1)
                     
-                    Text("Search result description")
+                    Text(result.type.displayName)
                         .font(.caption)
                         .foregroundColor(.textSecondary)
                         .lineLimit(2)

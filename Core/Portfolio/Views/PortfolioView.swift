@@ -1,5 +1,5 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
-// Enhanced Portfolio View with improved data visualization and better UX
+// Fixed Portfolio View - addresses compilation errors
 
 import SwiftUI
 
@@ -86,7 +86,7 @@ struct PortfolioView: View {
         }
         .sheet(isPresented: $showTradeDetail) {
             if let trade = selectedTrade {
-                TradeDetailSheet(trade: trade)
+                SimpleTradeDetailSheet(trade: trade)
                     .environmentObject(portfolioViewModel)
             }
         }
@@ -399,10 +399,10 @@ struct PortfolioView: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(filteredTrades, id: \.id) { trade in
-                        EnhancedTradeCard(trade: trade) {
+                        TradeRowView(trade: trade, style: .detailed, onTap: {
                             selectedTrade = trade
                             showTradeDetail = true
-                        }
+                        })
                         .transition(.asymmetric(
                             insertion: .scale(scale: 0.9).combined(with: .opacity),
                             removal: .scale(scale: 0.9).combined(with: .opacity)
@@ -685,6 +685,149 @@ struct PortfolioView: View {
         // Add haptic feedback
         let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
         impactFeedback.impactOccurred()
+    }
+}
+
+// MARK: - Simple Trade Detail Sheet (fixes missing TradeDetailSheet)
+struct SimpleTradeDetailSheet: View {
+    let trade: Trade
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var showEditTrade = false
+    @State private var showCloseTrade = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // Trade Header
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text(trade.ticker)
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                            
+                            Spacer()
+                            
+                            if trade.isOpen {
+                                Text("OPEN")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.blue)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue.opacity(0.2))
+                                    .cornerRadius(8)
+                            }
+                        }
+                        
+                        Text(trade.tradeType.displayName)
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    // Trade Details
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
+                        detailCard(title: "Quantity", value: "\(trade.quantity)")
+                        detailCard(title: "Entry Price", value: trade.entryPrice.asCurrency)
+                        detailCard(title: "Entry Date", value: formatDate(trade.entryDate))
+                        
+                        if trade.isOpen {
+                            detailCard(title: "Current Value", value: trade.currentValue.asCurrency)
+                        } else {
+                            detailCard(title: "Exit Price", value: trade.exitPrice?.asCurrency ?? "N/A")
+                            detailCard(title: "P&L", value: trade.profitLoss.asCurrencyWithSign)
+                        }
+                    }
+                    
+                    // Notes & Strategy
+                    if let notes = trade.notes, !notes.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Notes")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            
+                            Text(notes)
+                                .font(.body)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
+                    if let strategy = trade.strategy, !strategy.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Strategy")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            
+                            Text(strategy)
+                                .font(.body)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
+                    // Action Buttons
+                    if trade.isOpen {
+                        VStack(spacing: 12) {
+                            Button("Edit Trade") {
+                                showEditTrade = true
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                            
+                            Button("Close Position") {
+                                showCloseTrade = true
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Trade Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .sheet(isPresented: $showEditTrade) {
+            EditTradeSheet(trade: trade)
+                .environmentObject(portfolioViewModel)
+        }
+        .sheet(isPresented: $showCloseTrade) {
+            CloseTradeSheet(trade: trade)
+                .environmentObject(portfolioViewModel)
+        }
+    }
+    
+    private func detailCard(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.gray)
+            
+            Text(value)
+                .font(.headline)
+                .fontWeight(.semibold)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(8)
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
     }
 }
 
