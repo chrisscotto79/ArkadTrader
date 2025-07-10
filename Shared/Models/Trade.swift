@@ -1,4 +1,5 @@
 // File: Shared/Models/Trade.swift
+// Fixed Trade Model with Current Price for Real-time Updates
 
 import Foundation
 import FirebaseFirestore
@@ -10,6 +11,7 @@ struct Trade: Identifiable, Codable {
     var tradeType: TradeType
     var entryPrice: Double
     var exitPrice: Double?
+    var currentPrice: Double? // New property for real-time price tracking
     var quantity: Int
     var entryDate: Date
     var exitDate: Date?
@@ -31,7 +33,24 @@ struct Trade: Identifiable, Codable {
     }
     
     var currentValue: Double {
-        (exitPrice ?? entryPrice) * Double(quantity)
+        if isOpen {
+            // For open trades, use currentPrice if available, otherwise entryPrice
+            let price = currentPrice ?? entryPrice
+            return price * Double(quantity)
+        } else {
+            // For closed trades, use exitPrice
+            return (exitPrice ?? entryPrice) * Double(quantity)
+        }
+    }
+    
+    var unrealizedPL: Double {
+        guard isOpen, let current = currentPrice else { return 0 }
+        return (current - entryPrice) * Double(quantity)
+    }
+    
+    var unrealizedPLPercentage: Double {
+        guard isOpen, let current = currentPrice else { return 0 }
+        return ((current - entryPrice) / entryPrice) * 100
     }
 
     var daysHeld: Int {
@@ -72,6 +91,7 @@ struct Trade: Identifiable, Codable {
         self.tradeType = tradeType
         self.entryPrice = entryPrice
         self.exitPrice = nil
+        self.currentPrice = entryPrice // Initialize with entry price
         self.quantity = quantity
         self.entryDate = Date()
         self.exitDate = nil
@@ -90,6 +110,7 @@ struct Trade: Identifiable, Codable {
             "tradeType": tradeType.rawValue,
             "entryPrice": entryPrice,
             "exitPrice": exitPrice,
+            "currentPrice": currentPrice,
             "quantity": quantity,
             "entryDate": Timestamp(date: entryDate),
             "exitDate": exitDate.map { Timestamp(date: $0) },
@@ -116,6 +137,7 @@ struct Trade: Identifiable, Codable {
         var trade = Trade(ticker: ticker, tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)
         trade.id = id
         trade.exitPrice = data["exitPrice"] as? Double
+        trade.currentPrice = data["currentPrice"] as? Double
         trade.notes = data["notes"] as? String
         trade.strategy = data["strategy"] as? String
         trade.sharedCommunityIds = data["sharedCommunityIds"] as? [String] ?? []
@@ -125,6 +147,20 @@ struct Trade: Identifiable, Codable {
 
         return trade
     }
+    
+    // MARK: - Helper Methods
+    
+    mutating func updateCurrentPrice(_ newPrice: Double) {
+        guard isOpen else { return } // Only update price for open trades
+        self.currentPrice = newPrice
+    }
+    
+    mutating func close(at exitPrice: Double, on exitDate: Date = Date()) {
+        self.exitPrice = exitPrice
+        self.exitDate = exitDate
+        self.isOpen = false
+        self.currentPrice = nil // Clear current price when trade is closed
+    }
 }
 
 enum TradeType: String, CaseIterable, Codable {
@@ -132,7 +168,7 @@ enum TradeType: String, CaseIterable, Codable {
     case option = "option"
     case crypto = "crypto"
     case forex = "forex"
-
+    
     var displayName: String {
         switch self {
         case .stock: return "Stock"
@@ -141,13 +177,5 @@ enum TradeType: String, CaseIterable, Codable {
         case .forex: return "Forex"
         }
     }
-
-    var icon: String {
-        switch self {
-        case .stock: return "chart.line.uptrend.xyaxis"
-        case .option: return "chart.pie"
-        case .crypto: return "bitcoinsign.circle"
-        case .forex: return "dollarsign.circle"
-        }
-    }
+    
 }

@@ -98,7 +98,6 @@
 				Leaderboard/Views/LeaderboardView.swift,
 				Messaging/Views/MessagingView.swift,
 				Portfolio/ViewModels/PortfolioViewModel.swift,
-				Portfolio/Views/AddTradeView.swift,
 				Portfolio/Views/AllTradesView.swift,
 				Portfolio/Views/EnhancedTradeDetailView.swift,
 				Portfolio/Views/PortfolioView.swift,
