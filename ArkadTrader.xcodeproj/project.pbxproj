@@ -112,6 +112,7 @@
 				Search/ViewModel/SearchViewModel.swift,
 				Search/Views/SearchResultView.swift,
 				Search/Views/SearchView.swift,
+				Settings/Views/SetttingsView.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
