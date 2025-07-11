@@ -8,7 +8,7 @@ struct PortfolioView: View {
     @StateObject private var portfolioViewModel = PortfolioViewModel()
     
     @State private var showAddTrade = false
-    @State private var showTradeDetail = false
+    @State private var showTradeActions = false
     @State private var selectedTrade: Trade?
     @State private var animateContent = false
     @State private var selectedTimeframe: TimeFrame = .monthly
@@ -62,9 +62,9 @@ struct PortfolioView: View {
                 .environmentObject(authService)
                 .environmentObject(portfolioViewModel)
         }
-        .sheet(isPresented: $showTradeDetail) {
+        .sheet(isPresented: $showTradeActions) {
             if let trade = selectedTrade {
-                TradeDetailView(trade: trade)
+                TradeActionsSheet(trade: trade)
                     .environmentObject(portfolioViewModel)
             }
         }
@@ -617,7 +617,7 @@ struct PortfolioView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             selectedTrade = trade
-            showTradeDetail = true
+            showTradeActions = true  // Make sure this variable exists
         }
     }
     
@@ -669,7 +669,7 @@ struct PortfolioView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             selectedTrade = trade
-            showTradeDetail = true
+            showTradeActions = true
         }
     }
     
@@ -715,7 +715,7 @@ struct PortfolioView: View {
     
     // MARK: - Computed Properties
     private var portfolioValue: Double {
-        let initialCapital = 10000.0
+        let initialCapital = 0.0
         let totalInvested = openPositions.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
         let currentValue = openPositions.reduce(0) { $0 + $1.currentValue }
         let realizedPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
@@ -777,7 +777,7 @@ struct PortfolioView: View {
     // MARK: - Helper Methods
     private func generateChartData() -> [Double] {
         var data: [Double] = []
-        let baseValue = 10000.0
+        let baseValue = 0.0
         var currentValue = baseValue
         
         let days = selectedTimeframe == .weekly ? 7 : (selectedTimeframe == .monthly ? 30 : 90)

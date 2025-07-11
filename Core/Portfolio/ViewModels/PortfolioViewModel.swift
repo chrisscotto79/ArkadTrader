@@ -96,8 +96,8 @@ class PortfolioViewModel: ObservableObject {
         let unrealizedPL = currentValue - totalInvested
         
         // Total portfolio value = current positions + cash from closed trades
-        // Assuming initial capital of $10,000 for demo purposes
-        let initialCapital = 10000.0
+        // Assuming initial capital of $0 for demo purposes
+        let initialCapital = 0.0
         let totalValue = initialCapital + realizedPL + unrealizedPL
         let totalPL = realizedPL + unrealizedPL
         
@@ -233,10 +233,80 @@ class PortfolioViewModel: ObservableObject {
             }
         }
     }
+    func updateTrade(_ updatedTrade: Trade) async throws {
+        do {
+            // Update in Firebase first
+            try await authService.updateTrade(updatedTrade)
+            
+            // Update local trades array
+            if let index = trades.firstIndex(where: { $0.id == updatedTrade.id }) {
+                trades[index] = updatedTrade
+                
+                // Recalculate portfolio metrics with updated data
+                calculatePortfolioMetrics()
+                generatePortfolioAnalytics()
+            }
+        } catch {
+            errorMessage = "Failed to update trade: \(error.localizedDescription)"
+            showError = true
+            throw error
+        }
+    }
+    
+    // MARK: - Reopen Trade
+    func reopenTrade(_ trade: Trade) async throws {
+        guard !trade.isOpen else {
+            throw PortfolioError.tradeAlreadyOpen
+        }
+        
+        do {
+            // Create reopened trade
+            var reopenedTrade = trade
+            reopenedTrade.isOpen = true
+            reopenedTrade.exitPrice = nil
+            reopenedTrade.exitDate = nil
+            reopenedTrade.currentPrice = trade.entryPrice // Reset to entry price as starting point
+            
+            // Update in Firebase
+            try await authService.updateTrade(reopenedTrade)
+            
+            // Update local trades array
+            if let index = trades.firstIndex(where: { $0.id == trade.id }) {
+                trades[index] = reopenedTrade
+                
+                // Recalculate portfolio metrics
+                calculatePortfolioMetrics()
+                generatePortfolioAnalytics()
+            }
+        } catch {
+            errorMessage = "Failed to reopen trade: \(error.localizedDescription)"
+            showError = true
+            throw error
+        }
+    }
+    
+    // MARK: - Delete Trade
+    func deleteTrade(_ trade: Trade) async throws {
+        do {
+            // Delete from Firebase first (method expects tradeId as String)
+            try await authService.deleteTrade(tradeId: trade.id)
+            
+            // Remove from local trades array
+            trades.removeAll { $0.id == trade.id }
+            
+            // Recalculate portfolio metrics
+            calculatePortfolioMetrics()
+            generatePortfolioAnalytics()
+        } catch {
+            errorMessage = "Failed to delete trade: \(error.localizedDescription)"
+            showError = true
+            throw error
+        }
+    }
     
     // MARK: - Helper Calculations
     private func calculateTotalReturnPercentage() -> Double {
-        let initialCapital = 10000.0 // Assuming $10k starting capital
+        let initialCapital = 0.0 // Assuming $10k starting capital
         let totalPL = portfolio?.totalProfitLoss ?? 0
         return (totalPL / initialCapital) * 100
     }
@@ -405,3 +475,25 @@ struct PortfolioSummary {
     let topPerformer: Trade?
     let lastUpdated: Date
 }
+
+// MARK: - Portfolio Error Types
+enum PortfolioError: LocalizedError {
+    case tradeAlreadyOpen
+    case tradeAlreadyClosed
+    case invalidTradeData
+    case networkError
+    
+    var errorDescription: String? {
+        switch self {
+        case .tradeAlreadyOpen:
+            return "This trade is already open"
+        case .tradeAlreadyClosed:
+            return "This trade is already closed"
+        case .invalidTradeData:
+            return "Invalid trade data provided"
+        case .networkError:
+            return "Network connection error"
+        }
+    }
+}
+
