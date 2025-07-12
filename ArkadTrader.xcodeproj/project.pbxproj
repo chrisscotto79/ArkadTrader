@@ -101,6 +101,7 @@
 				Portfolio/Views/AllTradesView.swift,
 				Portfolio/Views/EnhancedTradeDetailView.swift,
 				Portfolio/Views/PortfolioView.swift,
+				Portfolio/Views/StartingCapitalSheet.swift,
 				Portfolio/Views/TradeManagementViews.swift,
 				Portfolio/Views/TradeRowView.swift,
 				Profile/ViewModels/ProfileViewModel.swift,

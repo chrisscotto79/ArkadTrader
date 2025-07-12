@@ -155,29 +155,35 @@ struct PortfolioView: View {
                     
                     Spacer()
                     
-                    // NEW: Deposit/Withdraw Button
+                    // IMPROVED: Deposit/Withdraw Button
                     Button(action: {
                         portfolioViewModel.showDepositWithdrawSheet = true
                     }) {
-                        VStack(spacing: 4) {
-                            Image(systemName: "plus.minus.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.arkadGold)
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.up.arrow.down.circle.fill")
+                                .font(.system(size: 16, weight: .semibold))
                             
                             Text("Deposit/\nWithdraw")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.arkadGold)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(2)
                                 .multilineTextAlignment(.center)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background(Color.arkadGold.opacity(0.1))
-                        .cornerRadius(8)
+                        .foregroundColor(.arkadGold)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.arkadGold.opacity(0.12))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                                )
+                        )
                     }
-                    .opacity(animateContent ? 1 : 0.8)
-                    .scaleEffect(animateContent ? 1 : 0.8)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.8), value: animateContent)
-                    .padding(.trailing, 20)
+                    .buttonStyle(PlainButtonStyle())
+                    .scaleEffect(animateContent ? 1 : 0.85)
+                    .opacity(animateContent ? 1 : 0)
+                    .animation(.spring(response: 0.7, dampingFraction: 0.8).delay(0.6), value: animateContent)
                 }
                 .padding(.bottom, 40)
             }
