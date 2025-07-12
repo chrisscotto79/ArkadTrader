@@ -1,8 +1,9 @@
 // File: Shared/Models/Trade.swift
-// Fixed Trade Model with Current Price for Real-time Updates
+// Enhanced Trade Model with Current Price for Real-time Updates
 
 import Foundation
 import FirebaseFirestore
+import SwiftUI
 
 struct Trade: Identifiable, Codable {
     var id: String
@@ -20,7 +21,7 @@ struct Trade: Identifiable, Codable {
     var isOpen: Bool
     var sharedCommunityIds: [String]
     
-    // MARK: - Computed Properties
+    // MARK: - Enhanced Computed Properties
     
     var profitLoss: Double {
         guard let exitPrice = exitPrice else { return 0 }
@@ -32,24 +33,30 @@ struct Trade: Identifiable, Codable {
         return ((exitPrice - entryPrice) / entryPrice) * 100
     }
     
+    // Enhanced currentValue calculation with better edge case handling
     var currentValue: Double {
         if isOpen {
-            // For open trades, use currentPrice if available, otherwise entryPrice
-            let price = currentPrice ?? entryPrice
+            // For open trades, use currentPrice if available and valid, otherwise entryPrice
+            let price = (currentPrice != nil && currentPrice! > 0) ? currentPrice! : entryPrice
             return price * Double(quantity)
         } else {
-            // For closed trades, use exitPrice
-            return (exitPrice ?? entryPrice) * Double(quantity)
+            // For closed trades, use exitPrice if available, otherwise entryPrice
+            let price = exitPrice ?? entryPrice
+            return price * Double(quantity)
         }
     }
     
+    // Enhanced unrealized P&L with validation
     var unrealizedPL: Double {
-        guard isOpen, let current = currentPrice else { return 0 }
+        guard isOpen else { return 0 }
+        guard let current = currentPrice, current > 0 else { return 0 }
         return (current - entryPrice) * Double(quantity)
     }
     
+    // Enhanced unrealized P&L percentage with validation
     var unrealizedPLPercentage: Double {
-        guard isOpen, let current = currentPrice else { return 0 }
+        guard isOpen else { return 0 }
+        guard let current = currentPrice, current > 0, entryPrice > 0 else { return 0 }
         return ((current - entryPrice) / entryPrice) * 100
     }
 
@@ -77,6 +84,20 @@ struct Trade: Identifiable, Codable {
         let oneDayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
         return entryDate > oneDayAgo
     }
+    
+    // MARK: - Enhanced Trade Tracking Methods
+    
+    // Get total invested amount for this trade
+    var totalInvested: Double {
+        return entryPrice * Double(quantity)
+    }
+    
+    // Check if price has moved significantly
+    var hasSignificantPriceMovement: Bool {
+        guard isOpen, let current = currentPrice else { return false }
+        let priceChangePercentage = abs((current - entryPrice) / entryPrice) * 100
+        return priceChangePercentage >= 1.0 // 1% or more change
+    }
 
     // MARK: - Initializers
 
@@ -99,6 +120,21 @@ struct Trade: Identifiable, Codable {
         self.strategy = nil
         self.isOpen = true
         self.sharedCommunityIds = []
+    }
+
+    // MARK: - Enhanced Trade Management Methods
+    
+    // Add the missing updateCurrentPrice method
+    mutating func updateCurrentPrice(_ newPrice: Double) {
+        guard isOpen else { return }
+        self.currentPrice = newPrice
+    }
+    
+    mutating func close(at exitPrice: Double, on exitDate: Date = Date()) {
+        self.exitPrice = exitPrice
+        self.exitDate = exitDate
+        self.isOpen = false
+        self.currentPrice = nil // Clear current price when trade is closed
     }
 
     // MARK: - Firebase Integration
@@ -146,20 +182,6 @@ struct Trade: Identifiable, Codable {
         trade.isOpen = isOpen
 
         return trade
-    }
-    
-    // MARK: - Helper Methods
-    
-    mutating func updateCurrentPrice(_ newPrice: Double) {
-        guard isOpen else { return } // Only update price for open trades
-        self.currentPrice = newPrice
-    }
-    
-    mutating func close(at exitPrice: Double, on exitDate: Date = Date()) {
-        self.exitPrice = exitPrice
-        self.exitDate = exitDate
-        self.isOpen = false
-        self.currentPrice = nil // Clear current price when trade is closed
     }
 }
 
