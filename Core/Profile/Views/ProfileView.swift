@@ -74,6 +74,7 @@ struct ProfileView: View {
     }
 }
 
+
 // MARK: - Profile Header Section
 struct ProfileHeaderSection: View {
     let user: User?
@@ -390,6 +391,7 @@ struct ProfileHeaderSection: View {
                 .fontWeight(.medium)
         }
     }
+   
     
     private func shareProfile() {
         guard let user = user else { return }
@@ -406,6 +408,7 @@ struct ProfileHeaderSection: View {
         
         UIPasteboard.general.string = shareText
     }
+    
     
     private func getInitials(user: User?) -> String {
         guard let user = user else { return "U" }
@@ -1013,7 +1016,9 @@ struct UserPortfolioTab: View {
                 )
         )
     }
+    
 }
+
 
 // MARK: - User Groups Tab
 struct UserGroupsTab: View {

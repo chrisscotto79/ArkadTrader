@@ -192,37 +192,106 @@ class PortfolioViewModel: ObservableObject {
     }
     
     private func generateRealisticPerformance() -> [DailyPerformance] {
-        // REMOVED: No more fake 30-day performance history
-        // Only generate performance based on actual trade dates
+        guard let startingCapital = getUserStartingCapital(), !trades.isEmpty else {
+            return []
+        }
+        
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // Use a default timeframe since selectedTimeframe isn't available here
+        let startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
         
         var performances: [DailyPerformance] = []
-        let calendar = Calendar.current
+        var currentDate = calendar.startOfDay(for: startDate)
+        let endDate = calendar.startOfDay(for: now)
         
-        // Only show performance for days where actual trades occurred
-        let tradeDates = trades.map { calendar.startOfDay(for: $0.entryDate) }
-        let uniqueDates = Array(Set(tradeDates)).sorted()
+        // Sort trades by date for proper cumulative calculation
+        let sortedTrades = trades.sorted { $0.entryDate < $1.entryDate }
+        let sortedClosedTrades = trades.filter { !$0.isOpen }.sorted {
+            ($0.exitDate ?? $0.entryDate) < ($1.exitDate ?? $1.entryDate)
+        }
         
-        for date in uniqueDates {
-            let tradesOnDate = trades.filter {
-                calendar.isDate($0.entryDate, inSameDayAs: date)
-            }
+        // Generate daily performance data
+        while currentDate <= endDate {
+            let portfolioValueForDate = calculatePortfolioValueForDate(
+                date: currentDate,
+                startingCapital: startingCapital,
+                trades: sortedTrades,
+                closedTrades: sortedClosedTrades
+            )
             
-            // Calculate actual portfolio value change on this date
-            let valueChangeOnDate = tradesOnDate.reduce(0.0) { total, trade in
-                return total + (trade.isOpen ? 0 : trade.profitLoss)
-            }
+            // Calculate daily change
+            let previousValue = performances.last?.portfolioValue ?? startingCapital
+            let dailyChange = portfolioValueForDate - previousValue
+            let dailyChangePercentage = previousValue > 0 ? (dailyChange / previousValue) * 100 : 0
             
             let performance = DailyPerformance(
-                date: date,
-                portfolioValue: portfolio?.totalValue ?? 0,
-                dailyChange: valueChangeOnDate,
-                dailyChangePercentage: 0 // Calculate actual percentage later if needed
+                date: currentDate,
+                portfolioValue: portfolioValueForDate,
+                dailyChange: dailyChange,
+                dailyChangePercentage: dailyChangePercentage
             )
+            
             performances.append(performance)
+            
+            // Move to next day
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
         }
         
         return performances
     }
+    
+    private func calculatePortfolioValueForDate(
+        date: Date,
+        startingCapital: Double,
+        trades: [Trade],
+        closedTrades: [Trade]
+    ) -> Double {
+        let calendar = Calendar.current
+        
+        // Get all trades that were entered before or on this date
+        let tradesEnteredByDate = trades.filter {
+            calendar.startOfDay(for: $0.entryDate) <= date
+        }
+        
+        // Get all closed trades that were closed before or on this date
+        let tradesClosedByDate = closedTrades.filter {
+            let exitDate = $0.exitDate ?? $0.entryDate
+            return calendar.startOfDay(for: exitDate) <= date
+        }
+        
+        // Calculate realized P&L from closed trades
+        let realizedPL = tradesClosedByDate.reduce(0.0) { $0 + $1.profitLoss }
+        
+        // Calculate money invested in open positions on this date
+        let openTradesOnDate = tradesEnteredByDate.filter { trade in
+            // Trade was entered but not yet closed on this date
+            if trade.isOpen {
+                return true // Still open
+            } else {
+                let exitDate = trade.exitDate ?? trade.entryDate
+                return calendar.startOfDay(for: exitDate) > date
+            }
+        }
+        
+        let investedInOpenPositions = openTradesOnDate.reduce(0.0) { total, trade in
+            return total + (trade.entryPrice * Double(trade.quantity))
+        }
+        
+        // Available cash = Starting Capital + Realized P&L - Money in Open Positions
+        let availableCash = startingCapital + realizedPL - investedInOpenPositions
+        
+        // Current value of open positions (using entry price for now)
+        let currentValueOfOpenPositions = openTradesOnDate.reduce(0.0) { total, trade in
+            return total + (trade.entryPrice * Double(trade.quantity))
+        }
+        
+        // Total Portfolio Value = Available Cash + Current Value of Open Positions
+        return availableCash + currentValueOfOpenPositions
+    }
+    
+    
     
     // MARK: - Trade Management
     func closeTrade(_ trade: Trade, exitPrice: Double) {
@@ -245,6 +314,10 @@ class PortfolioViewModel: ObservableObject {
                 showError = true
             }
         }
+    }
+    func getUserStartingCapital() -> Double? {
+        let savedCapital = UserDefaults.standard.double(forKey: "starting_capital_\(authService.currentUser?.id ?? "")")
+        return savedCapital > 0 ? savedCapital : nil
     }
     
     func updateTrade(_ updatedTrade: Trade) async throws {
@@ -418,11 +491,7 @@ class PortfolioViewModel: ObservableObject {
         loadPortfolioData()
     }
     
-    private func getUserStartingCapital() -> Double? {
-        let savedCapital = UserDefaults.standard.double(forKey: "starting_capital_\(authService.currentUser?.id ?? "")")
-        return savedCapital > 0 ? savedCapital : nil
-    }
-
+    
     func setUserStartingCapital(_ amount: Double) {
         UserDefaults.standard.set(amount, forKey: "starting_capital_\(authService.currentUser?.id ?? "")")
         calculatePortfolioMetrics() // Recalculate with new starting capital
@@ -433,6 +502,27 @@ class PortfolioViewModel: ObservableObject {
         if !trades.isEmpty && getUserStartingCapital() == nil {
             showStartingCapitalPrompt = true
         }
+    }
+    func getPerformanceForTimeframe(_ timeframe: TimeFrame) -> [DailyPerformance] {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        let startDate: Date
+        switch timeframe {
+        case .weekly:
+            startDate = calendar.date(byAdding: .weekOfYear, value: -1, to: now) ?? now
+        case .monthly:
+            startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+        case .allTime:
+            let earliestTradeDate = trades.min(by: { $0.entryDate < $1.entryDate })?.entryDate ?? now
+            let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) ?? now
+            startDate = min(earliestTradeDate, thirtyDaysAgo)
+        default:
+            startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+        }
+        
+        // Filter existing performance data for the timeframe
+        return recentPerformance.filter { $0.date >= startDate }
     }
     
     func getTradesFor(timeframe: TimeFrame) -> [Trade] {

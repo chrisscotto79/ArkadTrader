@@ -101,6 +101,7 @@
 				Portfolio/Views/AllTradesView.swift,
 				Portfolio/Views/EnhancedTradeDetailView.swift,
 				Portfolio/Views/PortfolioView.swift,
+				Portfolio/Views/ProfileSettingsView.swift,
 				Portfolio/Views/StartingCapitalSheet.swift,
 				Portfolio/Views/TradeManagementViews.swift,
 				Portfolio/Views/TradeRowView.swift,
@@ -113,6 +114,7 @@
 				Search/ViewModel/SearchViewModel.swift,
 				Search/Views/SearchResultView.swift,
 				Search/Views/SearchView.swift,
+				Settings/Views/NotificationSettingsView.swift,
 				Settings/Views/SetttingsView.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;

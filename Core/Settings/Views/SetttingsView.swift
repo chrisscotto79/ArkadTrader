@@ -7,6 +7,8 @@ struct SettingsView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
     @State private var showEditProfile = false
+    @State private var showNotificationSettings = false
+
     
     var body: some View {
         NavigationView {
@@ -31,6 +33,10 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showEditProfile) {
             EditProfileView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showNotificationSettings) {
+            NotificationSettingsView()
                 .environmentObject(authService)
         }
     }

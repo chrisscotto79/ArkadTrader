@@ -5,14 +5,19 @@ import Foundation
 
 extension Double {
     // MARK: - Currency Formatting
+    
     var asCurrency: String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: self)) ?? "$0.00"
-    }
+            formatter.locale = Locale(identifier: "en_US")
+            formatter.maximumFractionDigits = 0
+            
+            // For values over 1000, show in K format
+            
+            
+            return formatter.string(from: NSNumber(value: self)) ?? "$0"
+        }
+    
     
     var asCurrencyWithSign: String {
         let formatted = abs(self).asCurrency
