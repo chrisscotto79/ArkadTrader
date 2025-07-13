@@ -1,53 +1,53 @@
-//
-//  CreatePostView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/8/25.
-//
-
-
-// File: Core/Home/Views/CreatePostView.swift
-// Enhanced Create Post View with rich editing features and better UX
+// Enhanced CreatePostView with Image Support and Better UX
+// Replace your existing CreatePostView.swift with this enhanced version
 
 import SwiftUI
+import PhotosUI
 
 struct CreatePostView: View {
-    let onPost: (String) -> Void
-    @Environment(\.dismiss) var dismiss
-    
-    @State private var content = ""
-    @State private var selectedPostType: PostType = .text
-    @State private var isPosting = false
-    @State private var characterCount = 0
-    @State private var showCharacterWarning = false
-    @State private var selectedEmoji = ""
-    @State private var showEmojiPicker = false
-    @State private var showPostTypeSelector = false
-    @State private var showPreview = false
-    
-    private let maxCharacters = 280
-    private let warningThreshold = 250
-    
-    // Common trading emojis
-    private let tradingEmojis = ["📈", "📉", "💰", "🚀", "📊", "💎", "🔥", "⚡", "🎯", "💪", "🏆", "⭐"]
-    
-    // Post type suggestions
-    private let postTypeSuggestions: [PostType: String] = [
-        .text: "Share your thoughts...",
-        .tradeResult: "Share your trade results and insights",
-        .marketAnalysis: "Share your market analysis and predictions"
-    ]
-    
+    let onPost: (Post, [UIImage]?) -> Void
+        @Environment(\.dismiss) var dismiss
+        @EnvironmentObject var authService: FirebaseAuthService
+        
+        // MARK: - State Variables (Make sure these are all present)
+        @State private var content: String = ""
+        @State private var selectedPostType: PostType = .text
+        @State private var isPosting: Bool = false
+        @State private var characterCount: Int = 0
+        @State private var showCharacterWarning: Bool = false
+        
+        // Image handling
+        @State private var selectedImages: [UIImage] = []
+        @State private var showingImagePicker: Bool = false
+        @State private var photoPickerItems: [PhotosPickerItem] = []
+        @State private var isLoadingImages: Bool = false
+        
+        // UI State
+        @State private var showEmojiPicker: Bool = false
+        @State private var showPostTypeSelector: Bool = false
+        @State private var showPreview: Bool = false
+        @State private var selectedEmoji: String = ""
+        @State private var showImageFullScreen: Bool = false
+        @State private var selectedImageIndex: Int = 0
+        
+        // Validation & Limits
+        private let maxCharacters: Int = 280
+        private let warningThreshold: Int = 250
+        private let maxImages: Int = 4
+        
+        // Common trading emojis
+        private let tradingEmojis: [String] = ["📈", "📉", "💰", "🚀", "📊", "💎", "🔥", "⚡", "🎯", "💪", "🏆", "⭐"]
+        
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
-                Color.backgroundGradient
+                // Background
+                Color.gray.opacity(0.05)
                     .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: 24) {
-                        // User Avatar and Info
+                    VStack(spacing: 20) {
+                        // User Info Section
                         userInfoSection
                         
                         // Post Type Selector
@@ -56,21 +56,26 @@ struct CreatePostView: View {
                         // Content Editor
                         contentEditorSection
                         
-                        // Quick Actions
-                        quickActionsSection
+                        // Image Section
+                        if !selectedImages.isEmpty || selectedPostType == .image {
+                            imageSection
+                        }
                         
-                        // Character Count and Warnings
+                        // Action Buttons
+                        actionButtonsSection
+                        
+                        // Character Count
                         characterCountSection
                         
-                        // Post Preview
-                        if showPreview && !content.isEmpty {
-                            postPreviewSection
+                        // Preview Section
+                        if showPreview && (!content.isEmpty || !selectedImages.isEmpty) {
+                            previewSection
                         }
                         
                         Spacer(minLength: 100)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
                 }
             }
             .navigationTitle("Create Post")
@@ -84,136 +89,175 @@ struct CreatePostView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Post") {
+                    Button {
                         createPost()
+                    } label: {
+                        if isPosting || isLoadingImages {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Posting...")
+                            }
+                        } else {
+                            Text("Post")
+                                .fontWeight(.semibold)
+                        }
                     }
-                    .fontWeight(.semibold)
                     .foregroundColor(canPost ? .arkadGold : .gray)
-                    .disabled(!canPost || isPosting)
+                    .disabled(!canPost || isPosting || isLoadingImages)
                 }
             }
-            .onTapGesture {
-                hideKeyboard()
+        }
+        .sheet(isPresented: $showingImagePicker) {
+            PhotosPicker(
+                selection: $photoPickerItems,
+                maxSelectionCount: maxImages,
+                matching: .images
+            ) {
+                Text("Select Photos")
             }
         }
-        .sheet(isPresented: $showEmojiPicker) {
-            EmojiPickerView(selectedEmoji: $selectedEmoji) { emoji in
-                content += emoji
-                updateCharacterCount()
-            }
+        .onChange(of: photoPickerItems) { _, newItems in
+            loadImages(from: newItems)
+        }
+        .fullScreenCover(isPresented: $showImageFullScreen) {
+            ImageFullScreenView(
+                images: selectedImages,
+                selectedIndex: $selectedImageIndex
+            )
         }
     }
     
-    // MARK: - User Info Section
+    // MARK: - View Components
+    
     private var userInfoSection: some View {
         HStack(spacing: 12) {
             // User Avatar
             Circle()
-                .fill(
-                    LinearGradient(
-                        gradient: Gradient(colors: [Color.arkadGold, Color.arkadGoldLight]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 48, height: 48)
+                .fill(Color.arkadGold.opacity(0.2))
+                .frame(width: 44, height: 44)
                 .overlay(
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 44, height: 44)
-                        .overlay(
-                            Text("U") // This would be user's initials
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.arkadGold)
-                        )
+                    Text(String(authService.currentUser?.username.prefix(1).uppercased() ?? "U"))
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.arkadGold)
                 )
             
             VStack(alignment: .leading, spacing: 2) {
-                Text("Your Name") // This would be user's name
+                Text("@\(authService.currentUser?.username ?? "username")")
                     .font(.subheadline)
                     .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
+                    .foregroundColor(.primary)
                 
-                Text("Posting to ArkadTrader")
+                Text("Posting to feed")
                     .font(.caption)
-                    .foregroundColor(.textSecondary)
+                    .foregroundColor(.gray)
             }
             
             Spacer()
-            
-            // Privacy/Audience selector (future feature)
-            Button(action: {}) {
-                HStack(spacing: 4) {
-                    Image(systemName: "globe")
-                        .font(.caption)
-                    Text("Public")
-                        .font(.caption)
-                }
-                .foregroundColor(.arkadGold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.arkadGold.opacity(0.1))
-                .cornerRadius(12)
-            }
         }
+        .padding(16)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
     
-    // MARK: - Post Type Section
     private var postTypeSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Post Type")
                     .font(.subheadline)
                     .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
+                    .foregroundColor(.primary)
                 
                 Spacer()
                 
-                Button("Suggestions") {
-                    showPostTypeSelector.toggle()
-                }
-                .font(.caption)
-                .foregroundColor(.arkadGold)
-            }
-            
-            // Post Type Pills
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(PostType.allCases, id: \.self) { type in
-                        PostTypePill(
-                            type: type,
-                            isSelected: selectedPostType == type
-                        ) {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                selectedPostType = type
-                                updatePlaceholder()
-                            }
-                        }
+                Button(action: {
+                    withAnimation(.spring()) {
+                        showPostTypeSelector.toggle()
                     }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: selectedPostType.icon)
+                            .foregroundColor(colorForPostType(selectedPostType))
+                        
+                        Text(selectedPostType.displayName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        
+                        Image(systemName: showPostTypeSelector ? "chevron.up" : "chevron.down")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.arkadGold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.arkadGold.opacity(0.1))
+                    .cornerRadius(20)
                 }
-                .padding(.horizontal, 2)
             }
             
             if showPostTypeSelector {
-                postTypeSuggestionsView
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.9).combined(with: .opacity),
-                        removal: .scale(scale: 0.9).combined(with: .opacity)
-                    ))
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                    ForEach(PostType.allCases, id: \.self) { type in
+                        Button(action: {
+                            selectedPostType = type
+                            withAnimation(.spring()) {
+                                showPostTypeSelector = false
+                            }
+                        }) {
+                            HStack(spacing: 12) {
+                                Image(systemName: type.icon)
+                                    .foregroundColor(colorForPostType(type))
+                                    .frame(width: 20)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(type.displayName)
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                    
+                                    Text(type.placeholder.prefix(25) + "...")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                                
+                                Spacer()
+                                
+                                if selectedPostType == type {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.arkadGold)
+                                }
+                            }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selectedPostType == type ? Color.arkadGold.opacity(0.1) : Color.white)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(selectedPostType == type ? Color.arkadGold.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                }
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.9).combined(with: .opacity),
+                    removal: .scale(scale: 0.9).combined(with: .opacity)
+                ))
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: showPostTypeSelector)
+        .padding(16)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
     
-    // MARK: - Content Editor Section
     private var contentEditorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Text Editor
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white)
-                    .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
+                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
                 
                 VStack(spacing: 0) {
                     TextEditor(text: $content)
@@ -225,527 +269,396 @@ struct CreatePostView: View {
                             updateCharacterCount()
                         }
                         .scrollContentBackground(.hidden)
+                        .frame(minHeight: 120)
                     
-                    // Placeholder when empty
+                    // Placeholder
                     if content.isEmpty {
-                        VStack {
-                            HStack {
-                                Text(postTypeSuggestions[selectedPostType] ?? "What's on your mind?")
-                                    .font(.body)
-                                    .foregroundColor(.textTertiary)
-                                    .padding(.leading, 20)
-                                    .padding(.top, 24)
-                                
-                                Spacer()
-                            }
+                        HStack {
+                            Text(selectedPostType.placeholder)
+                                .font(.body)
+                                .foregroundColor(.gray.opacity(0.6))
+                                .padding(.leading, 20)
                             Spacer()
                         }
                         .allowsHitTesting(false)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .offset(y: -90)
                     }
                 }
-                .frame(minHeight: 120)
             }
             
-            // Quick Text Shortcuts
-            quickTextShortcuts
-        }
-    }
-    
-    // MARK: - Quick Actions Section
-    private var quickActionsSection: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text("Quick Actions")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
-                
-                Spacer()
-            }
-            
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 12) {
-                QuickActionButton(
-                    icon: "face.smiling",
-                    title: "Emoji",
-                    color: .warning
-                ) {
-                    showEmojiPicker = true
-                }
-                
-                QuickActionButton(
-                    icon: "eye",
-                    title: "Preview",
-                    color: .info
-                ) {
-                    showPreview.toggle()
-                }
-                
-                QuickActionButton(
-                    icon: "doc.text",
-                    title: "Template",
-                    color: .stockColor
-                ) {
-                    insertTemplate()
-                }
-                
-                QuickActionButton(
-                    icon: "trash",
-                    title: "Clear",
-                    color: .error
-                ) {
-                    clearContent()
-                }
-            }
-        }
-    }
-    
-    // MARK: - Character Count Section
-    private var characterCountSection: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Spacer()
-                
-                // Character count with progress ring
-                ZStack {
-                    Circle()
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 2)
-                        .frame(width: 24, height: 24)
-                    
-                    Circle()
-                        .trim(from: 0, to: CGFloat(characterCount) / CGFloat(maxCharacters))
-                        .stroke(characterCountColor, lineWidth: 2)
-                        .frame(width: 24, height: 24)
-                        .rotationEffect(.degrees(-90))
-                    
-                    if characterCount > warningThreshold {
-                        Text("\(maxCharacters - characterCount)")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(characterCountColor)
+            // Quick Action Emojis
+            if showEmojiPicker {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(tradingEmojis, id: \.self) { emoji in
+                            Button(action: {
+                                content += emoji
+                                updateCharacterCount()
+                            }) {
+                                Text(emoji)
+                                    .font(.title2)
+                                    .padding(8)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(8)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 16)
                 }
-                .animation(.easeInOut(duration: 0.3), value: characterCount)
-            }
-            
-            if characterCount > warningThreshold {
-                HStack {
-                    Spacer()
-                    Text("\(characterCount)/\(maxCharacters) characters")
-                        .font(.caption)
-                        .foregroundColor(characterCountColor)
-                }
-                .transition(.asymmetric(
-                    insertion: .scale.combined(with: .opacity),
-                    removal: .scale.combined(with: .opacity)
-                ))
+                .transition(.slide)
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: characterCount > warningThreshold)
     }
     
-    // MARK: - Post Preview Section
-    private var postPreviewSection: some View {
+    private var imageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Preview")
+                Text("Images (\(selectedImages.count)/\(maxImages))")
                     .font(.subheadline)
                     .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
+                    .foregroundColor(.primary)
                 
                 Spacer()
                 
-                Button("Hide") {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        showPreview = false
+                if selectedImages.count < maxImages {
+                    Button("Add Photos") {
+                        showingImagePicker = true
                     }
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.arkadGold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.arkadGold.opacity(0.1))
+                    .cornerRadius(16)
                 }
-                .font(.caption)
-                .foregroundColor(.arkadGold)
             }
             
-            // Mock post preview
-            PostPreview(
-                content: content,
-                postType: selectedPostType,
-                username: "your_username" // This would be actual username
-            )
-        }
-    }
-    
-    // MARK: - Quick Text Shortcuts
-    private var quickTextShortcuts: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(getQuickTexts(), id: \.self) { text in
-                    Button(action: {
-                        if content.isEmpty {
-                            content = text + " "
-                        } else {
-                            content += " " + text
-                        }
-                        updateCharacterCount()
-                    }) {
-                        Text(text)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.arkadGold)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.arkadGold.opacity(0.1))
-                            .cornerRadius(16)
-                    }
-                }
-            }
-            .padding(.horizontal, 2)
-        }
-    }
-    
-    // MARK: - Post Type Suggestions View
-    private var postTypeSuggestionsView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(PostType.allCases, id: \.self) { type in
-                Button(action: {
-                    selectedPostType = type
-                    showPostTypeSelector = false
-                    updatePlaceholder()
-                }) {
+            Group {
+                if isLoadingImages {
                     HStack {
-                        Image(systemName: postTypeIcon(for: type))
-                            .foregroundColor(postTypeColor(for: type))
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(type.displayName)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.textPrimary)
-                            
-                            Text(postTypeSuggestions[type] ?? "")
-                                .font(.caption)
-                                .foregroundColor(.textSecondary)
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading images...")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    .padding(16)
+                } else if !selectedImages.isEmpty {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                        ForEach(Array(selectedImages.enumerated()), id: \.offset) { index, image in
+                            ZStack(alignment: .topTrailing) {
+                                Button(action: {
+                                    selectedImageIndex = index
+                                    showImageFullScreen = true
+                                }) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(height: 120)
+                                        .clipped()
+                                        .cornerRadius(8)
+                                }
+                                
+                                Button(action: {
+                                    withAnimation(.spring()) {
+                                        selectedImages.remove(at: index)
+                                    }
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.red)
+                                        .background(Color.white, in: Circle())
+                                }
+                                .padding(8)
+                            }
                         }
-                        
-                        Spacer()
-                        
-                        if selectedPostType == type {
-                            Image(systemName: "checkmark.circle.fill")
+                    }
+                } else {
+                    Button(action: {
+                        showingImagePicker = true
+                    }) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.badge.plus")
+                                .font(.title)
+                                .foregroundColor(.arkadGold)
+                            
+                            Text("Add photos to your post")
+                                .font(.subheadline)
                                 .foregroundColor(.arkadGold)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.arkadGold.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [5]))
+                                .background(Color.arkadGold.opacity(0.05))
+                        )
                     }
-                    .padding(12)
-                    .background(selectedPostType == type ? Color.arkadGold.opacity(0.1) : Color.white)
-                    .cornerRadius(8)
                 }
             }
         }
-        .padding(12)
+        .padding(16)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
+
+    
+    
+    private var characterCountSection: some View {
+        HStack {
+            Spacer()
+            
+            Text("\(characterCount)/\(maxCharacters)")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(characterCountColor)
+            
+            Circle()
+                .trim(from: 0, to: CGFloat(characterCount) / CGFloat(maxCharacters))
+                .stroke(characterCountColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .frame(width: 20, height: 20)
+                .rotationEffect(.degrees(-90))
+                .animation(.easeInOut(duration: 0.3), value: characterCount)
+        }
+        .padding(.horizontal, 16)
+        .opacity(characterCount > 0 ? 1 : 0.3)
+    }
+    
+    private var previewSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Preview")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+            
+            // Mock post preview
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.arkadGold.opacity(0.2))
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Text(String(authService.currentUser?.username.prefix(1).uppercased() ?? "U"))
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.arkadGold)
+                        )
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("@\(authService.currentUser?.username ?? "username")")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        
+                        Text("now")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                    
+                    if selectedPostType != .text {
+                        Text(selectedPostType.displayName)
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(colorForPostType(selectedPostType))
+                            .cornerRadius(8)
+                    }
+                }
+                
+                if !content.isEmpty {
+                    Text(content)
+                        .font(.body)
+                        .lineSpacing(4)
+                        .foregroundColor(.primary)
+                }
+                
+                if !selectedImages.isEmpty {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: min(selectedImages.count, 2)), spacing: 8) {
+                        ForEach(Array(selectedImages.prefix(4).enumerated()), id: \.offset) { index, image in
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 100)
+                                .clipped()
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+                
+                HStack(spacing: 24) {
+                    Label("0", systemImage: "heart")
+                    Label("0", systemImage: "message")
+                    Label("Share", systemImage: "square.and.arrow.up")
+                    Spacer()
+                    Image(systemName: "bookmark")
+                }
+                .font(.caption)
+                .foregroundColor(.gray)
+            }
+            .padding(16)
+            .background(Color.gray.opacity(0.05))
+            .cornerRadius(12)
+        }
+        .padding(16)
         .background(Color.white)
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
     
-    // MARK: - Computed Properties
+    // MARK: - Helper Methods
+    
     private var canPost: Bool {
-        !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (!content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedImages.isEmpty) &&
         characterCount <= maxCharacters &&
-        !isPosting
+        !isPosting &&
+        !isLoadingImages
     }
     
     private var characterCountColor: Color {
         if characterCount > maxCharacters {
-            return .error
+            return .red
         } else if characterCount > warningThreshold {
-            return .warning
+            return .orange
         } else {
             return .arkadGold
         }
     }
     
-    // MARK: - Helper Methods
     private func updateCharacterCount() {
         characterCount = content.count
         showCharacterWarning = characterCount > warningThreshold
     }
     
-    private func updatePlaceholder() {
-        // Could add specific placeholder text based on post type
+    private func colorForPostType(_ type: PostType) -> Color {
+        switch type {
+        case .text: return .blue
+        case .tradeResult: return .green
+        case .marketAnalysis: return .purple
+        case .image: return .orange  // <- Add this missing case
+        }
+    }
+    private func postTypeIcon(for type: PostType) -> String {
+        switch type {
+        case .text: return "text.bubble"
+        case .tradeResult: return "chart.line.uptrend.xyaxis"
+        case .marketAnalysis: return "chart.bar.doc.horizontal"
+        case .image: return "photo"  // <- Add this missing case
+        }
+    }
+    
+    private func loadImages(from items: [PhotosPickerItem]) {
+        isLoadingImages = true
+        selectedImages.removeAll()
+        
+        Task {
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    await MainActor.run {
+                        selectedImages.append(image)
+                    }
+                }
+            }
+            
+            await MainActor.run {
+                isLoadingImages = false
+                // Auto-set to image type if images are added
+                if !selectedImages.isEmpty && selectedPostType == .text {
+                    selectedPostType = .image
+                }
+            }
+        }
     }
     
     private func createPost() {
         guard canPost else { return }
         
+        guard let userId = authService.currentUser?.id,
+              let username = authService.currentUser?.username else { return }
+        
         isPosting = true
+        
+        // Create post object
+        let newPost = Post(
+            content: content.trimmingCharacters(in: .whitespacesAndNewlines),
+            authorId: userId,
+            authorUsername: username,
+            imageUrls: nil // URLs will be set after upload
+        )
+        
+        var finalPost = newPost
+        finalPost.postType = selectedPostType
+        
+        // Pass to parent with images
+        onPost(finalPost, selectedImages.isEmpty ? nil : selectedImages)
         
         // Add haptic feedback
         let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
         impactFeedback.impactOccurred()
         
-        // Simulate posting delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            onPost(content)
-            dismiss()
-        }
+        dismiss()
     }
     
-    private func insertTemplate() {
-        let templates = getTemplatesForPostType(selectedPostType)
-        if let template = templates.first {
-            content = template
-            updateCharacterCount()
-        }
-    }
-    
-    private func clearContent() {
-        withAnimation(.easeInOut(duration: 0.2)) {
+    private func clearAll() {
+        withAnimation(.easeInOut(duration: 0.3)) {
             content = ""
+            selectedImages.removeAll()
             characterCount = 0
             showCharacterWarning = false
-        }
-    }
-    
-    private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-    
-    private func getQuickTexts() -> [String] {
-        switch selectedPostType {
-        case .text:
-            return ["💭", "📈", "📉", "#trading", "#market", "#bullish", "#bearish"]
-        case .tradeResult:
-            return ["💰", "📊", "🎯", "#profit", "#trade", "#win", "#position"]
-        case .marketAnalysis:
-            return ["📈", "📉", "🔍", "#analysis", "#forecast", "#technical", "#fundamental"]
-        }
-    }
-    
-    private func getTemplatesForPostType(_ type: PostType) -> [String] {
-        switch type {
-        case .text:
-            return ["Just thinking about the market today... 💭"]
-        case .tradeResult:
-            return ["Just closed my [TICKER] position! 📈 +$[AMOUNT] profit 💰"]
-        case .marketAnalysis:
-            return ["Looking at [TICKER] chart and seeing [PATTERN]. My prediction: [DIRECTION] 📊"]
-        }
-    }
-    
-    private func postTypeIcon(for type: PostType) -> String {
-        switch type {
-        case .text: return "text.bubble"
-        case .tradeResult: return "chart.line.uptrend.xyaxis"
-        case .marketAnalysis: return "chart.bar"
-        }
-    }
-    
-    private func postTypeColor(for type: PostType) -> Color {
-        switch type {
-        case .text: return .info
-        case .tradeResult: return .success
-        case .marketAnalysis: return .warning
+            selectedPostType = .text
         }
     }
 }
 
-// MARK: - Supporting Views
+// MARK: - Full Screen Image View
 
-struct PostTypePill: View {
-    let type: PostType
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: iconForType(type))
-                    .font(.caption)
-                
-                Text(type.displayName)
-                    .font(.caption)
-                    .fontWeight(.medium)
-            }
-            .foregroundColor(isSelected ? .white : .textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.arkadGold : Color.gray.opacity(0.1))
-            )
-            .scaleEffect(isSelected ? 1.05 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
-        }
-    }
-    
-    private func iconForType(_ type: PostType) -> String {
-        switch type {
-        case .text: return "text.bubble"
-        case .tradeResult: return "chart.line.uptrend.xyaxis"
-        case .marketAnalysis: return "chart.bar"
-        }
-    }
-}
-
-struct QuickActionButton: View {
-    let icon: String
-    let title: String
-    let color: Color
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(color)
-                
-                Text(title)
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundColor(.textSecondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(Color.white)
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-        }
-    }
-}
-
-struct PostPreview: View {
-    let content: String
-    let postType: PostType
-    let username: String
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // User header
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(Color.arkadGold.opacity(0.2))
-                    .frame(width: 40, height: 40)
-                    .overlay(
-                        Text("U")
-                            .font(.headline)
-                            .fontWeight(.bold)
-                            .foregroundColor(.arkadGold)
-                    )
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("@\(username)")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                    
-                    HStack {
-                        Text("now")
-                            .font(.caption)
-                            .foregroundColor(.textSecondary)
-                        
-                        if postType != .text {
-                            Text("•")
-                                .font(.caption)
-                                .foregroundColor(.textSecondary)
-                            
-                            Text(postType.displayName)
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(postTypeColor(for: postType))
-                                .cornerRadius(4)
-                        }
-                    }
-                }
-                
-                Spacer()
-            }
-            
-            // Content
-            Text(content)
-                .font(.body)
-                .lineSpacing(4)
-                .foregroundColor(.textPrimary)
-            
-            // Mock engagement buttons
-            HStack(spacing: 24) {
-                Label("0", systemImage: "heart")
-                Label("0", systemImage: "message")
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            .font(.caption)
-            .foregroundColor(.textSecondary)
-        }
-        .padding(16)
-        .background(Color.white)
-        .cornerRadius(16)
-        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-    }
-    
-    private func postTypeColor(for type: PostType) -> Color {
-        switch type {
-        case .text: return .clear
-        case .tradeResult: return .success
-        case .marketAnalysis: return .info
-        }
-    }
-}
-
-struct EmojiPickerView: View {
-    @Binding var selectedEmoji: String
-    let onEmojiSelected: (String) -> Void
+struct ImageFullScreenView: View {
+    let images: [UIImage]
+    @Binding var selectedIndex: Int
     @Environment(\.dismiss) var dismiss
     
-    private let tradingEmojis = ["📈", "📉", "💰", "🚀", "📊", "💎", "🔥", "⚡", "🎯", "💪", "🏆", "⭐", "📱", "💻", "🌟", "👑"]
-    private let generalEmojis = ["😀", "😂", "🤔", "😎", "🤩", "😍", "👍", "👎", "✨", "🎉", "💯", "🔥", "❤️", "💙", "💚", "🧡"]
-    
     var body: some View {
-        NavigationView {
-            ScrollView {
-                LazyVStack(spacing: 20) {
-                    // Trading Emojis
-                    emojiSection(title: "Trading & Finance", emojis: tradingEmojis)
-                    
-                    // General Emojis
-                    emojiSection(title: "General", emojis: generalEmojis)
-                }
-                .padding()
-            }
-            .navigationTitle("Add Emoji")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-    
-    private func emojiSection(title: String, emojis: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
-                .fontWeight(.semibold)
+        ZStack {
+            Color.black.ignoresSafeArea()
             
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
-                ForEach(emojis, id: \.self) { emoji in
-                    Button(action: {
-                        onEmojiSelected(emoji)
-                        dismiss()
-                    }) {
-                        Text(emoji)
-                            .font(.title2)
-                            .frame(width: 40, height: 40)
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(8)
-                    }
+            TabView(selection: $selectedIndex) {
+                ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .tag(index)
                 }
+            }
+            .tabViewStyle(PageTabViewStyle())
+            .indexViewStyle(PageIndexViewStyle(backgroundDisplayMode: .always))
+            
+            VStack {
+                HStack {
+                    Spacer()
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                }
+                Spacer()
             }
         }
     }
 }
 
 #Preview {
-    CreatePostView { content in
-        print("Posted: \(content)")
+    CreatePostView { post, images in
+        print("Created post: \(post.content)")
+        if let images = images {
+            print("With \(images.count) images")
+        }
     }
+    .environmentObject(FirebaseAuthService.shared)
 }

@@ -4,6 +4,7 @@
 import Foundation
 import Firebase
 import FirebaseAuth
+import FirebaseStorage  // ← Add this line
 import FirebaseFirestore
 
 class FirebaseServices {
@@ -211,13 +212,29 @@ class FirebaseServices {
     // MARK: - Post/Feed Management Methods
     
     func createPost(_ post: Post) async throws {
-        try await db.collection("posts").document(post.id).setData(post.toFirestore())
+        print("Creating post: \(post.id)")
+        
+        var postData = post.toFirestore()
+        
+        // Ensure required fields are present
+        postData["likesCount"] = postData["likesCount"] ?? 0
+        postData["commentsCount"] = postData["commentsCount"] ?? 0
+        postData["createdAt"] = postData["createdAt"] ?? Timestamp(date: Date())
+        postData["updatedAt"] = Timestamp(date: Date())
+        
+        try await db.collection("posts").document(post.id).setData(postData)
+        print("Successfully created post: \(post.id)")
     }
     
     func updatePost(_ post: Post) async throws {
-        try await db.collection("posts").document(post.id).setData(post.toFirestore())
+        print("Updating post: \(post.id)")
+        
+        var postData = post.toFirestore()
+        postData["updatedAt"] = Timestamp(date: Date())
+        
+        try await db.collection("posts").document(post.id).setData(postData, merge: true)
+        print("Successfully updated post: \(post.id)")
     }
-    
     func deletePost(postId: String) async throws {
         let batch = db.batch()
         
@@ -236,7 +253,198 @@ class FirebaseServices {
         
         try await batch.commit()
     }
-    
+    func uploadPostImages(_ images: [UIImage], postId: String, userId: String) async throws -> [String] {
+        let storage = Storage.storage()
+        var imageUrls: [String] = []
+        
+        for (index, image) in images.enumerated() {
+            // Compress image
+            guard let imageData = compressImage(image, maxSizeKB: 500) else {
+                throw NSError(domain: "ImageUpload", code: 0, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to compress image"
+                ])
+            }
+            
+            // Create unique filename
+            let fileName = "\(postId)_\(index)_\(UUID().uuidString).jpg"
+            let imagePath = "posts/\(userId)/\(fileName)"
+            let storageRef = storage.reference().child(imagePath)
+            
+            // Upload image
+            let metadata = StorageMetadata()
+            metadata.contentType = "image/jpeg"
+            
+            let _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+            
+            // Get download URL
+            let downloadURL = try await storageRef.downloadURL()
+            imageUrls.append(downloadURL.absoluteString)
+        }
+        
+        return imageUrls
+    }
+
+    func uploadProfileImage(_ image: UIImage, userId: String) async throws -> String {
+        let storage = Storage.storage()
+        
+        // Compress image for profile picture
+        guard let imageData = compressImage(image, maxSizeKB: 200) else {
+            throw NSError(domain: "ImageUpload", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to compress profile image"
+            ])
+        }
+        
+        // Create filename
+        let fileName = "profile_\(userId)_\(UUID().uuidString).jpg"
+        let imagePath = "profiles/\(userId)/\(fileName)"
+        let storageRef = storage.reference().child(imagePath)
+        
+        // Upload image
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        
+        let _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+        
+        // Get download URL
+        let downloadURL = try await storageRef.downloadURL()
+        return downloadURL.absoluteString
+    }
+
+    func deletePostImages(_ imageUrls: [String]) async throws {
+        let storage = Storage.storage()
+        
+        for imageUrl in imageUrls {
+            do {
+                let storageRef = storage.reference(forURL: imageUrl)
+                try await storageRef.delete()
+            } catch {
+                print("Failed to delete image: \(imageUrl), error: \(error)")
+                // Continue deleting other images even if one fails
+            }
+        }
+    }
+
+    func deleteImage(imageUrl: String) async throws {
+        let storage = Storage.storage()
+        let storageRef = storage.reference(forURL: imageUrl)
+        try await storageRef.delete()
+    }
+
+    // MARK: - Image Processing Helpers
+
+    private func compressImage(_ image: UIImage, maxSizeKB: Int) -> Data? {
+        let maxSizeBytes = maxSizeKB * 1024
+        var compressionQuality: CGFloat = 0.8
+        var imageData = image.jpegData(compressionQuality: compressionQuality)
+        
+        // Reduce quality until image is under size limit
+        while let data = imageData, data.count > maxSizeBytes && compressionQuality > 0.1 {
+            compressionQuality -= 0.1
+            imageData = image.jpegData(compressionQuality: compressionQuality)
+        }
+        
+        // If still too large, resize the image
+        if let data = imageData, data.count > maxSizeBytes {
+            let resizedImage = resizeImage(image, targetSizeKB: maxSizeKB)
+            imageData = resizedImage?.jpegData(compressionQuality: 0.7)
+        }
+        
+        return imageData
+    }
+
+    private func resizeImage(_ image: UIImage, targetSizeKB: Int) -> UIImage? {
+        let targetSizeBytes = targetSizeKB * 1024
+        let originalSize = image.size
+        
+        // Calculate scale factor
+        var scaleFactor: CGFloat = 1.0
+        if let originalData = image.jpegData(compressionQuality: 0.8) {
+            scaleFactor = sqrt(CGFloat(targetSizeBytes) / CGFloat(originalData.count))
+        }
+        
+        let newSize = CGSize(
+            width: originalSize.width * scaleFactor,
+            height: originalSize.height * scaleFactor
+        )
+        
+        UIGraphicsBeginImageContextWithOptions(newSize, false, 0.0)
+        image.draw(in: CGRect(origin: .zero, size: newSize))
+        let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        
+        return resizedImage
+    }
+
+    // MARK: - Enhanced Post Creation with Images (Add to FirebaseServices)
+
+    func createPostWithImages(_ post: Post, images: [UIImage]?) async throws {
+        var finalPost = post
+        
+        // Upload images if provided
+        if let images = images, !images.isEmpty {
+            do {
+                let imageUrls = try await uploadPostImages(images, postId: post.id, userId: post.authorId)
+                finalPost.imageUrls = imageUrls
+                
+                // Update post type if it was text but now has images
+                if finalPost.postType == .text && !imageUrls.isEmpty {
+                    finalPost.postType = .image
+                }
+            } catch {
+                print("Failed to upload images: \(error)")
+                throw error
+            }
+        }
+        
+        // Save post to Firestore
+        try await createPost(finalPost)
+    }
+
+    // MARK: - Image Validation Helpers
+
+    func validateImages(_ images: [UIImage]) throws {
+        guard images.count <= 4 else {
+            throw NSError(domain: "ImageValidation", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "Maximum 4 images allowed per post"
+            ])
+        }
+        
+        for image in images {
+            // Check minimum dimensions
+            guard image.size.width >= 100 && image.size.height >= 100 else {
+                throw NSError(domain: "ImageValidation", code: 0, userInfo: [
+                    NSLocalizedDescriptionKey: "Images must be at least 100x100 pixels"
+                ])
+            }
+            
+            // Check if image data can be created
+            guard image.jpegData(compressionQuality: 0.8) != nil else {
+                throw NSError(domain: "ImageValidation", code: 0, userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid image format"
+                ])
+            }
+        }
+    }
+
+    // MARK: - Image Download Helper (for caching)
+
+    func downloadImage(from url: String) async throws -> UIImage {
+        guard let imageUrl = URL(string: url) else {
+            throw NSError(domain: "ImageDownload", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid image URL"
+            ])
+        }
+        
+        let (data, _) = try await URLSession.shared.data(from: imageUrl)
+        
+        guard let image = UIImage(data: data) else {
+            throw NSError(domain: "ImageDownload", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to create image from data"
+            ])
+        }
+        
+        return image
+    }
     func getFeedPosts(limit: Int = 50) async throws -> [Post] {
         let snapshot = try await db.collection("posts")
             .order(by: "createdAt", descending: true)
@@ -293,45 +501,183 @@ class FirebaseServices {
     // MARK: - Like/Unlike Methods
     
     func likePost(postId: String, userId: String) async throws {
-        let batch = db.batch()
+        print("Attempting to like post: \(postId) by user: \(userId)")
         
-        // Add to user's likes subcollection
-        let userLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
-        batch.setData([
-            "postId": postId,
-            "likedAt": Timestamp(date: Date())
-        ], forDocument: userLikeRef)
-        
-        // Increment post's like count
+        // First check if post exists and get current data
         let postRef = db.collection("posts").document(postId)
-        batch.updateData([
-            "likesCount": FieldValue.increment(Int64(1))
-        ], forDocument: postRef)
+        let postDoc = try await postRef.getDocument()
         
-        try await batch.commit()
+        guard postDoc.exists else {
+            throw NSError(domain: "FirebaseError", code: 404, userInfo: [
+                NSLocalizedDescriptionKey: "Post not found"
+            ])
+        }
+        
+        // Check if user already liked this post
+        let userLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+        let existingLike = try await userLikeRef.getDocument()
+        
+        if existingLike.exists {
+            print("User has already liked this post")
+            return // Already liked, don't double-like
+        }
+        
+        // Use transaction for atomic updates
+        try await db.runTransaction { transaction, errorPointer in
+            let postSnapshot: DocumentSnapshot
+            do {
+                postSnapshot = try transaction.getDocument(postRef)
+            } catch let fetchError as NSError {
+                errorPointer?.pointee = fetchError
+                return nil
+            }
+            
+            guard postSnapshot.exists else {
+                let error = NSError(domain: "FirebaseError", code: 404, userInfo: [
+                    NSLocalizedDescriptionKey: "Post was deleted"
+                ])
+                errorPointer?.pointee = error
+                return nil
+            }
+            
+            // Get current like count (default to 0 if missing)
+            let currentLikesCount = postSnapshot.data()?["likesCount"] as? Int ?? 0
+            
+            // Add to user's likes subcollection
+            transaction.setData([
+                "postId": postId,
+                "likedAt": Timestamp(date: Date())
+            ], forDocument: userLikeRef)
+            
+            // Update post's like count
+            transaction.updateData([
+                "likesCount": currentLikesCount + 1,
+                "updatedAt": Timestamp(date: Date())
+            ], forDocument: postRef)
+            
+            return nil
+        }
+        
+        print("Successfully liked post: \(postId)")
     }
     
     func unlikePost(postId: String, userId: String) async throws {
-        let batch = db.batch()
+        print("Attempting to unlike post: \(postId) by user: \(userId)")
         
-        // Remove from user's likes subcollection
-        let userLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
-        batch.deleteDocument(userLikeRef)
-        
-        // Decrement post's like count
+        // First check if post exists
         let postRef = db.collection("posts").document(postId)
-        batch.updateData([
-            "likesCount": FieldValue.increment(Int64(-1))
-        ], forDocument: postRef)
+        let postDoc = try await postRef.getDocument()
         
-        try await batch.commit()
+        guard postDoc.exists else {
+            throw NSError(domain: "FirebaseError", code: 404, userInfo: [
+                NSLocalizedDescriptionKey: "Post not found"
+            ])
+        }
+        
+        // Check if user actually liked this post
+        let userLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+        let existingLike = try await userLikeRef.getDocument()
+        
+        if !existingLike.exists {
+            print("User hasn't liked this post")
+            return // Not liked, nothing to unlike
+        }
+        
+        // Use transaction for atomic updates
+        try await db.runTransaction { transaction, errorPointer in
+            let postSnapshot: DocumentSnapshot
+            do {
+                postSnapshot = try transaction.getDocument(postRef)
+            } catch let fetchError as NSError {
+                errorPointer?.pointee = fetchError
+                return nil
+            }
+            
+            guard postSnapshot.exists else {
+                let error = NSError(domain: "FirebaseError", code: 404, userInfo: [
+                    NSLocalizedDescriptionKey: "Post was deleted"
+                ])
+                errorPointer?.pointee = error
+                return nil
+            }
+            
+            // Get current like count (ensure it doesn't go below 0)
+            let currentLikesCount = postSnapshot.data()?["likesCount"] as? Int ?? 0
+            let newLikesCount = max(0, currentLikesCount - 1)
+            
+            // Remove from user's likes subcollection
+            transaction.deleteDocument(userLikeRef)
+            
+            // Update post's like count
+            transaction.updateData([
+                "likesCount": newLikesCount,
+                "updatedAt": Timestamp(date: Date())
+            ], forDocument: postRef)
+            
+            return nil
+        }
+        
+        print("Successfully unliked post: \(postId)")
     }
     
     func getUserLikedPosts(userId: String) async throws -> Set<String> {
-        let snapshot = try await db.collection("users").document(userId).collection("likes").getDocuments()
-        return Set(snapshot.documents.map { $0.documentID })
+        print("Loading liked posts for user: \(userId)")
+        
+        do {
+            let snapshot = try await db.collection("users")
+                .document(userId)
+                .collection("likes")
+                .getDocuments()
+            
+            let likedPostIds = Set(snapshot.documents.map { $0.documentID })
+            print("Loaded \(likedPostIds.count) liked posts for user: \(userId)")
+            return likedPostIds
+            
+        } catch {
+            print("Error loading liked posts: \(error)")
+            // Return empty set instead of throwing to prevent app crashes
+            return Set<String>()
+        }
     }
-    
+    private func validatePostExists(postId: String) async throws -> Bool {
+        let postDoc = try await db.collection("posts").document(postId).getDocument()
+        return postDoc.exists
+    }
+    func postExists(postId: String) async throws -> Bool {
+        let document = try await db.collection("posts").document(postId).getDocument()
+        return document.exists
+    }
+    func batchLikeOperations(_ operations: [(postId: String, userId: String, isLike: Bool)]) async throws {
+        let batch = db.batch()
+        
+        for operation in operations {
+            let postRef = db.collection("posts").document(operation.postId)
+            let userLikeRef = db.collection("users").document(operation.userId).collection("likes").document(operation.postId)
+            
+            if operation.isLike {
+                // Add like
+                batch.setData([
+                    "postId": operation.postId,
+                    "likedAt": Timestamp(date: Date())
+                ], forDocument: userLikeRef)
+                
+                batch.updateData([
+                    "likesCount": FieldValue.increment(Int64(1)),
+                    "updatedAt": Timestamp(date: Date())
+                ], forDocument: postRef)
+            } else {
+                // Remove like
+                batch.deleteDocument(userLikeRef)
+                
+                batch.updateData([
+                    "likesCount": FieldValue.increment(Int64(-1)),
+                    "updatedAt": Timestamp(date: Date())
+                ], forDocument: postRef)
+            }
+        }
+        
+        try await batch.commit()
+    }
     // MARK: - Bookmark Methods
     
     func bookmarkPost(postId: String, userId: String) async throws {

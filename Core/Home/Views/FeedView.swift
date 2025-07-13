@@ -1,15 +1,15 @@
-// File: Core/Home/Views/FeedView.swift
-// Updated to use MarketNewsFeedView
-
 import SwiftUI
 
 struct FeedView: View {
+    // Add the missing homeViewModel property
+    @StateObject private var homeViewModel = HomeViewModel()
+    
     var body: some View {
-        MarketNewsFeedView()
+        // Pass the homeViewModel to MarketNewsFeedView
+        MarketNewsFeedView(homeViewModel: homeViewModel)
     }
 }
 
 #Preview {
     FeedView()
-        .environmentObject(FirebaseAuthService.shared)
 }

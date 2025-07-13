@@ -5,6 +5,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var authService: FirebaseAuthService
+
     @StateObject private var homeViewModel = HomeViewModel()
     @State private var selectedTab: HomeFeedTab = .feed
     @State private var showCreatePost = false
@@ -93,10 +94,30 @@ struct HomeView: View {
             .navigationBarHidden(true)
         }
         .sheet(isPresented: $showCreatePost) {
-            CreatePostView { content in
+            CreatePostView { post, images in
                 Task {
-                    await homeViewModel.createPost(content: content)
+                    await homeViewModel.createPostWithImages(
+                        content: post.content,
+                        images: images
+                    )
                 }
+            }
+            .environmentObject(authService)
+        }
+        .sheet(isPresented: $showCreatePost) {
+            CreatePostView { post, images in
+                Task {
+                    await homeViewModel.createPostWithImages(
+                        content: post.content,
+                        images: images
+                    )
+                }
+            }
+            .environmentObject(authService)
+        }
+        .onAppear {
+            Task {
+                await homeViewModel.loadPosts()
             }
         }
         .onAppear {
@@ -158,7 +179,7 @@ struct HomeView: View {
         case .following:
             followingContent
         case .marketNews:
-            MarketNewsFeedView()
+            MarketNewsFeedView(homeViewModel: homeViewModel)
         }
     }
     
@@ -287,6 +308,7 @@ struct HomeView: View {
             await homeViewModel.loadMarketNews()
         }
     }
+    
 }
 
 // MARK: - Enhanced Components (added to existing file instead of creating new ones)
@@ -508,6 +530,7 @@ struct EnhancedPostTypeLabel: View {
         case .text: return .clear
         case .tradeResult: return .green
         case .marketAnalysis: return .blue
+        case .image: return .orange
         }
     }
 }

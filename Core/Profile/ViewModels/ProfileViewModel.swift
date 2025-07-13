@@ -104,9 +104,30 @@ class ProfileViewModel: ObservableObject {
     }
     
     private func loadUserContent() async {
-        // Load user's posts (this would be implemented when you have posts)
-        // For now, using empty array
-        self.userPosts = []
+        guard let currentUser = authService.currentUser else { return }
+        
+        do {
+            // Load user's posts
+            let posts = try await authService.getUserPosts(userId: currentUser.id)
+            
+            await MainActor.run {
+                self.userPosts = posts.sorted { $0.createdAt > $1.createdAt }
+            }
+            
+            // Load user's trades
+            let trades = try await authService.getUserTrades(userId: currentUser.id)
+            
+            await MainActor.run {
+                self.userTrades = trades.sorted { $0.entryDate > $1.entryDate }
+            }
+            
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Failed to load content: \(error.localizedDescription)"
+                self.showError = true
+            }
+            print("Load user content error: \(error)")
+        }
     }
     
     // MARK: - Profile Updates
@@ -205,10 +226,60 @@ class ProfileViewModel: ObservableObject {
     }
     
     func deletePost(postId: String) async {
-        // Implement post deletion when you add this functionality
-        userPosts.removeAll { $0.id == postId }
+        guard let currentUserId = authService.currentUser?.id else {
+            await MainActor.run {
+                self.errorMessage = "Please log in to delete posts"
+                self.showError = true
+            }
+            return
+        }
+        
+        // Check if user owns the post
+        guard let post = userPosts.first(where: { $0.id == postId }),
+              post.authorId == currentUserId else {
+            await MainActor.run {
+                self.errorMessage = "You can only delete your own posts"
+                self.showError = true
+            }
+            return
+        }
+        
+        do {
+            // Delete from Firebase
+            try await authService.deletePost(postId: postId)
+            
+            // Remove from local array
+            await MainActor.run {
+                self.userPosts.removeAll { $0.id == postId }
+            }
+            
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Failed to delete post. Please try again."
+                self.showError = true
+            }
+            print("Delete post error: \(error)")
+        }
     }
-    
+
+    func searchAndFilterPosts(query: String, postType: PostType? = nil) -> [Post] {
+        var filteredPosts = userPosts
+        
+        // Apply search filter
+        if !query.isEmpty {
+            filteredPosts = filteredPosts.filter { post in
+                post.content.localizedCaseInsensitiveContains(query) ||
+                post.authorUsername.localizedCaseInsensitiveContains(query)
+            }
+        }
+        
+        // Apply type filter
+        if let postType = postType {
+            filteredPosts = filteredPosts.filter { $0.postType == postType }
+        }
+        
+        return filteredPosts.sorted { $0.createdAt > $1.createdAt }
+    }
     // MARK: - Logout
     func logout() {
         Task {

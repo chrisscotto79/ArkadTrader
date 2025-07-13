@@ -20,11 +20,15 @@ struct SocialFeedView: View {
             .navigationBarHidden(true)
         }
         .sheet(isPresented: $showCreatePost) {
-            CreatePostView { content in
+            CreatePostView { post, images in
                 Task {
-                    await homeViewModel.createPost(content: content)
+                    await homeViewModel.createPostWithImages(
+                        content: post.content,
+                        images: images
+                    )
                 }
             }
+            .environmentObject(authService)
         }
         .onAppear {
             Task {
