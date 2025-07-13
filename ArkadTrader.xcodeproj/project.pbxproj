@@ -114,8 +114,14 @@
 				Search/ViewModel/SearchViewModel.swift,
 				Search/Views/SearchResultView.swift,
 				Search/Views/SearchView.swift,
+				Settings/Views/AboutView.swift,
+				Settings/Views/BrokerConnectionView.swift,
+				Settings/Views/ContactSupportView.swift,
+				Settings/Views/DataExportView.swift,
+				Settings/Views/HelpCenterView.swift,
 				Settings/Views/NotificationSettingsView.swift,
 				Settings/Views/SetttingsView.swift,
+				Settings/Views/TradingSettingsView.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};

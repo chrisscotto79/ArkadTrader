@@ -1,5 +1,5 @@
 // File: Core/Settings/Views/SettingsView.swift
-// Fixed Settings View with proper authentication service
+// Fixed Settings View with all navigation implemented
 
 import SwiftUI
 
@@ -8,6 +8,13 @@ struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
     @State private var showEditProfile = false
     @State private var showNotificationSettings = false
+    @State private var showPrivacySettings = false
+    @State private var showTradingSettings = false
+    @State private var showBrokerConnection = false
+    @State private var showDataExport = false
+    @State private var showHelpCenter = false
+    @State private var showContactSupport = false
+    @State private var showAbout = false
 
     
     var body: some View {
@@ -37,6 +44,34 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showNotificationSettings) {
             NotificationSettingsView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showPrivacySettings) {
+            PrivacySettingsView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showTradingSettings) {
+            TradingSettingsView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showBrokerConnection) {
+            BrokerConnectionView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showDataExport) {
+            DataExportView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showHelpCenter) {
+            HelpCenterView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showContactSupport) {
+            ContactSupportView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showAbout) {
+            AboutView()
                 .environmentObject(authService)
         }
     }
@@ -76,43 +111,15 @@ struct SettingsView: View {
                     
                     Text("@\(authService.currentUser?.username ?? "username")")
                         .font(.subheadline)
-                        .foregroundColor(.arkadGold)
-                        .fontWeight(.medium)
-                    
-                    if let email = authService.currentUser?.email {
-                        Text(email)
-                            .font(.caption)
-                            .foregroundColor(.textSecondary)
-                    }
+                        .foregroundColor(.textSecondary)
                 }
                 
                 Spacer()
-                
-                // Edit profile button
-                Button(action: { showEditProfile = true }) {
-                    Image(systemName: "pencil")
-                        .font(.subheadline)
-                        .foregroundColor(.arkadGold)
-                        .padding(8)
-                        .background(
-                            Circle()
-                                .fill(Color.arkadGold.opacity(0.1))
-                        )
-                }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.vertical, 20)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.arkadGold.opacity(0.05))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
-                )
-        )
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
+        .background(Color.backgroundSecondary)
     }
     
     // MARK: - Settings List Section
@@ -123,7 +130,7 @@ struct SettingsView: View {
                 SettingsRowView(
                     icon: "person.circle",
                     title: "Edit Profile",
-                    color: .arkadGold
+                    color: .blue
                 ) {
                     showEditProfile = true
                 }
@@ -133,7 +140,7 @@ struct SettingsView: View {
                     title: "Notifications",
                     color: .blue
                 ) {
-                    // TODO: Navigate to notifications settings
+                    showNotificationSettings = true
                 }
                 
                 SettingsRowView(
@@ -141,7 +148,7 @@ struct SettingsView: View {
                     title: "Privacy & Security",
                     color: .purple
                 ) {
-                    // TODO: Navigate to privacy settings
+                    showPrivacySettings = true
                 }
             }
             
@@ -152,7 +159,7 @@ struct SettingsView: View {
                     title: "Trading Preferences",
                     color: .marketGreen
                 ) {
-                    // TODO: Navigate to trading settings
+                    showTradingSettings = true
                 }
                 
                 SettingsRowView(
@@ -160,7 +167,7 @@ struct SettingsView: View {
                     title: "Connect Broker",
                     color: .marketGreen
                 ) {
-                    // TODO: Navigate to broker connection
+                    showBrokerConnection = true
                 }
                 
                 SettingsRowView(
@@ -168,7 +175,7 @@ struct SettingsView: View {
                     title: "Export Data",
                     color: .marketGreen
                 ) {
-                    // TODO: Navigate to data export
+                    showDataExport = true
                 }
             }
             
@@ -179,7 +186,7 @@ struct SettingsView: View {
                     title: "Help Center",
                     color: .gray
                 ) {
-                    // TODO: Navigate to help center
+                    showHelpCenter = true
                 }
                 
                 SettingsRowView(
@@ -187,7 +194,7 @@ struct SettingsView: View {
                     title: "Contact Support",
                     color: .gray
                 ) {
-                    // TODO: Navigate to contact support
+                    showContactSupport = true
                 }
                 
                 SettingsRowView(
@@ -195,49 +202,33 @@ struct SettingsView: View {
                     title: "About ArkadTrader",
                     color: .gray
                 ) {
-                    // TODO: Navigate to about page
+                    showAbout = true
                 }
             }
             
-            // Logout Section
+            // Account Actions
             Section {
-                Button(action: {
+                SettingsRowView(
+                    icon: "arrow.right.square",
+                    title: "Logout",
+                    color: .red
+                ) {
                     Task {
                         await authService.logout()
-                        dismiss()
                     }
-                }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "arrow.right.square")
-                            .foregroundColor(.red)
-                            .frame(width: 24)
-                        
-                        Text("Logout")
-                            .foregroundColor(.red)
-                            .fontWeight(.medium)
-                        
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
                 }
             }
         }
         .listStyle(InsetGroupedListStyle())
-        .scrollContentBackground(.hidden)
     }
     
-    // MARK: - Computed Properties
+    // MARK: - Helper Properties
     private var initials: String {
         guard let user = authService.currentUser else { return "U" }
         let names = user.fullName.split(separator: " ")
         let firstInitial = names.first?.first ?? Character("U")
-        let lastInitial = names.count > 1 ? names.last?.first : nil
-        
-        if let lastInitial = lastInitial {
-            return String(firstInitial) + String(lastInitial)
-        } else {
-            return String(firstInitial)
-        }
+        let lastInitial = names.count > 1 ? names.last?.first ?? Character("") : Character("")
+        return "\(firstInitial)\(lastInitial)".uppercased()
     }
 }
 
@@ -253,17 +244,20 @@ struct SettingsRowView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .foregroundColor(color)
-                    .frame(width: 24, alignment: .center)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 24, height: 24)
                 
                 Text(title)
-                    .foregroundColor(.textPrimary)
+                    .font(.body)
                     .fontWeight(.medium)
+                    .foregroundColor(.textPrimary)
                 
                 Spacer()
                 
                 Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
+                    .foregroundColor(.textTertiary)
                     .font(.caption)
+                    .fontWeight(.semibold)
             }
             .padding(.vertical, 4)
         }
@@ -271,7 +265,125 @@ struct SettingsRowView: View {
     }
 }
 
-#Preview {
-    SettingsView()
-        .environmentObject(FirebaseAuthService.shared)
+// MARK: - Broker Model
+struct BrokerModel {
+    let id: String
+    let name: String
+    let description: String
+    let icon: String
+    let color: Color
+    let isAPISupported: Bool
+    let features: [String]
+}
+
+// MARK: - Privacy Settings View
+struct PrivacySettingsView: View {
+    @EnvironmentObject var authService: FirebaseAuthService
+    @Environment(\.dismiss) var dismiss
+    
+    // Privacy preferences stored in UserDefaults
+    @AppStorage("profile_visibility_public") private var profileVisibilityPublic = true
+    @AppStorage("allow_message_requests") private var allowMessageRequests = true
+    @AppStorage("show_trading_activity") private var showTradingActivity = true
+    @AppStorage("allow_community_invites") private var allowCommunityInvites = true
+    @AppStorage("data_analytics_enabled") private var dataAnalyticsEnabled = true
+    @AppStorage("marketing_emails_enabled") private var marketingEmailsEnabled = false
+    
+    var body: some View {
+        NavigationView {
+            List {
+                // Profile Privacy
+                Section("Profile Privacy") {
+                    privacyToggle(
+                        title: "Public Profile",
+                        description: "Allow others to find and view your profile",
+                        icon: "person.circle",
+                        color: .blue,
+                        isOn: $profileVisibilityPublic
+                    )
+                    
+                    privacyToggle(
+                        title: "Show Trading Activity",
+                        description: "Display your trades and performance publicly",
+                        icon: "chart.line.uptrend.xyaxis",
+                        color: .green,
+                        isOn: $showTradingActivity
+                    )
+                }
+                
+                // Communication Privacy
+                Section("Communication") {
+                    privacyToggle(
+                        title: "Allow Message Requests",
+                        description: "Let other users send you direct messages",
+                        icon: "message",
+                        color: .purple,
+                        isOn: $allowMessageRequests
+                    )
+                    
+                    privacyToggle(
+                        title: "Community Invites",
+                        description: "Allow invitations to join communities",
+                        icon: "person.3",
+                        color: .orange,
+                        isOn: $allowCommunityInvites
+                    )
+                }
+                
+                // Data & Analytics
+                Section("Data & Analytics") {
+                    privacyToggle(
+                        title: "Usage Analytics",
+                        description: "Help improve ArkadTrader with usage data",
+                        icon: "chart.bar",
+                        color: .gray,
+                        isOn: $dataAnalyticsEnabled
+                    )
+                    
+                    privacyToggle(
+                        title: "Marketing Emails",
+                        description: "Receive updates about new features",
+                        icon: "envelope",
+                        color: .gray,
+                        isOn: $marketingEmailsEnabled
+                    )
+                }
+            }
+            .navigationTitle("Privacy & Security")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Helper Views
+    
+    private func privacyToggle(
+        title: String,
+        description: String,
+        icon: String,
+        color: Color,
+        isOn: Binding<Bool>
+    ) -> some View {
+        Toggle(isOn: isOn) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .frame(width: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .fontWeight(.medium)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+    }
 }
