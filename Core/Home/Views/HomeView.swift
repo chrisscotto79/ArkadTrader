@@ -596,42 +596,38 @@ struct EnhancedEmptyFeedView: View {
 
 struct EnhancedEmptyFollowingView: View {
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "person.2")
+        VStack(spacing: 20) {
+            Image(systemName: "person.2.slash")
                 .font(.system(size: 64))
-                .foregroundColor(.gray.opacity(0.7))
+                .foregroundColor(.gray.opacity(0.5))
             
-            VStack(spacing: 8) {
-                Text("No Posts from Following")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Text("Follow other traders to see their posts here. Discover traders in the search tab.")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
-            }
+            Text("No Posts from Following")
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
             
-            Button(action: {}) {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                    Text("Discover Traders")
-                }
+            Text("Follow other traders to see their posts here")
                 .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundColor(.arkadBlack)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(Color.arkadGold)
-                .cornerRadius(25)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            
+            Button(action: {
+                // Navigate to discover/search
+            }) {
+                Label("Discover Traders", systemImage: "magnifyingglass")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.arkadGold)
+                    .cornerRadius(25)
             }
         }
-        .padding(.vertical, 60)
+        .padding(.top, 60)
     }
 }
-
 struct LoadMoreButton: View {
     let action: () -> Void
     

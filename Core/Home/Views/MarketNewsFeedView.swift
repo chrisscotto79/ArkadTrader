@@ -226,6 +226,87 @@ struct NewsArticleCard: View {
         return "Recently"
     }
 }
+struct MarketNewsArticle: Identifiable, Codable {
+    var id: String { articleUrl }
+    let title: String
+    let publishedUtc: String
+    let articleUrl: String
+    let description: String?
+    let keywords: [String]
+    let imageUrl: String?
+    let cachedAt: Date?
+    let source: String?
+    let category: String?
+    
+    // Computed properties
+    var publishedDate: Date? {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return isoFormatter.date(from: publishedUtc)
+    }
+    
+    var timeAgo: String {
+        guard let date = publishedDate else { return "" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+    
+    var hasImage: Bool {
+        return imageUrl != nil && !imageUrl!.isEmpty
+    }
+    
+    // Firebase conversion
+    func toFirestore() -> [String: Any] {
+        var data: [String: Any] = [
+            "title": title,
+            "publishedUtc": publishedUtc,
+            "articleUrl": articleUrl,
+            "keywords": keywords,
+            "cachedAt": Timestamp(date: cachedAt ?? Date())
+        ]
+        
+        if let description = description {
+            data["description"] = description
+        }
+        
+        if let imageUrl = imageUrl {
+            data["imageUrl"] = imageUrl
+        }
+        
+        if let source = source {
+            data["source"] = source
+        }
+        
+        if let category = category {
+            data["category"] = category
+        }
+        
+        return data
+    }
+    
+    static func fromFirestore(data: [String: Any]) throws -> MarketNewsArticle {
+        guard let title = data["title"] as? String,
+              let publishedUtc = data["publishedUtc"] as? String,
+              let articleUrl = data["articleUrl"] as? String,
+              let keywords = data["keywords"] as? [String],
+              let cachedAtTimestamp = data["cachedAt"] as? Timestamp else {
+            throw NSError(domain: "MarketNewsDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid market news data"])
+        }
+        
+        return MarketNewsArticle(
+            title: title,
+            publishedUtc: publishedUtc,
+            articleUrl: articleUrl,
+            description: data["description"] as? String,
+            keywords: keywords,
+            imageUrl: data["imageUrl"] as? String,
+            cachedAt: cachedAtTimestamp.dateValue(),
+            source: data["source"] as? String,
+            category: data["category"] as? String
+        )
+    }
+}
 
 // MARK: - Article Detail View
 

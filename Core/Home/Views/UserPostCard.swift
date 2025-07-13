@@ -223,11 +223,11 @@ struct UserPostCard: View {
             } placeholder: {
                 Rectangle()
                     .fill(Color.gray.opacity(0.2))
-                    .frame(height: 200)
+                    .frame(height: 250)
                     .cornerRadius(12)
                     .overlay(
                         ProgressView()
-                            .scaleEffect(1.2)
+                            .scaleEffect(0.8)
                     )
             }
         }
@@ -293,85 +293,9 @@ struct UserPostCard: View {
         .padding(.top, 8)
     }
     
-    private var actionButtonsSection: some View {
-        HStack(spacing: 0) {
-            // Like Button
-            Button(action: {
-                handleLikeAction()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: isLiked ? "heart.fill" : "heart")
-                        .foregroundColor(isLiked ? .red : .gray)
-                        .font(.subheadline)
-                        .scaleEffect(isLiked ? 1.1 : 1.0)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isLiked)
-                    
-                    Text("Like")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(isLiked ? .red : .gray)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
-            
-            // Comment Button
-            Button(action: {
-                // TODO: Implement comment functionality
-                print("Comment tapped for post: \(post.id)")
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "message")
-                        .foregroundColor(.gray)
-                        .font(.subheadline)
-                    
-                    Text("Comment")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.gray)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
-            
-            // Share Button
-            Button(action: {
-                sharePost()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.and.arrow.up")
-                        .foregroundColor(.gray)
-                        .font(.subheadline)
-                    
-                    Text("Share")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.gray)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
-            
-            // Bookmark Button
-            Button(action: {
-                handleBookmarkAction()
-            }) {
-                Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
-                    .foregroundColor(isBookmarked ? .arkadGold : .gray)
-                    .font(.subheadline)
-                    .scaleEffect(isBookmarked ? 1.1 : 1.0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isBookmarked)
-                    .frame(width: 44, height: 44)
-            }
-        }
-        .padding(.top, 8)
-        .overlay(
-            Rectangle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(height: 0.5),
-            alignment: .top
-        )
-    }
+    // Add this computed property to your CreatePostView struct after the imageSection property:
+
+    
     
     // MARK: - Helper Methods
     
@@ -507,6 +431,50 @@ struct ImageViewerSheet: View {
                 
                 Spacer()
             }
+        }
+    }
+}
+
+
+struct ImageViewerSheet: View {
+    let imageUrls: [String]
+    @Binding var selectedIndex: Int
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                TabView(selection: $selectedIndex) {
+                    ForEach(Array(imageUrls.enumerated()), id: \.offset) { index, urlString in
+                        if let url = URL(string: urlString) {
+                            AsyncImage(url: url) { image in
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .tag(index)
+                            } placeholder: {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(1.5)
+                            }
+                        }
+                    }
+                }
+                .tabViewStyle(PageTabViewStyle())
+                .indexViewStyle(PageIndexViewStyle(backgroundDisplayMode: .always))
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                    .fontWeight(.medium)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

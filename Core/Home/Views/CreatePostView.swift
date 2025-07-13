@@ -162,6 +162,7 @@ struct CreatePostView: View {
         .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
     
+    
     private var postTypeSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -255,61 +256,78 @@ struct CreatePostView: View {
     private var contentEditorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white)
-                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-                
-                VStack(spacing: 0) {
-                    TextEditor(text: $content)
+                // Placeholder text
+                if content.isEmpty {
+                    Text("What's on your mind? Share your thoughts, trades, or market analysis...")
                         .font(.body)
-                        .lineSpacing(4)
-                        .padding(16)
-                        .background(Color.clear)
-                        .onChange(of: content) { _, newValue in
-                            updateCharacterCount()
-                        }
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 120)
-                    
-                    // Placeholder
-                    if content.isEmpty {
-                        HStack {
-                            Text(selectedPostType.placeholder)
-                                .font(.body)
-                                .foregroundColor(.gray.opacity(0.6))
-                                .padding(.leading, 20)
-                            Spacer()
-                        }
-                        .allowsHitTesting(false)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .offset(y: -90)
-                    }
+                        .foregroundColor(Color.gray.opacity(0.6))
+                        .padding(.top, 8)
+                        .padding(.horizontal, 4)
                 }
+                
+                // Text Editor
+                TextEditor(text: $content)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .frame(minHeight: 100, maxHeight: 300)
+                    .onChange(of: content) { _, _ in
+                        updateCharacterCount()
+                    }
+                    .onTapGesture {
+                        // Ensure keyboard shows
+                    }
             }
+            .padding(12)
+            .background(Color.gray.opacity(0.05))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(showCharacterWarning ? Color.orange.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
+            )
             
-            // Quick Action Emojis
-            if showEmojiPicker {
+            // Mention/Hashtag suggestions (if applicable)
+            if content.last == "@" || content.last == "#" {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(tradingEmojis, id: \.self) { emoji in
+                    HStack(spacing: 8) {
+                        ForEach(getSuggestions(), id: \.self) { suggestion in
                             Button(action: {
-                                content += emoji
-                                updateCharacterCount()
+                                addSuggestion(suggestion)
                             }) {
-                                Text(emoji)
-                                    .font(.title2)
-                                    .padding(8)
-                                    .background(Color.gray.opacity(0.1))
-                                    .cornerRadius(8)
+                                Text(suggestion)
+                                    .font(.caption)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.arkadGold.opacity(0.1))
+                                    .foregroundColor(.arkadGold)
+                                    .cornerRadius(16)
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 4)
                 }
-                .transition(.slide)
+                .frame(height: 32)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
     }
+
+    // Helper methods for suggestions (add these to CreatePostView):
+    private func getSuggestions() -> [String] {
+        if content.last == "@" {
+            return ["@elonmusk", "@warren_buffett", "@cathie_wood", "@chamath"]
+        } else if content.last == "#" {
+            return ["#stocks", "#trading", "#investing", "#crypto", "#daytrading"]
+        }
+        return []
+    }
+
+    private func addSuggestion(_ suggestion: String) {
+        content = String(content.dropLast()) + suggestion + " "
+        updateCharacterCount()
+    }
+    
     
     private var imageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -425,6 +443,108 @@ struct CreatePostView: View {
         .padding(.horizontal, 16)
         .opacity(characterCount > 0 ? 1 : 0.3)
     }
+    private var previewSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Preview")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation {
+                        showPreview = false
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                        .font(.title3)
+                }
+            }
+            
+            // Preview Card
+            VStack(alignment: .leading, spacing: 12) {
+                // User info
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.arkadGold.opacity(0.2))
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Text(String(authService.currentUser?.username.prefix(1).uppercased() ?? "U"))
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.arkadGold)
+                        )
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("@\(authService.currentUser?.username ?? "username")")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        
+                        Text("now")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                    
+                    if selectedPostType != .text {
+                        Label(selectedPostType.rawValue, systemImage: postTypeIcon(for: selectedPostType))
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(colorForPostType(selectedPostType))
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                    }
+                }
+                
+                // Content preview
+                if !content.isEmpty {
+                    Text(content)
+                        .font(.subheadline)
+                        .lineSpacing(4)
+                        .foregroundColor(.primary)
+                }
+                
+                // Images preview
+                if !selectedImages.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(selectedImages.prefix(4).enumerated()), id: \.offset) { index, image in
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(height: 100)
+                                    .clipped()
+                                    .cornerRadius(8)
+                            }
+                        }
+                    }
+                }
+                
+                // Engagement preview
+                HStack(spacing: 24) {
+                    Label("0", systemImage: "heart")
+                    Label("0", systemImage: "message")
+                    Label("Share", systemImage: "square.and.arrow.up")
+                    Spacer()
+                    Image(systemName: "bookmark")
+                }
+                .font(.caption)
+                .foregroundColor(.gray)
+            }
+            .padding(16)
+            .background(Color.gray.opacity(0.05))
+            .cornerRadius(12)
+        }
+        .padding(16)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
     
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -509,6 +629,99 @@ struct CreatePostView: View {
         .background(Color.white)
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
+    
+    private var actionButtonsSection: some View {
+        HStack(spacing: 12) {
+            // Emoji Picker Button
+            Button(action: {
+                withAnimation(.spring()) {
+                    showEmojiPicker.toggle()
+                }
+            }) {
+                Image(systemName: "face.smiling")
+                    .font(.title2)
+                    .foregroundColor(.arkadGold)
+                    .frame(width: 44, height: 44)
+                    .background(Color.arkadGold.opacity(0.1))
+                    .cornerRadius(22)
+            }
+            
+            // Image Picker Button
+            Button(action: {
+                showingImagePicker = true
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "photo")
+                        .font(.title3)
+                    
+                    if !selectedImages.isEmpty {
+                        Text("\(selectedImages.count)")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                    }
+                }
+                .foregroundColor(.arkadGold)
+                .frame(width: selectedImages.isEmpty ? 44 : nil, height: 44)
+                .padding(.horizontal, selectedImages.isEmpty ? 0 : 12)
+                .background(Color.arkadGold.opacity(0.1))
+                .cornerRadius(22)
+            }
+            .disabled(selectedImages.count >= maxImages)
+            .opacity(selectedImages.count >= maxImages ? 0.5 : 1.0)
+            
+            // Preview Toggle Button
+            Button(action: {
+                withAnimation(.spring()) {
+                    showPreview.toggle()
+                }
+            }) {
+                Image(systemName: showPreview ? "eye.fill" : "eye")
+                    .font(.title2)
+                    .foregroundColor(.arkadGold)
+                    .frame(width: 44, height: 44)
+                    .background(Color.arkadGold.opacity(0.1))
+                    .cornerRadius(22)
+            }
+            
+            Spacer()
+            
+            // Clear All Button
+            if !content.isEmpty || !selectedImages.isEmpty {
+                Button(action: {
+                    clearAll()
+                }) {
+                    Text("Clear")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(20)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+    private var characterCountSection: some View {
+        HStack {
+            if showCharacterWarning {
+                Text("Character limit approaching")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .transition(.opacity)
+            }
+            
+            Spacer()
+            
+            Text("\(characterCount)/\(maxCharacters)")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(characterCountColor)
+                .animation(.easeInOut, value: characterCount)
+        }
+        .padding(.horizontal, 4)
     }
     
     // MARK: - Helper Methods

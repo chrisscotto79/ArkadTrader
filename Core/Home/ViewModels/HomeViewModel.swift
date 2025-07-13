@@ -6,72 +6,6 @@ import Firebase
 import UIKit
 
 // MARK: - Market News Article Model
-struct MarketNewsArticle: Identifiable, Codable {
-    let id: String
-    let title: String
-    let author: String?
-    let publishedUtc: String
-    let articleUrl: String
-    let description: String?
-    let keywords: [String]
-    let imageUrl: String?
-    let cachedAt: Date
-    let source: String?
-    let category: String?
-    
-    init(id: String, title: String, author: String?, publishedUtc: String, articleUrl: String, description: String?, keywords: [String], imageUrl: String?, cachedAt: Date, source: String?, category: String?) {
-        self.id = id
-        self.title = title
-        self.author = author
-        self.publishedUtc = publishedUtc
-        self.articleUrl = articleUrl
-        self.description = description
-        self.keywords = keywords
-        self.imageUrl = imageUrl
-        self.cachedAt = cachedAt
-        self.source = source
-        self.category = category
-    }
-    
-    func toFirestore() -> [String: Any] {
-        return [
-            "title": title,
-            "author": author as Any,
-            "publishedUtc": publishedUtc,
-            "articleUrl": articleUrl,
-            "description": description as Any,
-            "keywords": keywords,
-            "imageUrl": imageUrl as Any,
-            "cachedAt": Timestamp(date: cachedAt),
-            "source": source as Any,
-            "category": category as Any
-        ]
-    }
-    
-    static func fromFirestore(data: [String: Any], id: String) throws -> MarketNewsArticle {
-        guard let title = data["title"] as? String,
-              let publishedUtc = data["publishedUtc"] as? String,
-              let articleUrl = data["articleUrl"] as? String,
-              let keywords = data["keywords"] as? [String],
-              let cachedAtTimestamp = data["cachedAt"] as? Timestamp else {
-            throw NSError(domain: "MarketNewsArticleDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid market news article data"])
-        }
-        
-        return MarketNewsArticle(
-            id: id,
-            title: title,
-            author: data["author"] as? String,
-            publishedUtc: publishedUtc,
-            articleUrl: articleUrl,
-            description: data["description"] as? String,
-            keywords: keywords,
-            imageUrl: data["imageUrl"] as? String,
-            cachedAt: cachedAtTimestamp.dateValue(),
-            source: data["source"] as? String,
-            category: data["category"] as? String
-        )
-    }
-}
 
 // MARK: - Home View Model
 @MainActor
@@ -568,6 +502,14 @@ class HomeViewModel: ObservableObject {
         
         return (totalArticles, recentArticles)
     }
+    func getUserFollowing(userId: String) async throws -> Set<String> {
+        do {
+            return try await authService.getUserFollowing(userId: userId)
+        } catch {
+            print("Error getting user following: \(error)")
+            return Set<String>()
+        }
+    }
     
     // MARK: - Private Helper Methods
     private func loadUserInteractions() async {
@@ -633,11 +575,11 @@ class HomeViewModel: ObservableObject {
             let lowercaseContent = content.lowercased()
             
             if lowercaseContent.contains("#trade") ||
-               lowercaseContent.contains("profit") ||
-               lowercaseContent.contains("loss") {
+                lowercaseContent.contains("profit") ||
+                lowercaseContent.contains("loss") {
                 return .tradeResult
             } else if lowercaseContent.contains("#analysis") ||
-                      lowercaseContent.contains("market") {
+                        lowercaseContent.contains("market") {
                 return .marketAnalysis
             } else {
                 return .image
@@ -647,11 +589,11 @@ class HomeViewModel: ObservableObject {
         let lowercaseContent = content.lowercased()
         
         if lowercaseContent.contains("#trade") ||
-           lowercaseContent.contains("profit") ||
-           lowercaseContent.contains("loss") {
+            lowercaseContent.contains("profit") ||
+            lowercaseContent.contains("loss") {
             return .tradeResult
         } else if lowercaseContent.contains("#analysis") ||
-                  lowercaseContent.contains("market") {
+                    lowercaseContent.contains("market") {
             return .marketAnalysis
         } else {
             return .text
@@ -679,27 +621,26 @@ class HomeViewModel: ObservableObject {
         }
     }
     
-    private func downloadImage(from url: String) async throws -> UIImage {
-        if url.starts(with: "temp://") {
-            // Return placeholder for temporary URLs
-            return UIImage(systemName: "photo") ?? UIImage()
+    
+    private func downloadImage(from urlString: String) async throws -> UIImage {
+        guard let url = URL(string: urlString) else {
+            throw NSError(domain: "InvalidURL", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid image URL"])
         }
         
-        guard let imageUrl = URL(string: url) else {
-            throw NSError(domain: "ImageDownload", code: 0, userInfo: [
-                NSLocalizedDescriptionKey: "Invalid image URL"
-            ])
-        }
-        
-        let (data, _) = try await URLSession.shared.data(from: imageUrl)
+        let (data, _) = try await URLSession.shared.data(from: url)
         
         guard let image = UIImage(data: data) else {
-            throw NSError(domain: "ImageDownload", code: 0, userInfo: [
-                NSLocalizedDescriptionKey: "Failed to create image from data"
-            ])
+            throw NSError(domain: "InvalidImage", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to create image from data"])
         }
         
         return image
+    }
+    
+    private func deleteImages(_ imageUrls: [String]) async throws {
+        // If you're using Firebase Storage, implement deletion here
+        // For now, just log the action
+        print("Would delete images: \(imageUrls)")
+        // TODO: Implement actual Firebase Storage deletion if needed
     }
     
     private func validateImages(_ images: [UIImage]) throws {
@@ -731,43 +672,10 @@ class HomeViewModel: ObservableObject {
             MarketNewsArticle.fromNewsItem(item)
         }
     }
+
 }
 
 // MARK: - Supporting Structures
-private struct NewsItem: Codable {
-    let id: Int
-    let headline: String
-    let summary: String
-    let url: String
-    let image: String
-    let datetime: Int
-    let source: String
-    let category: String
-    let related: String?
-}
 
-extension MarketNewsArticle {
-    fileprivate static func fromNewsItem(_ item: NewsItem) -> MarketNewsArticle? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        
-        let publishedDate = Date(timeIntervalSince1970: TimeInterval(item.datetime))
-        let publishedUtc = formatter.string(from: publishedDate)
-        
-        let keywords = item.related?.components(separatedBy: ",") ?? []
-        
-        return MarketNewsArticle(
-            id: String(item.id),
-            title: item.headline,
-            author: nil,
-            publishedUtc: publishedUtc,
-            articleUrl: item.url,
-            description: item.summary,
-            keywords: keywords,
-            imageUrl: item.image.isEmpty ? nil : item.image,
-            cachedAt: Date(),
-            source: item.source,
-            category: item.category
-        )
-    }
-}
+
+
