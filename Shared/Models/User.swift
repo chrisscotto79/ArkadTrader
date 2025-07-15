@@ -1,5 +1,5 @@
 // File: Shared/Models/User.swift
-// Simplified User Model
+// Updated User Model with Starting Capital Support
 
 import Foundation
 import FirebaseFirestore
@@ -16,6 +16,7 @@ struct User: Identifiable, Codable {
     var subscriptionTier: SubscriptionTier
     var totalProfitLoss: Double
     var winRate: Double
+    var startingCapital: Double  // NEW: Starting capital field
     var createdAt: Date
     var updatedAt: Date
     var communityIds: [String]
@@ -33,6 +34,7 @@ struct User: Identifiable, Codable {
         self.subscriptionTier = .basic
         self.totalProfitLoss = 0.0
         self.winRate = 0.0
+        self.startingCapital = 0.0  // NEW: Default to 0
         self.createdAt = Date()
         self.updatedAt = Date()
         self.communityIds = []
@@ -51,6 +53,7 @@ struct User: Identifiable, Codable {
             "subscriptionTier": subscriptionTier.rawValue,
             "totalProfitLoss": totalProfitLoss,
             "winRate": winRate,
+            "startingCapital": startingCapital,  // NEW: Include in Firestore
             "createdAt": Timestamp(date: createdAt),
             "updatedAt": Timestamp(date: updatedAt),
             "communityIds": communityIds
@@ -72,6 +75,7 @@ struct User: Identifiable, Codable {
         user.isVerified = data["isVerified"] as? Bool ?? false
         user.totalProfitLoss = data["totalProfitLoss"] as? Double ?? 0.0
         user.winRate = data["winRate"] as? Double ?? 0.0
+        user.startingCapital = data["startingCapital"] as? Double ?? 0.0  // NEW: Load from Firestore
         user.communityIds = data["communityIds"] as? [String] ?? []
         
         if let tierString = data["subscriptionTier"] as? String {

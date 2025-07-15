@@ -460,27 +460,52 @@ class FirebaseAuthService: ObservableObject {
         }
     }
 }
+extension FirebaseAuthService {
+    
+    /// Updates the user's starting capital in Firebase and locally
+    func updateUserStartingCapital(userId: String, startingCapital: Double) async throws {
+        // Update in Firebase
+        try await FirebaseServices.shared.updateUserStartingCapital(userId: userId, startingCapital: startingCapital)
+        
+        // Update local user object
+        if var user = currentUser, user.id == userId {
+            user.startingCapital = startingCapital
+            user.updatedAt = Date()
+            currentUser = user
+        }
+    }
+    
+    /// Convenience method to update current user's starting capital
+    func updateCurrentUserStartingCapital(_ amount: Double) async throws {
+        guard let userId = currentUser?.id else {
+            throw AuthError.notAuthenticated
+        }
+        
+        try await updateUserStartingCapital(userId: userId, startingCapital: amount)
+    }
+    
+    /// Reloads the current user from Firebase (useful after updates)
+    
+}
 
-// MARK: - Auth Errors
+// MARK: - AuthError enum (if not already defined)
 enum AuthError: LocalizedError {
     case notAuthenticated
     case usernameTaken
-    case invalidEmail
-    case weakPassword
+    case invalidCredentials
     case networkError
     
     var errorDescription: String? {
         switch self {
         case .notAuthenticated:
-            return "You must be logged in to perform this action"
+            return "User is not authenticated"
         case .usernameTaken:
-            return "This username is already taken"
-        case .invalidEmail:
-            return "Please enter a valid email address"
-        case .weakPassword:
-            return "Password must be at least 6 characters"
+            return "Username is already taken"
+        case .invalidCredentials:
+            return "Invalid email or password"
         case .networkError:
-            return "Network error. Please check your connection"
+            return "Network connection error"
         }
     }
 }
+

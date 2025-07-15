@@ -1,10 +1,9 @@
 // File: Core/Portfolio/ViewModels/PortfolioViewModel.swift
-// Enhanced Portfolio ViewModel with Correct Portfolio Math
+// Enhanced Portfolio ViewModel with Firebase Integration
 
 import Foundation
 import SwiftUI
-
-// MARK: - TimeFrame Enum
+import Combine
 
 @MainActor
 class PortfolioViewModel: ObservableObject {
@@ -21,56 +20,50 @@ class PortfolioViewModel: ObservableObject {
     @Published var topPerformingTrades: [Trade] = []
     @Published var worstPerformingTrades: [Trade] = []
     
+    // UI State
     @Published var showDepositWithdrawSheet = false
     @Published var showStartingCapitalPrompt = false
-
-    // Real-time sync
     @Published var lastUpdated: Date = Date()
-    private var updateTimer: Timer?
     
-    private let authService = FirebaseAuthService.shared
+    // Private Properties
+    private var updateTimer: Timer?
+    let authService = FirebaseAuthService.shared  // Changed from private to let
+    private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Initialization
     init() {
         setupRealtimeUpdates()
         loadPortfolioData()
+        observeUserChanges()
     }
     
     deinit {
         updateTimer?.invalidate()
     }
     
-    // MARK: - Real-time Updates
+    // MARK: - Setup Methods
     private func setupRealtimeUpdates() {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             self?.updateCurrentPrices()
         }
     }
     
-    // Remove mock price updates
-    private func updateCurrentPrices() {
-        // REMOVED: No more simulated price movements
-        // Only update prices when real market data is available
-        // This method can be used later for real API price updates
-        
-        // For now, do nothing - prices will stay at entry price until real data is available
-        return
+    private func observeUserChanges() {
+        authService.$currentUser
+            .sink { [weak self] _ in
+                self?.calculatePortfolioMetrics()
+            }
+            .store(in: &cancellables)
     }
-    func depositFunds(_ amount: Double) {
-        guard let currentCapital = getUserStartingCapital() else { return }
-        setUserStartingCapital(currentCapital + amount)
-    }
-
-    func withdrawFunds(_ amount: Double) {
-        guard let currentCapital = getUserStartingCapital() else { return }
-        let newAmount = max(0, currentCapital - amount) // Don't allow negative
-        setUserStartingCapital(newAmount)
-    }
+    
     // MARK: - Portfolio Data Loading
     func loadPortfolioData() {
         guard let userId = authService.currentUser?.id else { return }
         
         isLoading = true
+        
+        // Check for legacy UserDefaults data and migrate it
+        migrateLegacyStartingCapital()
         
         authService.listenToUserTrades(userId: userId) { [weak self] trades in
             DispatchQueue.main.async {
@@ -87,32 +80,126 @@ class PortfolioViewModel: ObservableObject {
         }
     }
     
-    // MARK: - FIXED Portfolio Calculations
+    // MARK: - Legacy Data Migration
+    private func migrateLegacyStartingCapital() {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        // Check if user already has starting capital in Firebase
+        if let firebaseStartingCapital = authService.currentUser?.startingCapital, firebaseStartingCapital > 0 {
+            // User already has Firebase starting capital, clean up any UserDefaults
+            UserDefaults.standard.removeObject(forKey: "starting_capital_\(userId)")
+            return
+        }
+        
+        // Check for legacy UserDefaults data
+        let legacyCapitalKey = "starting_capital_\(userId)"
+        if let legacyCapital = UserDefaults.standard.object(forKey: legacyCapitalKey) as? Double, legacyCapital > 0 {
+            Task {
+                do {
+                    try await authService.updateCurrentUserStartingCapital(legacyCapital)
+                    
+                    // Clean up UserDefaults after successful migration
+                    UserDefaults.standard.removeObject(forKey: legacyCapitalKey)
+                    
+                    await MainActor.run {
+                        calculatePortfolioMetrics()
+                    }
+                } catch {
+                    print("Failed to migrate legacy starting capital: \(error)")
+                }
+            }
+        }
+    }
+    
+    // MARK: - Starting Capital Management
+    func getUserStartingCapital() -> Double? {
+        // Use Firebase user's starting capital directly
+        guard let startingCapital = authService.currentUser?.startingCapital, startingCapital > 0 else {
+            return nil
+        }
+        return startingCapital
+    }
+    
+    // MARK: - Account Value Management (Deposit/Withdraw)
+    func depositFunds(_ amount: Double) {
+        guard let currentCapital = getUserStartingCapital() else {
+            // If no starting capital is set, set the deposit amount as starting capital
+            setUserStartingCapital(amount)
+            return
+        }
+        
+        let newCapital = currentCapital + amount
+        updateStartingCapital(newCapital, actionDescription: "deposited")
+    }
+    
+    func withdrawFunds(_ amount: Double) {
+        guard let currentCapital = getUserStartingCapital() else {
+            showErrorMessage("Please set your starting capital first")
+            return
+        }
+        
+        let newCapital = max(0, currentCapital - amount)
+        
+        // Check if withdrawal amount is valid
+        if amount > currentCapital {
+            showErrorMessage("Insufficient funds. Available balance: \(currentCapital.asCurrency)")
+            return
+        }
+        
+        updateStartingCapital(newCapital, actionDescription: "withdrew")
+    }
+    
+    private func updateStartingCapital(_ newAmount: Double, actionDescription: String) {
+        Task {
+            do {
+                try await authService.updateCurrentUserStartingCapital(newAmount)
+                
+                await MainActor.run {
+                    calculatePortfolioMetrics()
+                    showDepositWithdrawSheet = false
+                }
+            } catch {
+                await MainActor.run {
+                    showErrorMessage("Failed to \(actionDescription) funds: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    func setUserStartingCapital(_ amount: Double) {
+        Task {
+            do {
+                try await authService.updateCurrentUserStartingCapital(amount)
+                
+                await MainActor.run {
+                    calculatePortfolioMetrics()
+                    showStartingCapitalPrompt = false
+                }
+            } catch {
+                await MainActor.run {
+                    showErrorMessage("Failed to set starting capital: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    // MARK: - Portfolio Calculations
     private func calculatePortfolioMetrics() {
         guard let userId = authService.currentUser?.id else { return }
         
         let openTrades = trades.filter { $0.isOpen }
         let closedTrades = trades.filter { !$0.isOpen }
         
-        // Get user's starting capital (or prompt for it)
+        // Get user's starting capital
         guard let startingCapital = getUserStartingCapital() else {
-            checkForStartingCapitalPrompt()
-            // Use temporary calculation until starting capital is set
-            let totalPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
-            let currentValue = openTrades.reduce(0) { $0 + $1.currentValue }
-            
-            var newPortfolio = Portfolio(userId: userId)
-            newPortfolio.totalValue = currentValue
-            newPortfolio.totalProfitLoss = totalPL
-            newPortfolio.totalTrades = trades.count
-            newPortfolio.openPositions = openTrades.count
-            newPortfolio.winRate = closedTrades.count > 0 ? Double(closedTrades.filter { $0.profitLoss > 0 }.count) / Double(closedTrades.count) * 100 : 0
-            newPortfolio.lastUpdated = Date()
-            self.portfolio = newPortfolio
+            if !trades.isEmpty {
+                checkForStartingCapitalPrompt()
+            }
+            createTemporaryPortfolio(userId: userId, openTrades: openTrades, closedTrades: closedTrades)
             return
         }
         
-        // CORRECT CALCULATION with user's starting capital
+        // Calculate portfolio values
         let currentValueOfOpenPositions = openTrades.reduce(0) { $0 + $1.currentValue }
         let totalInvestedInOpenPositions = openTrades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
         let realizedPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
@@ -131,8 +218,9 @@ class PortfolioViewModel: ObservableObject {
         let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
         let winRate = closedTrades.count > 0 ? Double(winningTrades) / Double(closedTrades.count) * 100 : 0
         
-        let dayPL = calculateRealisticDayProfitLoss()
+        let dayPL = calculateDayProfitLoss()
         
+        // Create portfolio object
         var newPortfolio = Portfolio(userId: userId)
         newPortfolio.totalValue = totalAccountValue
         newPortfolio.totalProfitLoss = totalPL
@@ -145,11 +233,83 @@ class PortfolioViewModel: ObservableObject {
         self.portfolio = newPortfolio
     }
     
+    private func createTemporaryPortfolio(userId: String, openTrades: [Trade], closedTrades: [Trade]) {
+        let totalPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
+        let currentValue = openTrades.reduce(0) { $0 + $1.currentValue }
+        
+        var newPortfolio = Portfolio(userId: userId)
+        newPortfolio.totalValue = currentValue
+        newPortfolio.totalProfitLoss = totalPL
+        newPortfolio.totalTrades = trades.count
+        newPortfolio.openPositions = openTrades.count
+        newPortfolio.winRate = closedTrades.count > 0 ?
+            Double(closedTrades.filter { $0.profitLoss > 0 }.count) / Double(closedTrades.count) * 100 : 0
+        newPortfolio.lastUpdated = Date()
+        
+        self.portfolio = newPortfolio
+    }
+    
+    private func calculateDayProfitLoss() -> Double {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return 0 }
+        
+        let yesterdayValue = calculatePortfolioValueForDate(yesterday)
+        let todayValue = calculatePortfolioValueForDate(today)
+        
+        return todayValue - yesterdayValue
+    }
+    
+    private func calculatePortfolioValueForDate(_ date: Date) -> Double {
+        guard let startingCapital = getUserStartingCapital() else { return 0 }
+        let calendar = Calendar.current
+        
+        // Get trades that were entered before or on this date
+        let tradesEnteredByDate = trades.filter {
+            calendar.startOfDay(for: $0.entryDate) <= date
+        }
+        
+        // Get trades that were closed before or on this date
+        let tradesClosedByDate = tradesEnteredByDate.filter { trade in
+            guard !trade.isOpen else { return false }
+            let exitDate = trade.exitDate ?? trade.entryDate
+            return calendar.startOfDay(for: exitDate) <= date
+        }
+        
+        // Calculate realized P&L from closed trades
+        let realizedPL = tradesClosedByDate.reduce(0.0) { $0 + $1.profitLoss }
+        
+        // Calculate money invested in open positions on this date
+        let openTradesOnDate = tradesEnteredByDate.filter { trade in
+            if trade.isOpen {
+                return true
+            } else {
+                let exitDate = trade.exitDate ?? trade.entryDate
+                return calendar.startOfDay(for: exitDate) > date
+            }
+        }
+        
+        let investedInOpenPositions = openTradesOnDate.reduce(0.0) {
+            $0 + ($1.entryPrice * Double($1.quantity))
+        }
+        
+        // Available cash = Starting Capital + Realized P&L - Money in Open Positions
+        let availableCash = startingCapital + realizedPL - investedInOpenPositions
+        
+        // Current value of open positions
+        let currentValueOfOpenPositions = openTradesOnDate.reduce(0.0) {
+            $0 + ($1.entryPrice * Double($1.quantity))
+        }
+        
+        // Total Portfolio Value = Available Cash + Current Value of Open Positions
+        return availableCash + currentValueOfOpenPositions
+    }
+    
+    // MARK: - Analytics Generation
     private func generatePortfolioAnalytics() {
         let closedTrades = trades.filter { !$0.isOpen }
         let openTrades = trades.filter { $0.isOpen }
         
-        // Generate realistic analytics
         let analytics = PortfolioAnalytics(
             totalReturn: portfolio?.totalProfitLoss ?? 0,
             totalReturnPercentage: calculateTotalReturnPercentage(),
@@ -170,128 +330,99 @@ class PortfolioViewModel: ObservableObject {
         
         self.portfolioAnalytics = analytics
         
-        // Update performance arrays
-        self.topPerformingTrades = Array(closedTrades.sorted { $0.profitLoss > $1.profitLoss }.prefix(5))
-        self.worstPerformingTrades = Array(closedTrades.sorted { $0.profitLoss < $1.profitLoss }.prefix(5))
+        // Update top/worst performing trades
+        self.topPerformingTrades = Array(closedTrades
+            .sorted(by: { $0.profitLoss > $1.profitLoss })
+            .prefix(5))
         
-        // Generate realistic performance data
-        self.recentPerformance = generateRealisticPerformance()
+        self.worstPerformingTrades = Array(closedTrades
+            .sorted(by: { $0.profitLoss < $1.profitLoss })
+            .prefix(5))
     }
     
-    // MARK: - Realistic Data Generation
-    private func calculateRealisticDayProfitLoss() -> Double {
-        // REMOVED: No more random daily changes
-        // Return actual day change based on real price movements only
-        
-        let openTrades = trades.filter { $0.isOpen }
-        guard !openTrades.isEmpty else { return 0 }
-        
-        // Only calculate real day P&L if we have actual price updates
-        // For now, return 0 until real price data is available
-        return 0.0
+    // MARK: - Calculation Helpers
+    private func calculateTotalReturnPercentage() -> Double {
+        guard let startingCapital = getUserStartingCapital(), startingCapital > 0 else { return 0 }
+        let totalPL = portfolio?.totalProfitLoss ?? 0
+        return (totalPL / startingCapital) * 100
     }
     
-    private func generateRealisticPerformance() -> [DailyPerformance] {
-        guard let startingCapital = getUserStartingCapital(), !trades.isEmpty else {
-            return []
+    private func calculateAverageHoldTime() -> Double {
+        let closedTrades = trades.filter { !$0.isOpen }
+        guard !closedTrades.isEmpty else { return 0 }
+        
+        let totalHoldTime = closedTrades.reduce(0.0) { total, trade in
+            let exitDate = trade.exitDate ?? Date()
+            let holdTime = exitDate.timeIntervalSince(trade.entryDate) / 86400 // Days
+            return total + holdTime
         }
         
-        let calendar = Calendar.current
-        let now = Date()
-        
-        // Use a default timeframe since selectedTimeframe isn't available here
-        let startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
-        
-        var performances: [DailyPerformance] = []
-        var currentDate = calendar.startOfDay(for: startDate)
-        let endDate = calendar.startOfDay(for: now)
-        
-        // Sort trades by date for proper cumulative calculation
-        let sortedTrades = trades.sorted { $0.entryDate < $1.entryDate }
-        let sortedClosedTrades = trades.filter { !$0.isOpen }.sorted {
-            ($0.exitDate ?? $0.entryDate) < ($1.exitDate ?? $1.entryDate)
-        }
-        
-        // Generate daily performance data
-        while currentDate <= endDate {
-            let portfolioValueForDate = calculatePortfolioValueForDate(
-                date: currentDate,
-                startingCapital: startingCapital,
-                trades: sortedTrades,
-                closedTrades: sortedClosedTrades
-            )
-            
-            // Calculate daily change
-            let previousValue = performances.last?.portfolioValue ?? startingCapital
-            let dailyChange = portfolioValueForDate - previousValue
-            let dailyChangePercentage = previousValue > 0 ? (dailyChange / previousValue) * 100 : 0
-            
-            let performance = DailyPerformance(
-                date: currentDate,
-                portfolioValue: portfolioValueForDate,
-                dailyChange: dailyChange,
-                dailyChangePercentage: dailyChangePercentage
-            )
-            
-            performances.append(performance)
-            
-            // Move to next day
-            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
-        }
-        
-        return performances
+        return totalHoldTime / Double(closedTrades.count)
     }
     
-    private func calculatePortfolioValueForDate(
-        date: Date,
-        startingCapital: Double,
-        trades: [Trade],
-        closedTrades: [Trade]
-    ) -> Double {
-        let calendar = Calendar.current
+    private func calculateAverageTradeSize() -> Double {
+        guard !trades.isEmpty else { return 0 }
+        let totalSize = trades.reduce(0.0) { $0 + ($1.entryPrice * Double($1.quantity)) }
+        return totalSize / Double(trades.count)
+    }
+    
+    private func calculateAverageWin() -> Double {
+        let winningTrades = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
+        guard !winningTrades.isEmpty else { return 0 }
+        return winningTrades.reduce(0.0) { $0 + $1.profitLoss } / Double(winningTrades.count)
+    }
+    
+    private func calculateAverageLoss() -> Double {
+        let losingTrades = trades.filter { !$0.isOpen && $0.profitLoss < 0 }
+        guard !losingTrades.isEmpty else { return 0 }
+        return abs(losingTrades.reduce(0.0) { $0 + $1.profitLoss } / Double(losingTrades.count))
+    }
+    
+    private func calculateProfitFactor() -> Double {
+        let grossProfit = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
+            .reduce(0.0) { $0 + $1.profitLoss }
+        let grossLoss = abs(trades.filter { !$0.isOpen && $0.profitLoss < 0 }
+            .reduce(0.0) { $0 + $1.profitLoss })
         
-        // Get all trades that were entered before or on this date
-        let tradesEnteredByDate = trades.filter {
-            calendar.startOfDay(for: $0.entryDate) <= date
+        return grossLoss > 0 ? grossProfit / grossLoss : 0
+    }
+    
+    private func calculateSharpeRatio() -> Double {
+        let closedTrades = trades.filter { !$0.isOpen }
+        guard closedTrades.count > 1 else { return 0 }
+        
+        let returns = closedTrades.map { $0.profitLossPercentage / 100 }
+        let avgReturn = returns.reduce(0, +) / Double(returns.count)
+        
+        let variance = returns.reduce(0) { $0 + pow($1 - avgReturn, 2) } / Double(returns.count - 1)
+        let stdDev = sqrt(variance)
+        
+        let riskFreeRate = 0.04 / 252 // 4% annual risk-free rate, daily
+        
+        return stdDev > 0 ? (avgReturn - riskFreeRate) / stdDev * sqrt(252) : 0
+    }
+    
+    private func calculateMaxDrawdown() -> Double {
+        let closedTrades = trades.filter { !$0.isOpen }.sorted {
+            $0.exitDate ?? Date() < $1.exitDate ?? Date()
         }
         
-        // Get all closed trades that were closed before or on this date
-        let tradesClosedByDate = closedTrades.filter {
-            let exitDate = $0.exitDate ?? $0.entryDate
-            return calendar.startOfDay(for: exitDate) <= date
-        }
+        var peak: Double = 0
+        var maxDrawdown: Double = 0
+        var runningTotal: Double = 0
         
-        // Calculate realized P&L from closed trades
-        let realizedPL = tradesClosedByDate.reduce(0.0) { $0 + $1.profitLoss }
-        
-        // Calculate money invested in open positions on this date
-        let openTradesOnDate = tradesEnteredByDate.filter { trade in
-            // Trade was entered but not yet closed on this date
-            if trade.isOpen {
-                return true // Still open
-            } else {
-                let exitDate = trade.exitDate ?? trade.entryDate
-                return calendar.startOfDay(for: exitDate) > date
+        for trade in closedTrades {
+            runningTotal += trade.profitLoss
+            if runningTotal > peak {
+                peak = runningTotal
+            } else if peak > 0 {
+                let drawdown = (peak - runningTotal) / peak * 100
+                maxDrawdown = max(maxDrawdown, drawdown)
             }
         }
         
-        let investedInOpenPositions = openTradesOnDate.reduce(0.0) { total, trade in
-            return total + (trade.entryPrice * Double(trade.quantity))
-        }
-        
-        // Available cash = Starting Capital + Realized P&L - Money in Open Positions
-        let availableCash = startingCapital + realizedPL - investedInOpenPositions
-        
-        // Current value of open positions (using entry price for now)
-        let currentValueOfOpenPositions = openTradesOnDate.reduce(0.0) { total, trade in
-            return total + (trade.entryPrice * Double(trade.quantity))
-        }
-        
-        // Total Portfolio Value = Available Cash + Current Value of Open Positions
-        return availableCash + currentValueOfOpenPositions
+        return maxDrawdown
     }
-    
-    
     
     // MARK: - Trade Management
     func closeTrade(_ trade: Trade, exitPrice: Double) {
@@ -302,173 +433,80 @@ class PortfolioViewModel: ObservableObject {
         trades[index].isOpen = false
         trades[index].currentPrice = nil
         
-        // Update in Firebase
         Task {
             do {
                 try await authService.updateTrade(trades[index])
-                // Recalculate portfolio metrics
-                calculatePortfolioMetrics()
-                generatePortfolioAnalytics()
+                await MainActor.run {
+                    calculatePortfolioMetrics()
+                    generatePortfolioAnalytics()
+                }
             } catch {
-                errorMessage = "Failed to close trade: \(error.localizedDescription)"
-                showError = true
+                await MainActor.run {
+                    showErrorMessage("Failed to close trade: \(error.localizedDescription)")
+                }
             }
         }
-    }
-    func getUserStartingCapital() -> Double? {
-        let savedCapital = UserDefaults.standard.double(forKey: "starting_capital_\(authService.currentUser?.id ?? "")")
-        return savedCapital > 0 ? savedCapital : nil
     }
     
     func updateTrade(_ updatedTrade: Trade) async throws {
         do {
-            // Update in Firebase first
             try await authService.updateTrade(updatedTrade)
             
-            // Update local trades array
             if let index = trades.firstIndex(where: { $0.id == updatedTrade.id }) {
                 trades[index] = updatedTrade
                 
-                // Recalculate portfolio metrics with updated data
-                calculatePortfolioMetrics()
-                generatePortfolioAnalytics()
+                await MainActor.run {
+                    calculatePortfolioMetrics()
+                    generatePortfolioAnalytics()
+                }
             }
         } catch {
-            errorMessage = "Failed to update trade: \(error.localizedDescription)"
-            showError = true
+            await MainActor.run {
+                showErrorMessage("Failed to update trade: \(error.localizedDescription)")
+            }
             throw error
         }
     }
     
-    // MARK: - Reopen Trade
     func reopenTrade(_ trade: Trade) async throws {
         guard !trade.isOpen else {
             throw PortfolioError.tradeAlreadyOpen
         }
         
+        var reopenedTrade = trade
+        reopenedTrade.isOpen = true
+        reopenedTrade.exitPrice = nil
+        reopenedTrade.exitDate = nil
+        reopenedTrade.currentPrice = trade.entryPrice
+        
+        try await updateTrade(reopenedTrade)
+    }
+    
+    func deleteTrade(_ trade: Trade) async throws {
         do {
-            // Create reopened trade
-            var reopenedTrade = trade
-            reopenedTrade.isOpen = true
-            reopenedTrade.exitPrice = nil
-            reopenedTrade.exitDate = nil
-            reopenedTrade.currentPrice = trade.entryPrice // Reset to entry price as starting point
+            try await authService.deleteTrade(tradeId: trade.id)
             
-            // Update in Firebase
-            try await authService.updateTrade(reopenedTrade)
+            trades.removeAll { $0.id == trade.id }
             
-            // Update local trades array
-            if let index = trades.firstIndex(where: { $0.id == trade.id }) {
-                trades[index] = reopenedTrade
-                
-                // Recalculate portfolio metrics
+            await MainActor.run {
                 calculatePortfolioMetrics()
                 generatePortfolioAnalytics()
             }
         } catch {
-            errorMessage = "Failed to reopen trade: \(error.localizedDescription)"
-            showError = true
-            throw error
-        }
-    }
-    
-    // MARK: - Delete Trade
-    func deleteTrade(_ trade: Trade) async throws {
-        do {
-            // Delete from Firebase first (method expects tradeId as String)
-            try await authService.deleteTrade(tradeId: trade.id)
-            
-            // Remove from local trades array
-            trades.removeAll { $0.id == trade.id }
-            
-            // Recalculate portfolio metrics
-            calculatePortfolioMetrics()
-            generatePortfolioAnalytics()
-        } catch {
-            errorMessage = "Failed to delete trade: \(error.localizedDescription)"
-            showError = true
-            throw error
-        }
-    }
-    
-    // MARK: - Helper Calculations
-    private func calculateTotalReturnPercentage() -> Double {
-        let totalCapitalDeployed = trades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
-        guard totalCapitalDeployed > 0 else { return 0 }
-        let totalPL = portfolio?.totalProfitLoss ?? 0
-        return (totalPL / totalCapitalDeployed) * 100
-    }
-    
-    private func calculateAverageHoldTime() -> Double {
-        let closedTrades = trades.filter { !$0.isOpen && $0.exitDate != nil }
-        guard !closedTrades.isEmpty else { return 0 }
-        
-        let totalDays = closedTrades.reduce(0) { total, trade in
-            guard let exitDate = trade.exitDate else { return total }
-            let days = Calendar.current.dateComponents([.day], from: trade.entryDate, to: exitDate).day ?? 0
-            return total + days
-        }
-        
-        return Double(totalDays) / Double(closedTrades.count)
-    }
-    
-    private func calculateAverageTradeSize() -> Double {
-        guard !trades.isEmpty else { return 0 }
-        let totalValue = trades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
-        return totalValue / Double(trades.count)
-    }
-    
-    private func calculateAverageWin() -> Double {
-        let winningTrades = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
-        guard !winningTrades.isEmpty else { return 0 }
-        return winningTrades.reduce(0) { $0 + $1.profitLoss } / Double(winningTrades.count)
-    }
-    
-    private func calculateAverageLoss() -> Double {
-        let losingTrades = trades.filter { !$0.isOpen && $0.profitLoss < 0 }
-        guard !losingTrades.isEmpty else { return 0 }
-        return losingTrades.reduce(0) { $0 + $1.profitLoss } / Double(losingTrades.count)
-    }
-    
-    private func calculateProfitFactor() -> Double {
-        let totalWins = trades.filter { !$0.isOpen && $0.profitLoss > 0 }.reduce(0) { $0 + $1.profitLoss }
-        let totalLosses = abs(trades.filter { !$0.isOpen && $0.profitLoss < 0 }.reduce(0) { $0 + $1.profitLoss })
-        guard totalLosses > 0 else { return totalWins > 0 ? Double.infinity : 0 }
-        return totalWins / totalLosses
-    }
-    
-    private func calculateSharpeRatio() -> Double {
-        let returns = trades.filter { !$0.isOpen }.map { $0.profitLossPercentage / 100 }
-        guard returns.count > 1 else { return 0 }
-        
-        let avgReturn = returns.reduce(0, +) / Double(returns.count)
-        let variance = returns.map { pow($0 - avgReturn, 2) }.reduce(0, +) / Double(returns.count - 1)
-        let stdDev = sqrt(variance)
-        
-        guard stdDev > 0 else { return 0 }
-        return avgReturn / stdDev
-    }
-    
-    private func calculateMaxDrawdown() -> Double {
-        let closedTrades = trades.filter { !$0.isOpen }.sorted { $0.exitDate ?? Date() < $1.exitDate ?? Date() }
-        var peak: Double = 0
-        var maxDrawdown: Double = 0
-        var runningTotal: Double = 0
-        
-        for trade in closedTrades {
-            runningTotal += trade.profitLoss
-            if runningTotal > peak {
-                peak = runningTotal
-            } else {
-                let drawdown = (peak - runningTotal) / peak * 100
-                maxDrawdown = max(maxDrawdown, drawdown)
+            await MainActor.run {
+                showErrorMessage("Failed to delete trade: \(error.localizedDescription)")
             }
+            throw error
         }
-        
-        return maxDrawdown
     }
     
-    // MARK: - User Profile Stats Update
+    // MARK: - Helper Methods
+    private func checkForStartingCapitalPrompt() {
+        if !trades.isEmpty && getUserStartingCapital() == nil {
+            showStartingCapitalPrompt = true
+        }
+    }
+    
     private func updateUserProfileStats() {
         guard let userId = authService.currentUser?.id else { return }
         
@@ -480,10 +518,19 @@ class PortfolioViewModel: ObservableObject {
                     winRate: portfolio?.winRate ?? 0
                 )
             } catch {
-                errorMessage = "Failed to update stats: \(error.localizedDescription)"
-                showError = true
+                print("Failed to update user stats: \(error)")
             }
         }
+    }
+    
+    private func updateCurrentPrices() {
+        // Placeholder for real-time price updates
+        // Will be implemented when market data API is integrated
+    }
+    
+    private func showErrorMessage(_ message: String) {
+        errorMessage = message
+        showError = true
     }
     
     // MARK: - Public Methods
@@ -491,18 +538,6 @@ class PortfolioViewModel: ObservableObject {
         loadPortfolioData()
     }
     
-    
-    func setUserStartingCapital(_ amount: Double) {
-        UserDefaults.standard.set(amount, forKey: "starting_capital_\(authService.currentUser?.id ?? "")")
-        calculatePortfolioMetrics() // Recalculate with new starting capital
-    }
-
-    private func checkForStartingCapitalPrompt() {
-        // Show prompt if user has trades but no starting capital set
-        if !trades.isEmpty && getUserStartingCapital() == nil {
-            showStartingCapitalPrompt = true
-        }
-    }
     func getPerformanceForTimeframe(_ timeframe: TimeFrame) -> [DailyPerformance] {
         let calendar = Calendar.current
         let now = Date()
@@ -521,24 +556,46 @@ class PortfolioViewModel: ObservableObject {
             startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
         }
         
-        // Filter existing performance data for the timeframe
-        return recentPerformance.filter { $0.date >= startDate }
+        var performances: [DailyPerformance] = []
+        var currentDate = startDate
+        
+        while currentDate <= now {
+            let portfolioValue = calculatePortfolioValueForDate(currentDate)
+            let previousDayValue = calculatePortfolioValueForDate(
+                calendar.date(byAdding: .day, value: -1, to: currentDate) ?? currentDate
+            )
+            
+            let dailyChange = portfolioValue - previousDayValue
+            let dailyChangePercentage = previousDayValue > 0 ?
+                (dailyChange / previousDayValue) * 100 : 0
+            
+            performances.append(DailyPerformance(
+                date: currentDate,
+                portfolioValue: portfolioValue,
+                dailyChange: dailyChange,
+                dailyChangePercentage: dailyChangePercentage
+            ))
+            
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? now
+        }
+        
+        return performances
     }
     
-    func getTradesFor(timeframe: TimeFrame) -> [Trade] {
+    func getTradesForTimeframe(_ timeframe: TimeFrame) -> [Trade] {
         let calendar = Calendar.current
         let now = Date()
         
         let startDate: Date
         switch timeframe {
-        case .daily:
-            startDate = calendar.startOfDay(for: now)
         case .weekly:
             startDate = calendar.date(byAdding: .weekOfYear, value: -1, to: now) ?? now
         case .monthly:
             startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
         case .allTime:
             return trades
+        default:
+            startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
         }
         
         return trades.filter { $0.entryDate >= startDate }
@@ -559,185 +616,6 @@ class PortfolioViewModel: ObservableObject {
     }
 }
 
-struct DepositWithdrawSheet: View {
-    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
-    @Environment(\.dismiss) var dismiss
-    @State private var selectedAction: FundAction = .deposit
-    @State private var amountInput = ""
-    @State private var showAlert = false
-    @State private var alertMessage = ""
-    
-    enum FundAction: CaseIterable {
-        case deposit, withdraw
-        
-        var title: String {
-            switch self {
-            case .deposit: return "Deposit"
-            case .withdraw: return "Withdraw"
-            }
-        }
-        
-        var icon: String {
-            switch self {
-            case .deposit: return "plus.circle.fill"
-            case .withdraw: return "minus.circle.fill"
-            }
-        }
-        
-        var color: Color {
-            switch self {
-            case .deposit: return .green
-            case .withdraw: return .red
-            }
-        }
-    }
-    
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 24) {
-                // Header
-                VStack(spacing: 16) {
-                    Image(systemName: selectedAction.icon)
-                        .font(.system(size: 48))
-                        .foregroundColor(selectedAction.color)
-                    
-                    Text("\(selectedAction.title) Funds")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    
-                    Text("Adjust your account balance for deposits or withdrawals")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .multilineTextAlignment(.center)
-                }
-                
-                // Action Selector
-                HStack(spacing: 0) {
-                    ForEach(FundAction.allCases, id: \.self) { action in
-                        Button(action: { selectedAction = action }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: action.icon)
-                                Text(action.title)
-                            }
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(selectedAction == action ? .white : action.color)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(selectedAction == action ? action.color : action.color.opacity(0.1))
-                        }
-                    }
-                }
-                .cornerRadius(8)
-                .padding(.horizontal)
-                
-                // Amount Input
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Amount")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    
-                    TextField("Enter amount", text: $amountInput)
-                        .keyboardType(.numberPad)
-                        .font(.title2)
-                        .padding()
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(12)
-                        .overlay(
-                            HStack {
-                                Text("$")
-                                    .font(.title2)
-                                    .foregroundColor(.gray)
-                                    .padding(.leading, 16)
-                                Spacer()
-                            }
-                        )
-                }
-                .padding(.horizontal)
-                
-                // Quick Amount Buttons
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Quick Select")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .padding(.horizontal)
-                    
-                    HStack(spacing: 12) {
-                        quickAmountButton("$100", amount: 100)
-                        quickAmountButton("$250", amount: 250)
-                        quickAmountButton("$500", amount: 500)
-                        quickAmountButton("$1000", amount: 1000)
-                    }
-                    .padding(.horizontal)
-                }
-                
-                Spacer()
-                
-                // Action Button
-                Button(action: performAction) {
-                    Text("\(selectedAction.title) \(amountInput.isEmpty ? "" : "$\(amountInput)")")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(isValidAmount ? selectedAction.color : Color.gray)
-                        .cornerRadius(12)
-                }
-                .disabled(!isValidAmount)
-                .padding(.horizontal)
-            }
-            .padding(.vertical)
-            .navigationTitle("\(selectedAction.title) Funds")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-        .alert("Transaction Complete", isPresented: $showAlert) {
-            Button("OK") { dismiss() }
-        } message: {
-            Text(alertMessage)
-        }
-    }
-    
-    private func quickAmountButton(_ title: String, amount: Double) -> some View {
-        Button(action: {
-            amountInput = String(format: "%.0f", amount)
-        }) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.arkadGold)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.arkadGold.opacity(0.1))
-                .cornerRadius(8)
-        }
-    }
-    
-    private var isValidAmount: Bool {
-        guard let amount = Double(amountInput.replacingOccurrences(of: ",", with: "")) else { return false }
-        return amount > 0
-    }
-    
-    private func performAction() {
-        guard let amount = Double(amountInput.replacingOccurrences(of: ",", with: "")) else { return }
-        
-        switch selectedAction {
-        case .deposit:
-            portfolioViewModel.depositFunds(amount)
-            alertMessage = "Successfully deposited \(amount.asCurrency) to your account."
-        case .withdraw:
-            portfolioViewModel.withdrawFunds(amount)
-            alertMessage = "Successfully withdrew \(amount.asCurrency) from your account."
-        }
-        
-        showAlert = true
-    }
-}
 // MARK: - Supporting Models
 struct PortfolioAnalytics {
     let totalReturn: Double
@@ -798,3 +676,210 @@ enum PortfolioError: LocalizedError {
     }
 }
 
+// MARK: - DepositWithdrawSheet View
+struct DepositWithdrawSheet: View {
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var selectedAction: FundAction = .deposit
+    @State private var amountInput = ""
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+    @FocusState private var isInputFocused: Bool
+    
+    enum FundAction: CaseIterable {
+        case deposit, withdraw
+        
+        var title: String {
+            switch self {
+            case .deposit: return "Deposit"
+            case .withdraw: return "Withdraw"
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .deposit: return "plus.circle.fill"
+            case .withdraw: return "minus.circle.fill"
+            }
+        }
+        
+        var color: Color {
+            switch self {
+            case .deposit: return .green
+            case .withdraw: return .red
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // Header
+                VStack(spacing: 16) {
+                    Image(systemName: selectedAction.icon)
+                        .font(.system(size: 48))
+                        .foregroundColor(selectedAction.color)
+                    
+                    Text("Adjust Account Value")
+                        .font(.title)
+                        .fontWeight(.bold)
+                    
+                    Text("Adjust your account balance for deposits or withdrawals")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top)
+                
+                // Current Balance Display
+                if let currentBalance = portfolioViewModel.authService.currentUser?.startingCapital, currentBalance > 0 {
+                    VStack(spacing: 8) {
+                        Text("Current Balance")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(currentBalance.asCurrency)
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                }
+                
+                // Action Selector
+                HStack(spacing: 0) {
+                    ForEach(FundAction.allCases, id: \.self) { action in
+                        Button(action: { selectedAction = action }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: action.icon)
+                                Text(action.title)
+                            }
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(selectedAction == action ? .white : .secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(selectedAction == action ? action.color : Color.clear)
+                        }
+                    }
+                }
+                .background(Color(.systemGray5))
+                .cornerRadius(12)
+                .padding(.horizontal)
+                
+                // Amount Input
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Amount")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    HStack {
+                        Text("$")
+                            .font(.title2)
+                            .foregroundColor(.gray)
+                        
+                        TextField("0.00", text: $amountInput)
+                            .keyboardType(.decimalPad)
+                            .font(.title2)
+                            .focused($isInputFocused)
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                }
+                .padding(.horizontal)
+                
+                // Quick Amount Buttons
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Quick Select")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .padding(.horizontal)
+                    
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
+                        quickAmountButton("$100", amount: 100)
+                        quickAmountButton("$500", amount: 500)
+                        quickAmountButton("$1,000", amount: 1000)
+                        quickAmountButton("$5,000", amount: 5000)
+                        quickAmountButton("$10,000", amount: 10000)
+                        quickAmountButton("$25,000", amount: 25000)
+                    }
+                    .padding(.horizontal)
+                }
+                
+                Spacer()
+                
+                // Action Button
+                Button(action: performAction) {
+                    Text("Confirm Adjustment")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(isValidAmount ? selectedAction.color : Color.gray)
+                        .cornerRadius(12)
+                }
+                .disabled(!isValidAmount)
+                .padding(.horizontal)
+            }
+            .padding(.vertical)
+            .navigationTitle("Adjust Account Value")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .onAppear {
+                isInputFocused = true
+            }
+        }
+        .alert("Transaction Complete", isPresented: $showAlert) {
+            Button("OK") { dismiss() }
+        } message: {
+            Text(alertMessage)
+        }
+    }
+    
+    private func quickAmountButton(_ title: String, amount: Double) -> some View {
+        Button(action: {
+            amountInput = String(format: "%.0f", amount)
+        }) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.arkadGold)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Color.arkadGold.opacity(0.1))
+                .cornerRadius(8)
+        }
+    }
+    
+    private var isValidAmount: Bool {
+        guard let amount = Double(amountInput.replacingOccurrences(of: ",", with: "")) else { return false }
+        
+        if selectedAction == .withdraw {
+            let currentBalance = portfolioViewModel.authService.currentUser?.startingCapital ?? 0
+            return amount > 0 && amount <= currentBalance
+        }
+        
+        return amount > 0
+    }
+    
+    private func performAction() {
+        guard let amount = Double(amountInput.replacingOccurrences(of: ",", with: "")) else { return }
+        
+        switch selectedAction {
+        case .deposit:
+            portfolioViewModel.depositFunds(amount)
+            alertMessage = "Successfully added \(amount.asCurrency) to your account."
+        case .withdraw:
+            portfolioViewModel.withdrawFunds(amount)
+            alertMessage = "Successfully withdrew \(amount.asCurrency) from your account."
+        }
+        
+        showAlert = true
+    }
+}

@@ -300,9 +300,19 @@ extension PortfolioView {
         Button(action: {
             portfolioViewModel.showDepositWithdrawSheet = true
         }) {
-            Image(systemName: "arrow.up.arrow.down.circle")
-                .font(.system(size: 24, weight: .medium))
-                .foregroundColor(.arkadGold)
+            HStack(spacing: 6) {
+                Image(systemName: "dollarsign.circle")
+                    .font(.system(size: 18, weight: .medium))
+                Text("Adjust account value")
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundColor(.arkadGold)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.arkadGold.opacity(0.1))
+            )
         }
         .buttonStyle(PlainButtonStyle())
     }
