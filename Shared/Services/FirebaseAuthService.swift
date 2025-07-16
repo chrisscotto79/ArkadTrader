@@ -280,6 +280,42 @@ class FirebaseAuthService: ObservableObject {
         return try await FirebaseServices.shared.getUserBookmarkedPosts(userId: userId)
     }
     
+    func getFollowingPosts(userId: String, limit: Int = 20) async throws -> [Post] {
+        return try await FirebaseServices.shared.getFollowingPosts(userId: userId, limit: limit)
+    }
+
+    func getFollowingTrades(userId: String, limit: Int = 20) async throws -> [Trade] {
+        return try await FirebaseServices.shared.getFollowingTrades(userId: userId, limit: limit)
+    }
+
+    func getFollowingActivity(userId: String, limit: Int = 50) async throws -> [ActivityItem] {
+        return try await FirebaseServices.shared.getFollowingActivity(userId: userId, limit: limit)
+    }
+
+    func createActivity(userId: String, type: ActivityItem.ActivityType, content: String, relatedId: String? = nil) async throws {
+        guard let currentUser = currentUser else { return }
+        
+        let activity = ActivityItem(
+            id: UUID().uuidString,
+            userId: userId,
+            username: currentUser.username,
+            activityType: type,
+            content: content,
+            relatedId: relatedId,
+            createdAt: Date()
+        )
+        
+        try await FirebaseServices.shared.createActivity(activity)
+    }
+    func createActivity(_ activity: ActivityItem) async throws {
+        try await FirebaseServices.shared.createActivity(activity)
+    }
+
+    func getComments(postId: String) async throws -> [Comment] {
+        return try await FirebaseServices.shared.getComments(postId: postId)
+    }
+
+    
     // MARK: - Community Management Wrapper Methods
     
     func createCommunity(_ community: Community) async throws {

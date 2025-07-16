@@ -75,7 +75,88 @@ class FirebaseServices {
     }
     
     // MARK: - Following Methods
-    
+    func getFollowingPosts(userId: String, limit: Int = 20) async throws -> [Post] {
+        // Get user's following list
+        let followingSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("following")
+            .getDocuments()
+        
+        guard !followingSnapshot.documents.isEmpty else { return [] }
+        
+        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        
+        // Query posts from followed users
+        let postsSnapshot = try await db.collection("posts")
+            .whereField("authorId", in: followingIds)
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return postsSnapshot.documents.compactMap { document in
+            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+
+    func getFollowingTrades(userId: String, limit: Int = 20) async throws -> [Trade] {
+        // Get user's following list
+        let followingSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("following")
+            .getDocuments()
+        
+        guard !followingSnapshot.documents.isEmpty else { return [] }
+        
+        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        
+        // Query public trades from followed users
+        let tradesSnapshot = try await db.collection("trades")
+            .whereField("userId", in: followingIds)
+            .whereField("isPublic", isEqualTo: true)
+            .order(by: "entryDate", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return tradesSnapshot.documents.compactMap { document in
+            try? Trade.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    func createActivity(_ activity: ActivityItem) async throws {
+        try await db.collection("activity").document(activity.id).setData(activity.toFirestore())
+    }
+
+    func getComments(postId: String) async throws -> [Comment] {
+        let snapshot = try await db.collection("comments")
+            .whereField("postId", isEqualTo: postId)
+            .order(by: "createdAt", descending: false)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+
+    func getFollowingActivity(userId: String, limit: Int = 50) async throws -> [ActivityItem] {
+        let followingSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("following")
+            .getDocuments()
+        
+        guard !followingSnapshot.documents.isEmpty else { return [] }
+        
+        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        
+        // Get recent activity from followed users
+        let activitySnapshot = try await db.collection("activity")
+            .whereField("userId", in: followingIds)
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return activitySnapshot.documents.compactMap { document in
+            try? ActivityItem.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
     func followUser(userId: String, followerId: String) async throws {
         let batch = db.batch()
         

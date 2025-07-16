@@ -13,10 +13,14 @@ struct ProfileView: View {
     @State private var showSettings = false
     @State private var selectedTab: ProfileTab = .posts
     @State private var showPortfolioDetails = false
+    @State private var showFollowersList = false
+    @State private var showFollowingList = false
     
     var body: some View {
+        let user: User? = authService.currentUser
         ScrollView {
             VStack(spacing: 0) {
+                
                 // Profile Header with full-screen banner
                 ProfileHeaderSection(
                     user: authService.currentUser,
@@ -59,6 +63,7 @@ struct ProfileView: View {
             PortfolioDetailsSheet()
                 .environmentObject(portfolioViewModel)
         }
+        
         .onAppear {
             portfolioViewModel.loadPortfolioData()
             postsViewModel.loadUserPosts(userId: authService.currentUser?.id ?? "")
@@ -81,6 +86,11 @@ struct ProfileHeaderSection: View {
     let portfolioSummary: PortfolioSummary
     @Binding var showEditProfile: Bool
     @Binding var showSettings: Bool
+    
+    // Add these environment objects and state variables
+    @EnvironmentObject var authService: FirebaseAuthService
+    @State private var showFollowersList = false
+    @State private var showFollowingList = false
     
     var body: some View {
         GeometryReader { geometry in
@@ -228,21 +238,31 @@ struct ProfileHeaderSection: View {
                             .shadow(color: Color.arkadGold.opacity(0.6), radius: 20, x: 0, y: 10)
                     }
                     
-                    // User stats with enhanced styling
+                    // User stats with enhanced styling - CLICKABLE
                     HStack {
                         Spacer()
                         
-                        statColumn(
-                            number: "\(user?.followersCount ?? 0)",
-                            label: "Followers"
-                        )
+                        Button(action: {
+                            showFollowersList = true
+                        }) {
+                            statColumn(
+                                number: "\(user?.followersCount ?? 0)",
+                                label: "Followers"
+                            )
+                        }
+                        .foregroundColor(.primary)
                         
                         Spacer()
                         
-                        statColumn(
-                            number: "\(user?.followingCount ?? 0)",
-                            label: "Following"
-                        )
+                        Button(action: {
+                            showFollowingList = true
+                        }) {
+                            statColumn(
+                                number: "\(user?.followingCount ?? 0)",
+                                label: "Following"
+                            )
+                        }
+                        .foregroundColor(.primary)
                         
                         Spacer()
                         
@@ -271,28 +291,40 @@ struct ProfileHeaderSection: View {
                             .padding(.horizontal, 35)
                     }
                     
+                    // FOLLOW BUTTON - Show only if viewing another user's profile
+                    if let currentUser = authService.currentUser,
+                       let profileUser = user,
+                       currentUser.id != profileUser.id {
+                        
+                        SimpleFollowButton(targetUserId: profileUser.id, targetUsername: profileUser.username)
+                            .environmentObject(authService)
+                            .padding(.horizontal, 20)
+                    }
+                    
                     // Action Buttons with enhanced styling
                     HStack(spacing: 15) {
-                        Button(action: { showEditProfile = true }) {
-                            HStack(spacing: 10) {
-                                Image(systemName: "pencil")
-                                    .font(.subheadline)
-                                Text("Edit Profile")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [Color.arkadGold, Color.arkadGoldLight]),
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                        if isCurrentUserProfile {
+                            Button(action: { showEditProfile = true }) {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "pencil")
+                                        .font(.subheadline)
+                                    Text("Edit Profile")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.arkadGold, Color.arkadGoldLight]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
                                 )
-                            )
-                            .cornerRadius(14)
-                            .shadow(color: Color.arkadGold.opacity(0.5), radius: 10, x: 0, y: 5)
+                                .cornerRadius(14)
+                                .shadow(color: Color.arkadGold.opacity(0.5), radius: 10, x: 0, y: 5)
+                            }
                         }
                         
                         Button(action: {
@@ -327,6 +359,19 @@ struct ProfileHeaderSection: View {
         .frame(height: 500) // Fixed height for the header section
         .clipped()
         .ignoresSafeArea(edges: .top) // Extend to the very top
+        .sheet(isPresented: $showFollowersList) {
+            SimpleFollowListView(userId: user?.id ?? "", listType: .followers)
+        }
+        .sheet(isPresented: $showFollowingList) {
+            SimpleFollowListView(userId: user?.id ?? "", listType: .following)
+        }
+    }
+    
+    // Helper computed property
+    private var isCurrentUserProfile: Bool {
+        guard let currentUser = authService.currentUser,
+              let profileUser = user else { return true }
+        return currentUser.id == profileUser.id
     }
     
     // Enhanced tech elements for full-screen design
@@ -391,7 +436,6 @@ struct ProfileHeaderSection: View {
                 .fontWeight(.medium)
         }
     }
-   
     
     private func shareProfile() {
         guard let user = user else { return }
@@ -409,7 +453,6 @@ struct ProfileHeaderSection: View {
         UIPasteboard.general.string = shareText
     }
     
-    
     private func getInitials(user: User?) -> String {
         guard let user = user else { return "U" }
         let names = user.fullName.split(separator: " ")
@@ -424,6 +467,209 @@ struct ProfileHeaderSection: View {
     }
 }
 
+// MARK: - Simple Follow Button (Minimal Version)
+struct SimpleFollowButton: View {
+    let targetUserId: String
+    let targetUsername: String
+    @State private var isFollowing = false
+    @State private var isLoading = false
+    
+    @EnvironmentObject var authService: FirebaseAuthService
+    
+    var body: some View {
+        Button(action: {
+            Task {
+                await toggleFollow()
+            }
+        }) {
+            HStack {
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .foregroundColor(.white)
+                } else {
+                    Image(systemName: isFollowing ? "person.badge.minus" : "person.badge.plus")
+                        .font(.subheadline)
+                }
+                
+                Text(isFollowing ? "Following" : "Follow")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+            }
+            .foregroundColor(isFollowing ? .primary : .white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(isFollowing ? Color.gray.opacity(0.2) : Color.arkadGold)
+                    .shadow(color: isFollowing ? Color.clear : Color.arkadGold.opacity(0.5), radius: 10, x: 0, y: 5)
+            )
+        }
+        .disabled(isLoading)
+        .onAppear {
+            Task {
+                await checkFollowStatus()
+            }
+        }
+    }
+    
+    private func toggleFollow() async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        isLoading = true
+        
+        do {
+            if isFollowing {
+                try await authService.unfollowUser(userId: targetUserId, followerId: currentUserId)
+            } else {
+                try await authService.followUser(userId: targetUserId, followerId: currentUserId)
+            }
+            
+            isFollowing.toggle()
+            
+        } catch {
+            print("Error toggling follow: \(error)")
+        }
+        
+        isLoading = false
+    }
+    
+    private func checkFollowStatus() async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        do {
+            isFollowing = try await authService.isFollowing(userId: currentUserId, targetUserId: targetUserId)
+        } catch {
+            print("Error checking follow status: \(error)")
+        }
+    }
+}
+
+// MARK: - Simple Follow List View (Minimal Version)
+struct SimpleFollowListView: View {
+    let userId: String
+    let listType: ListType
+    
+    @State private var users: [User] = []
+    @State private var isLoading = true
+    @EnvironmentObject var authService: FirebaseAuthService
+    @Environment(\.dismiss) var dismiss
+    
+    enum ListType {
+        case followers
+        case following
+        
+        var title: String {
+            switch self {
+            case .followers: return "Followers"
+            case .following: return "Following"
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack {
+                if isLoading {
+                    ProgressView("Loading...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if users.isEmpty {
+                    VStack {
+                        Text("No \(listType.title.lowercased()) yet")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(users) { user in
+                            SimpleUserRow(user: user)
+                                .listRowSeparator(.hidden)
+                        }
+                    }
+                    .listStyle(PlainListStyle())
+                }
+            }
+            .navigationTitle(listType.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                Task {
+                    await loadUsers()
+                }
+            }
+        }
+    }
+    
+    private func loadUsers() async {
+        isLoading = true
+        
+        do {
+            let userIds: Set<String>
+            
+            switch listType {
+            case .followers:
+                userIds = try await authService.getUserFollowers(userId: userId)
+            case .following:
+                userIds = try await authService.getUserFollowing(userId: userId)
+            }
+            
+            // Fetch user details
+            var fetchedUsers: [User] = []
+            for id in userIds {
+                if let user = try await authService.getUserById(userId: id) {
+                    fetchedUsers.append(user)
+                }
+            }
+            
+            users = fetchedUsers.sorted { $0.username < $1.username }
+            
+        } catch {
+            print("Error loading users: \(error)")
+        }
+        
+        isLoading = false
+    }
+}
+
+// MARK: - Simple User Row (Minimal Version)
+struct SimpleUserRow: View {
+    let user: User
+    
+    var body: some View {
+        HStack {
+            // Simple initial circle instead of image
+            Circle()
+                .fill(Color.arkadGold)
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Text(String(user.username.prefix(1)).uppercased())
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                )
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(user.fullName)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Text("@\(user.username)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+}
 // MARK: - Portfolio Performance Banner
 struct PortfolioPerformanceBanner: View {
     let portfolioSummary: PortfolioSummary

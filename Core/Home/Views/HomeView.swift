@@ -156,7 +156,8 @@ struct HomeView: View {
         case .feed:
             feedContent
         case .following:
-            followingContent
+            FollowingFeedView()
+                .environmentObject(authService)
         case .marketNews:
             MarketNewsFeedView()
         }
@@ -201,22 +202,12 @@ struct HomeView: View {
     }
     
     // MARK: - Following Content
+    /*
     private var followingContent: some View {
-        LazyVStack(spacing: 16) {
-            if homeViewModel.followingPosts.isEmpty {
-                EnhancedEmptyFollowingView()
-            } else {
-                ForEach(homeViewModel.followingPosts, id: \.id) { post in
-                    EnhancedUserPostCard(post: post, homeViewModel: homeViewModel)
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.9).combined(with: .opacity),
-                            removal: .scale(scale: 0.9).combined(with: .opacity)
-                        ))
-                }
-            }
-        }
-        .padding(.horizontal, 16)
+        //FollowingFeedView()
+          //  .environmentObject(authService)
     }
+     */
     
     // MARK: - FIXED: Floating Action Button - Properly positioned at bottom right
     private var floatingActionButton: some View {

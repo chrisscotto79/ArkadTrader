@@ -20,6 +20,8 @@ struct Trade: Identifiable, Codable {
     var strategy: String?
     var isOpen: Bool
     var sharedCommunityIds: [String]
+    var isPublic: Bool = false
+
     
     // MARK: - Enhanced Computed Properties
     
@@ -140,22 +142,33 @@ struct Trade: Identifiable, Codable {
     // MARK: - Firebase Integration
 
     func toFirestore() -> [String: Any] {
-        let data: [String: Any?] = [
+        var data: [String: Any] = [
             "userId": userId,
             "ticker": ticker,
             "tradeType": tradeType.rawValue,
             "entryPrice": entryPrice,
-            "exitPrice": exitPrice,
-            "currentPrice": currentPrice,
             "quantity": quantity,
             "entryDate": Timestamp(date: entryDate),
-            "exitDate": exitDate.map { Timestamp(date: $0) },
-            "notes": notes,
-            "strategy": strategy,
+            "notes": notes as Any,
+            "strategy": strategy as Any,
             "isOpen": isOpen,
-            "sharedCommunityIds": sharedCommunityIds
+            "sharedCommunityIds": sharedCommunityIds,
+            "isPublic": isPublic  // Add this line
         ]
-        return data.compactMapValues { $0 }
+        
+        if let exitPrice = exitPrice {
+            data["exitPrice"] = exitPrice
+        }
+        
+        if let currentPrice = currentPrice {
+            data["currentPrice"] = currentPrice
+        }
+        
+        if let exitDate = exitDate {
+            data["exitDate"] = Timestamp(date: exitDate)
+        }
+        
+        return data
     }
 
     static func fromFirestore(data: [String: Any], id: String) throws -> Trade {
@@ -180,6 +193,8 @@ struct Trade: Identifiable, Codable {
         trade.entryDate = entryDateTimestamp.dateValue()
         trade.exitDate = (data["exitDate"] as? Timestamp)?.dateValue()
         trade.isOpen = isOpen
+        trade.isPublic = data["isPublic"] as? Bool ?? false
+
 
         return trade
     }
