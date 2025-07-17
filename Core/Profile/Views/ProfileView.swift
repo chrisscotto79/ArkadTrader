@@ -473,74 +473,181 @@ struct SimpleFollowButton: View {
     let targetUsername: String
     @State private var isFollowing = false
     @State private var isLoading = false
+    @State private var showError = false
+    @State private var errorMessage = ""
+    @State private var debugInfo = ""
     
     @EnvironmentObject var authService: FirebaseAuthService
     
     var body: some View {
-        Button(action: {
-            Task {
-                await toggleFollow()
-            }
-        }) {
-            HStack {
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .foregroundColor(.white)
-                } else {
-                    Image(systemName: isFollowing ? "person.badge.minus" : "person.badge.plus")
-                        .font(.subheadline)
+        VStack(spacing: 8) {
+            Button(action: {
+                Task {
+                    await toggleFollow()
                 }
-                
-                Text(isFollowing ? "Following" : "Follow")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+            }) {
+                HStack {
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .foregroundColor(.white)
+                    } else {
+                        Image(systemName: isFollowing ? "person.badge.minus" : "person.badge.plus")
+                            .font(.subheadline)
+                    }
+                    
+                    Text(isFollowing ? "Following" : "Follow")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
+                .foregroundColor(isFollowing ? .primary : .white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(isFollowing ? Color.gray.opacity(0.2) : Color.arkadGold)
+                        .shadow(color: isFollowing ? Color.clear : Color.arkadGold.opacity(0.5), radius: 10, x: 0, y: 5)
+                )
             }
-            .foregroundColor(isFollowing ? .primary : .white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isFollowing ? Color.gray.opacity(0.2) : Color.arkadGold)
-                    .shadow(color: isFollowing ? Color.clear : Color.arkadGold.opacity(0.5), radius: 10, x: 0, y: 5)
-            )
+            .disabled(isLoading)
+            
+            // Debug info (remove in production)
+            if !debugInfo.isEmpty {
+                Text(debugInfo)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
-        .disabled(isLoading)
         .onAppear {
             Task {
                 await checkFollowStatus()
             }
         }
+        .alert("Follow Error", isPresented: $showError) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage)
+        }
     }
     
     private func toggleFollow() async {
-        guard let currentUserId = authService.currentUser?.id else { return }
+        // Enhanced debugging and error handling
+        print("🔄 toggleFollow() called")
+        print("📋 targetUserId: \(targetUserId)")
+        print("👤 targetUsername: \(targetUsername)")
         
-        isLoading = true
+        guard let currentUserId = authService.currentUser?.id else {
+            await MainActor.run {
+                errorMessage = "Not authenticated. Please sign in again."
+                showError = true
+                debugInfo = "❌ No current user"
+            }
+            print("❌ No current user found")
+            return
+        }
+        
+        guard !targetUserId.isEmpty else {
+            await MainActor.run {
+                errorMessage = "Invalid user ID"
+                showError = true
+                debugInfo = "❌ Empty target user ID"
+            }
+            print("❌ Target user ID is empty")
+            return
+        }
+        
+        guard currentUserId != targetUserId else {
+            await MainActor.run {
+                errorMessage = "Cannot follow yourself"
+                showError = true
+                debugInfo = "❌ Cannot follow self"
+            }
+            print("❌ Trying to follow self")
+            return
+        }
+        
+        print("✅ Current user: \(currentUserId)")
+        print("🔄 Starting follow operation...")
+        
+        await MainActor.run {
+            isLoading = true
+            debugInfo = "🔄 Processing..."
+        }
         
         do {
             if isFollowing {
+                print("👋 Unfollowing user...")
                 try await authService.unfollowUser(userId: targetUserId, followerId: currentUserId)
+                print("✅ Unfollow successful")
             } else {
+                print("👍 Following user...")
                 try await authService.followUser(userId: targetUserId, followerId: currentUserId)
+                print("✅ Follow successful")
             }
             
-            isFollowing.toggle()
+            await MainActor.run {
+                isFollowing.toggle()
+                debugInfo = isFollowing ? "✅ Following!" : "✅ Unfollowed!"
+                
+                // Clear debug info after delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    debugInfo = ""
+                }
+            }
             
         } catch {
-            print("Error toggling follow: \(error)")
+            print("❌ Follow error: \(error)")
+            print("📋 Error details: \(error.localizedDescription)")
+            
+            await MainActor.run {
+                errorMessage = "Follow failed: \(error.localizedDescription)"
+                showError = true
+                debugInfo = "❌ Error: \(error.localizedDescription)"
+            }
         }
         
-        isLoading = false
+        await MainActor.run {
+            isLoading = false
+        }
     }
     
     private func checkFollowStatus() async {
-        guard let currentUserId = authService.currentUser?.id else { return }
+        print("🔍 Checking follow status...")
+        
+        guard let currentUserId = authService.currentUser?.id else {
+            print("❌ No current user for follow status check")
+            await MainActor.run {
+                debugInfo = "❌ Not authenticated"
+            }
+            return
+        }
+        
+        guard !targetUserId.isEmpty else {
+            print("❌ Empty target user ID for follow status check")
+            return
+        }
+        
+        print("🔍 Checking if \(currentUserId) follows \(targetUserId)")
         
         do {
-            isFollowing = try await authService.isFollowing(userId: currentUserId, targetUserId: targetUserId)
+            let followStatus = try await authService.isFollowing(userId: currentUserId, targetUserId: targetUserId)
+            print("✅ Follow status result: \(followStatus)")
+            
+            await MainActor.run {
+                isFollowing = followStatus
+                debugInfo = followStatus ? "Already following" : "Not following"
+                
+                // Clear debug info after delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    debugInfo = ""
+                }
+            }
         } catch {
-            print("Error checking follow status: \(error)")
+            print("❌ Error checking follow status: \(error)")
+            await MainActor.run {
+                debugInfo = "❌ Status check failed"
+            }
         }
     }
 }

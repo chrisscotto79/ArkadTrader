@@ -281,3 +281,11 @@ struct ArkadColorPalette {
     static let gray800 = Color(hex: "1F2937")
     static let gray900 = Color(hex: "111827")
 }
+
+extension Color {
+    // MARK: - Additional Colors Needed for Follow Feature
+    static let arkadDark = Color(red: 20/255, green: 20/255, blue: 30/255)
+    static let arkadGreen = Color.marketGreen  // Reuse your existing marketGreen
+    static let arkadRed = Color.marketRed      // Reuse your existing marketRed
+    static let cardBackground = Color.backgroundSecondary  // Reuse your existing backgroundSecondary
+}

@@ -1,5 +1,5 @@
 // File: Core/Home/Views/SocialFeedView.swift
-// Clean Social Feed View - Real User Content Only
+// Enhanced Social Feed View with Clickable Usernames
 
 import SwiftUI
 
@@ -25,6 +25,7 @@ struct SocialFeedView: View {
                     await homeViewModel.createPost(content: content)
                 }
             }
+            .environmentObject(authService) // Pass environment object to sheets
         }
         .onAppear {
             Task {
@@ -45,7 +46,7 @@ struct SocialFeedView: View {
             Button(action: { showCreatePost = true }) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.arkadGold)
             }
         }
         .padding()
@@ -71,7 +72,9 @@ struct SocialFeedView: View {
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         ForEach(homeViewModel.posts, id: \.id) { post in
-                            UserPostCard(post: post, homeViewModel: homeViewModel)
+                            // ENHANCED: Explicitly pass environment object and add debug info
+                            EnhancedUserPostCard(post: post, homeViewModel: homeViewModel)
+                                .environmentObject(authService)
                         }
                         
                         // Load more indicator
@@ -123,15 +126,18 @@ struct SocialFeedView: View {
                     Image(systemName: "arrow.down.circle")
                         .font(.subheadline)
                 }
-                .foregroundColor(.blue)
+                .foregroundColor(.arkadGold)
                 .frame(maxWidth: .infinity)
                 .padding()
-                .background(Color.blue.opacity(0.1))
+                .background(Color.arkadGold.opacity(0.1))
                 .cornerRadius(12)
             }
         }
     }
 }
+
+// MARK: - Enhanced User Post Card with Debug Info
+
 
 // MARK: - Feed Statistics View
 struct FeedStatsView: View {
@@ -159,7 +165,7 @@ struct FeedStatsView: View {
                 Text(value)
                     .font(.headline)
                     .fontWeight(.bold)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.arkadGold)
                 
                 Text(title)
                     .font(.caption)
@@ -194,7 +200,7 @@ struct UserEngagementCard: View {
                     Spacer()
                     Text("\(homeViewModel.bookmarkedPosts.count)")
                         .fontWeight(.medium)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.arkadGold)
                 }
             }
             .font(.subheadline)
@@ -260,10 +266,10 @@ struct PostFilterView: View {
                 Text(title)
                     .font(.caption)
                     .fontWeight(.medium)
-                    .foregroundColor(isSelected ? .white : .blue)
+                    .foregroundColor(isSelected ? .white : .arkadGold)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(isSelected ? Color.blue : Color.blue.opacity(0.1))
+                    .background(isSelected ? Color.arkadGold : Color.arkadGold.opacity(0.1))
                     .cornerRadius(16)
             }
         }

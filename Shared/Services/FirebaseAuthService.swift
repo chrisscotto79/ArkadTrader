@@ -314,6 +314,27 @@ class FirebaseAuthService: ObservableObject {
     func getComments(postId: String) async throws -> [Comment] {
         return try await FirebaseServices.shared.getComments(postId: postId)
     }
+    func checkAuthState() async {
+        if let user = auth.currentUser {
+            // User is signed in, load their data
+            do {
+                if let userData = try await FirebaseServices.shared.getUserById(userId: user.uid) {
+                    await MainActor.run {
+                        self.currentUser = userData
+                        self.isAuthenticated = true
+                    }
+                }
+            } catch {
+                print("Error loading user data: \(error)")
+            }
+        } else {
+            // No user signed in
+            await MainActor.run {
+                self.currentUser = nil
+                self.isAuthenticated = false
+            }
+        }
+    }
 
     
     // MARK: - Community Management Wrapper Methods
