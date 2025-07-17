@@ -10,6 +10,7 @@ struct User: Identifiable, Codable {
     var username: String
     var fullName: String
     var bio: String?
+    var profileImageUrl: String?
     var followersCount: Int
     var followingCount: Int
     var isVerified: Bool
@@ -28,6 +29,7 @@ struct User: Identifiable, Codable {
         self.username = username.lowercased()
         self.fullName = fullName
         self.bio = nil
+        self.profileImageUrl = nil
         self.followersCount = 0
         self.followingCount = 0
         self.isVerified = false
@@ -47,6 +49,7 @@ struct User: Identifiable, Codable {
             "username": username,
             "fullName": fullName,
             "bio": bio as Any,
+            "profileImageUrl": profileImageUrl as Any,
             "followersCount": followersCount,
             "followingCount": followingCount,
             "isVerified": isVerified,
@@ -57,6 +60,7 @@ struct User: Identifiable, Codable {
             "createdAt": Timestamp(date: createdAt),
             "updatedAt": Timestamp(date: updatedAt),
             "communityIds": communityIds
+            
         ]
     }
     
@@ -70,6 +74,7 @@ struct User: Identifiable, Codable {
         var user = User(id: id, email: email, username: username, fullName: fullName)
         
         user.bio = data["bio"] as? String
+        user.profileImageUrl = data["profileImageUrl"] as? String
         user.followersCount = data["followersCount"] as? Int ?? 0
         user.followingCount = data["followingCount"] as? Int ?? 0
         user.isVerified = data["isVerified"] as? Bool ?? false

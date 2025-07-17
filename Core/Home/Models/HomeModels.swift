@@ -119,6 +119,8 @@ enum PostType: String, CaseIterable, Codable {
     }
 }
 
+
+
 // MARK: - Comment Model
 struct Comment: Identifiable, Codable, Equatable {
     let id: String
@@ -396,6 +398,333 @@ enum ShareOption: String, CaseIterable {
         case .shareToStory: return "plus.circle"
         case .shareExternal: return "square.and.arrow.up"
         }
+    }
+}
+enum PostFilter: Equatable, Hashable {
+    case all
+    case trades
+    case analysis
+    case questions
+    case news
+    case hashtag(String)
+    case ticker(String)
+    case user(String)
+    
+    var displayName: String {
+        switch self {
+        case .all: return "All"
+        case .trades: return "Trades"
+        case .analysis: return "Analysis"
+        case .questions: return "Questions"
+        case .news: return "News"
+        case .hashtag(let tag): return "#\(tag)"
+        case .ticker(let symbol): return "$\(symbol)"
+        case .user(let username): return "@\(username)"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .trades: return "chart.line.uptrend.xyaxis"
+        case .analysis: return "chart.bar.doc.horizontal"
+        case .questions: return "questionmark.circle"
+        case .news: return "newspaper"
+        case .hashtag: return "number"
+        case .ticker: return "dollarsign.circle"
+        case .user: return "person.circle"
+        }
+    }
+    
+    func matches(post: Post) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .trades:
+            return post.postType == .tradeResult
+        case .analysis:
+            return post.postType == .marketAnalysis
+        case .questions:
+            return post.postType == .question
+        case .news:
+            return post.postType == .news
+        case .hashtag(let tag):
+            return post.hashtags.contains(tag.lowercased())
+        case .ticker(let symbol):
+            return post.tickerSymbols.contains(symbol.uppercased())
+        case .user(let username):
+            return post.authorUsername.lowercased() == username.lowercased()
+        }
+    }
+}
+
+// MARK: - PostType Enum
+enum PostType: String, CaseIterable, Codable {
+    case text = "text"
+    case tradeResult = "tradeResult"
+    case marketAnalysis = "marketAnalysis"
+    case question = "question"
+    case news = "news"
+    
+    var displayName: String {
+        switch self {
+        case .text: return "Post"
+        case .tradeResult: return "Trade Result"
+        case .marketAnalysis: return "Market Analysis"
+        case .question: return "Question"
+        case .news: return "News"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .text: return "text.bubble"
+        case .tradeResult: return "chart.line.uptrend.xyaxis"
+        case .marketAnalysis: return "chart.bar.doc.horizontal"
+        case .question: return "questionmark.circle"
+        case .news: return "newspaper"
+        }
+    }
+    
+    var color: String {
+        switch self {
+        case .text: return "blue"
+        case .tradeResult: return "green"
+        case .marketAnalysis: return "orange"
+        case .question: return "purple"
+        case .news: return "red"
+        }
+    }
+    
+    var placeholder: String {
+        switch self {
+        case .text:
+            return "What's on your mind? Share your thoughts with the community..."
+        case .tradeResult:
+            return "Share your latest trade results. Include ticker, entry/exit prices, and what you learned..."
+        case .marketAnalysis:
+            return "Share your market analysis and insights. What do you see in the charts or fundamentals?"
+        case .question:
+            return "Ask the community a question about trading, markets, or strategies..."
+        case .news:
+            return "Share important market news or updates..."
+        }
+    }
+}
+
+// MARK: - CommentSortOption Enum
+enum CommentSortOption: String, CaseIterable {
+    case recent = "recent"
+    case top = "top"
+    case oldest = "oldest"
+    
+    var displayName: String {
+        switch self {
+        case .recent: return "Recent"
+        case .top: return "Top"
+        case .oldest: return "Oldest"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .recent: return "clock"
+        case .top: return "arrow.up.circle"
+        case .oldest: return "clock.arrow.2.circlepath"
+        }
+    }
+}
+
+// MARK: - ShareOption Enum
+enum ShareOption: String, CaseIterable {
+    case copyLink = "copy_link"
+    case shareToStory = "share_to_story"
+    case shareToTwitter = "share_to_twitter"
+    case shareToLinkedIn = "share_to_linkedin"
+    case shareToTelegram = "share_to_telegram"
+    case shareToWhatsApp = "share_to_whatsapp"
+    case shareToEmail = "share_to_email"
+    case shareToMessages = "share_to_messages"
+    
+    var displayName: String {
+        switch self {
+        case .copyLink: return "Copy Link"
+        case .shareToStory: return "Share to Story"
+        case .shareToTwitter: return "Share to Twitter"
+        case .shareToLinkedIn: return "Share to LinkedIn"
+        case .shareToTelegram: return "Share to Telegram"
+        case .shareToWhatsApp: return "Share to WhatsApp"
+        case .shareToEmail: return "Share via Email"
+        case .shareToMessages: return "Share to Messages"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .copyLink: return "link"
+        case .shareToStory: return "camera.circle"
+        case .shareToTwitter: return "at"
+        case .shareToLinkedIn: return "briefcase"
+        case .shareToTelegram: return "paperplane"
+        case .shareToWhatsApp: return "message"
+        case .shareToEmail: return "envelope"
+        case .shareToMessages: return "message.fill"
+        }
+    }
+    
+    var color: String {
+        switch self {
+        case .copyLink: return "blue"
+        case .shareToStory: return "purple"
+        case .shareToTwitter: return "blue"
+        case .shareToLinkedIn: return "blue"
+        case .shareToTelegram: return "blue"
+        case .shareToWhatsApp: return "green"
+        case .shareToEmail: return "gray"
+        case .shareToMessages: return "blue"
+        }
+    }
+}
+
+// MARK: - EngagementStats Struct
+struct EngagementStats {
+    let totalPosts: Int
+    let totalLikes: Int
+    let totalComments: Int
+    let totalShares: Int
+    let totalViews: Int
+    let averageEngagement: Double
+    let topHashtags: [String]
+    let topTickers: [String]
+    
+    init(totalPosts: Int, totalLikes: Int, totalComments: Int, totalShares: Int, totalViews: Int, topHashtags: [String] = [], topTickers: [String] = []) {
+        self.totalPosts = totalPosts
+        self.totalLikes = totalLikes
+        self.totalComments = totalComments
+        self.totalShares = totalShares
+        self.totalViews = totalViews
+        self.topHashtags = topHashtags
+        self.topTickers = topTickers
+        
+        // Calculate average engagement
+        let totalEngagement = totalLikes + totalComments + totalShares
+        self.averageEngagement = totalPosts > 0 ? Double(totalEngagement) / Double(totalPosts) : 0.0
+    }
+}
+
+// MARK: - FinnhubNewsResponse Struct
+struct FinnhubNewsResponse: Codable {
+    let headline: String
+    let summary: String
+    let url: String
+    let image: String
+    let source: String
+    let datetime: Int
+    let category: String
+    let related: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case headline, summary, url, image, source, datetime, category, related
+    }
+}
+
+// MARK: - PostReport Struct
+struct PostReport: Codable {
+    let id: String
+    let postId: String
+    let reportedBy: String
+    let reason: ReportReason
+    let additionalDetails: String?
+    let createdAt: Date
+    let status: ReportStatus
+    
+    enum ReportReason: String, CaseIterable, Codable {
+        case spam = "spam"
+        case harassment = "harassment"
+        case inappropriateContent = "inappropriate_content"
+        case misinformation = "misinformation"
+        case copyrightViolation = "copyright_violation"
+        case other = "other"
+        
+        var displayName: String {
+            switch self {
+            case .spam: return "Spam"
+            case .harassment: return "Harassment"
+            case .inappropriateContent: return "Inappropriate Content"
+            case .misinformation: return "Misinformation"
+            case .copyrightViolation: return "Copyright Violation"
+            case .other: return "Other"
+            }
+        }
+    }
+    
+    enum ReportStatus: String, CaseIterable, Codable {
+        case pending = "pending"
+        case reviewed = "reviewed"
+        case resolved = "resolved"
+        case dismissed = "dismissed"
+        
+        var displayName: String {
+            switch self {
+            case .pending: return "Pending"
+            case .reviewed: return "Reviewed"
+            case .resolved: return "Resolved"
+            case .dismissed: return "Dismissed"
+            }
+        }
+    }
+}
+
+// MARK: - ActivityItem Struct (for compatibility)
+struct ActivityItem: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let username: String
+    let activityType: ActivityType
+    let content: String
+    let relatedId: String?
+    let createdAt: Date
+    
+    init(id: String = UUID().uuidString, userId: String, username: String, activityType: ActivityType, content: String, relatedId: String? = nil, createdAt: Date = Date()) {
+        self.id = id
+        self.userId = userId
+        self.username = username
+        self.activityType = activityType
+        self.content = content
+        self.relatedId = relatedId
+        self.createdAt = createdAt
+    }
+    
+    func toFirestore() -> [String: Any] {
+        return [
+            "userId": userId,
+            "username": username,
+            "activityType": activityType.rawValue,
+            "content": content,
+            "relatedId": relatedId as Any,
+            "createdAt": Timestamp(date: createdAt)
+        ]
+    }
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> ActivityItem {
+        guard let userId = data["userId"] as? String,
+              let username = data["username"] as? String,
+              let activityTypeString = data["activityType"] as? String,
+              let activityType = ActivityType(rawValue: activityTypeString),
+              let content = data["content"] as? String,
+              let createdAtTimestamp = data["createdAt"] as? Timestamp else {
+            throw FirestoreError.invalidData
+        }
+        
+        return ActivityItem(
+            id: id,
+            userId: userId,
+            username: username,
+            activityType: activityType,
+            content: content,
+            relatedId: data["relatedId"] as? String,
+            createdAt: createdAtTimestamp.dateValue()
+        )
     }
 }
 

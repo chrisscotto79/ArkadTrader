@@ -13,6 +13,10 @@ struct Post: Identifiable, Codable {
     var commentsCount: Int
     var createdAt: Date
     var postType: PostType
+    var hashtags: [String] = []
+    var tickerSymbols: [String] = []
+    var sharesCount: Int = 0
+    var authorProfileImageUrl: String?
 
     // Initializer
     init(content: String, authorId: String, authorUsername: String) {
@@ -22,8 +26,12 @@ struct Post: Identifiable, Codable {
         self.authorUsername = authorUsername
         self.likesCount = 0
         self.commentsCount = 0
+        self.sharesCount = 0  // Add this
         self.createdAt = Date()
         self.postType = .text
+        self.hashtags = []  // Add this
+        self.tickerSymbols = []  // Add this
+        self.authorProfileImageUrl = nil  // Add this
     }
 
     // Firebase conversion

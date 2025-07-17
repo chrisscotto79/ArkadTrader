@@ -658,15 +658,3 @@ struct OtherUserGroupCard: View {
     }
 }
 
-#Preview {
-    // Create a sample user for preview
-    let sampleUser = User(
-        id: "sample_id",
-        email: "sample@example.com",
-        username: "sampleuser",
-        fullName: "Sample User"
-    )
-    
-    OtherUserProfileView(user: sampleUser)
-        .environmentObject(FirebaseAuthService.shared)
-}

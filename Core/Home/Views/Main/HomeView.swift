@@ -2,6 +2,7 @@
 // Main HomeView orchestrating all tabs and functionality
 
 import SwiftUI
+import FirebaseFirestore
 
 struct HomeView: View {
     @EnvironmentObject var authService: FirebaseAuthService
@@ -354,7 +355,7 @@ struct NotificationsView: View {
         }
     }
     
-    private func handleNotificationTap(_ notification: AppNotification) {
+    private func handleNotificationTap(_ notification: UserNotification) {
         Task {
             // Mark as read
             if !notification.isRead {
@@ -363,16 +364,16 @@ struct NotificationsView: View {
             
             // Navigate based on notification type
             switch notification.type {
-            case .like, .comment, .reply:
-                if let postId = notification.relatedPostId,
-                   let post = homeViewModel.posts.first(where: { $0.id == postId }) {
+            case "like", "comment", "reply":
+                if let postData = notification.data["postId"] as? String,
+                   let post = homeViewModel.posts.first(where: { $0.id == postData }) {
                     homeViewModel.showPostDetail(post: post)
                 }
-            case .follow, .mention:
-                if let userId = notification.relatedUserId {
-                    homeViewModel.showUserProfile(userId: userId)
+            case "follow", "mention":
+                if let userData = notification.data["userId"] as? String {
+                    homeViewModel.showUserProfile(userId: userData)
                 }
-            case .tradeAlert, .marketNews:
+            default:
                 // Handle other notification types
                 break
             }
@@ -380,11 +381,82 @@ struct NotificationsView: View {
             dismiss()
         }
     }
+    struct NotificationRowView: View {
+        let notification: UserNotification
+        @EnvironmentObject var homeViewModel: HomeViewModel
+        
+        var body: some View {
+            HStack(spacing: 12) {
+                // Notification icon
+                ZStack {
+                    Circle()
+                        .fill(notificationColor.opacity(0.1))
+                        .frame(width: 40, height: 40)
+                    
+                    Image(systemName: getNotificationIcon(for: notification.type))
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(notificationColor)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(notification.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text(notification.body)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                    
+                    Text(formatTimeAgo(notification.createdAt))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                if !notification.isRead {
+                    Circle()
+                        .fill(Color.arkadGold)
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .padding(.vertical, 8)
+            .background(notification.isRead ? Color.clear : Color.arkadGold.opacity(0.05))
+        }
+        
+        private var notificationColor: Color {
+            switch notification.type {
+            case "like": return .red
+            case "comment": return .blue
+            case "follow": return .arkadGold
+            case "mention": return .purple
+            default: return .gray
+            }
+        }
+        
+        private func getNotificationIcon(for type: String) -> String {
+            switch type {
+            case "like": return "heart.fill"
+            case "comment": return "message.fill"
+            case "follow": return "person.badge.plus.fill"
+            case "mention": return "at.circle.fill"
+            default: return "bell.fill"
+            }
+        }
+        
+        private func formatTimeAgo(_ date: Date) -> String {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            return formatter.localizedString(for: date, relativeTo: Date())
+        }
+    }
 }
 
 // MARK: - Notification Row View
 struct NotificationRowView: View {
-    let notification: AppNotification
+    let notification: UserNotification
     @EnvironmentObject var homeViewModel: HomeViewModel
     
     var body: some View {
@@ -429,13 +501,11 @@ struct NotificationRowView: View {
     }
     
     private var notificationColor: Color {
-        switch notification.type.color {
-        case "red": return .red
-        case "blue": return .blue
-        case "green": return .green
-        case "orange": return .orange
-        case "purple": return .purple
-        case "arkadGold": return .arkadGold
+        switch notification.type {
+        case "like": return .red
+        case "comment": return .blue
+        case "follow": return .arkadGold
+        case "mention": return .purple
         default: return .gray
         }
     }
@@ -469,136 +539,3 @@ struct EmptyNotificationsView: View {
     }
 }
 
-// MARK: - Other User Profile View (Placeholder)
-struct OtherUserProfileView: View {
-    let user: User
-    @EnvironmentObject var authService: FirebaseAuthService
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        NavigationView {
-            VStack {
-                // Profile header
-                VStack(spacing: 16) {
-                    AsyncImage(url: URL(string: user.profileImageUrl ?? "https://avatar.iran.liara.run/username?username=\(user.username)")) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        Circle()
-                            .fill(Color.arkadGold.opacity(0.2))
-                            .overlay(
-                                Text(String(user.username.prefix(1)).uppercased())
-                                    .font(.largeTitle)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.arkadGold)
-                            )
-                    }
-                    .frame(width: 80, height: 80)
-                    .clipShape(Circle())
-                    
-                    VStack(spacing: 4) {
-                        Text("@\(user.username)")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        
-                        if let bio = user.bio {
-                            Text(bio)
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                    }
-                    
-                    // Follow button
-                    FollowButton(userId: user.id, username: user.username)
-                        .environmentObject(authService)
-                }
-                .padding()
-                
-                Spacer()
-                
-                Text("User profile content coming soon...")
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Follow Button (Placeholder)
-struct FollowButton: View {
-    let userId: String
-    let username: String
-    @EnvironmentObject var authService: FirebaseAuthService
-    @State private var isFollowing = false
-    @State private var isLoading = false
-    
-    var body: some View {
-        Button(action: {
-            toggleFollow()
-        }) {
-            HStack {
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .foregroundColor(.white)
-                } else {
-                    Text(isFollowing ? "Following" : "Follow")
-                        .fontWeight(.semibold)
-                }
-            }
-            .foregroundColor(isFollowing ? .primary : .white)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isFollowing ? Color.secondary.opacity(0.2) : Color.arkadGold)
-            )
-        }
-        .disabled(isLoading)
-        .onAppear {
-            checkFollowStatus()
-        }
-    }
-    
-    private func checkFollowStatus() {
-        // TODO: Check if current user follows this user
-        // isFollowing = ...
-    }
-    
-    private func toggleFollow() {
-        isLoading = true
-        
-        Task {
-            do {
-                if isFollowing {
-                    // TODO: Implement unfollow
-                    // try await authService.unfollowUser(userId: userId)
-                } else {
-                    // TODO: Implement follow
-                    // try await authService.followUser(userId: userId)
-                }
-                
-                await MainActor.run {
-                    isFollowing.toggle()
-                    isLoading = false
-                }
-            } catch {
-                await MainActor.run {
-                    isLoading = false
-                }
-            }
-        }
-    }
-}

@@ -180,7 +180,7 @@ struct Trade: Identifiable, Codable {
               let quantity = data["quantity"] as? Int,
               let entryDateTimestamp = data["entryDate"] as? Timestamp,
               let isOpen = data["isOpen"] as? Bool else {
-            throw FirestoreError.invalidData
+            throw NSError(domain: "TradeDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid trade data"])
         }
 
         var trade = Trade(ticker: ticker, tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId)

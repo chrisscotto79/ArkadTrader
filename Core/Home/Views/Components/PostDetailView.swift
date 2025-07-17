@@ -9,294 +9,120 @@ struct PostDetailView: View {
     @EnvironmentObject var homeViewModel: HomeViewModel
     @Environment(\.dismiss) var dismiss
     
-    @State private var comments: [Comment] = []
-    @State private var newComment = ""
-    @State private var replyingTo: Comment?
-    @State private var isLoadingComments = true
-    @State private var isSubmittingComment = false
-    @State private var selectedCommentSort: CommentSortOption = .recent
-    @State private var showSortOptions = false
-    @State private var commentLikes: Set<String> = []
-    
-    @FocusState private var isCommentFieldFocused: Bool
-    
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Post content
-                ScrollView {
-                    VStack(spacing: 0) {
-                        // Main post card (non-interactive version)
-                        PostDisplayCard(post: post)
-                            .environmentObject(authService)
-                            .environmentObject(homeViewModel)
-                        
-                        // Comments section
-                        commentsSection
-                    }
-                }
-                
-                // Comment input bar
-                commentInputBar
-            }
-            .navigationTitle("Post")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Back") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        // TODO: Share post or more options
-                    }) {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                }
-            }
-        }
-        .onAppear {
-            loadComments()
-        }
-    }
-    
-    // MARK: - Comments Section
-    private var commentsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Comments header with sort options
-            commentsHeader
-            
-            // Comments list
-            if isLoadingComments {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                    Text("Loading comments...")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
-            } else if comments.isEmpty {
-                EmptyCommentsView()
-            } else {
-                LazyVStack(spacing: 16) {
-                    ForEach(topLevelComments, id: \.id) { comment in
-                        CommentView(
-                            comment: comment,
-                            replies: getReplies(for: comment.id),
-                            onReply: { comment in
-                                replyingTo = comment
-                                isCommentFieldFocused = true
-                            },
-                            onLike: { commentId in
-                                Task {
-                                    await toggleCommentLike(commentId: commentId)
-                                }
-                            },
-                            onUserTap: { userId in
-                                homeViewModel.showUserProfile(userId: userId)
-                            }
-                        )
-                        .environmentObject(authService)
-                    }
-                }
-                .padding(.horizontal)
-            }
-        }
-        .padding(.top, 20)
-    }
-    
-    // MARK: - Comments Header
-    private var commentsHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Comments")
-                    .font(.headline)
-                    .fontWeight(.bold)
-                
-                Text("\(comments.count) comment\(comments.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            // Sort button
-            Button(action: {
-                showSortOptions = true
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: selectedCommentSort.icon)
-                        .font(.caption)
-                    Text(selectedCommentSort.displayName)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                }
-                .foregroundColor(.arkadGold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.arkadGold.opacity(0.1))
-                .cornerRadius(6)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.horizontal)
-        .confirmationDialog("Sort Comments", isPresented: $showSortOptions, titleVisibility: .visible) {
-            ForEach(CommentSortOption.allCases, id: \.self) { sortOption in
-                Button(sortOption.displayName) {
-                    selectedCommentSort = sortOption
-                    sortComments()
-                }
-            }
-        }
-    }
-    
-    // MARK: - Comment Input Bar
-    private var commentInputBar: some View {
-        VStack(spacing: 0) {
-            Divider()
-            
-            VStack(spacing: 8) {
-                // Reply indicator
-                if let replyingTo = replyingTo {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Post header
                     HStack {
-                        Text("Replying to @\(replyingTo.authorUsername)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        AsyncImage(url: URL(string: post.authorProfileImageUrl ?? "")) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            Circle()
+                                .fill(Color.arkadGold.opacity(0.3))
+                                .overlay(
+                                    Text(String(post.authorUsername.prefix(1)).uppercased())
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.arkadGold)
+                                )
+                        }
+                        .frame(width: 40, height: 40)
+                        .clipShape(Circle())
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("@\(post.authorUsername)")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            
+                            Text(post.createdAt.timeAgoDisplay)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         
                         Spacer()
                         
-                        Button("Cancel") {
-                            self.replyingTo = nil
-                            isCommentFieldFocused = false
+                        Button("Done") {
+                            dismiss()
                         }
-                        .font(.caption)
                         .foregroundColor(.arkadGold)
                     }
                     .padding(.horizontal)
-                    .padding(.top, 8)
-                }
-                
-                // Comment input
-                HStack(spacing: 12) {
-                    // User avatar
-                    AsyncImage(url: URL(string: authService.currentUser?.profileImageUrl ?? "")) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        Circle()
-                            .fill(Color.arkadGold.opacity(0.2))
-                            .overlay(
-                                Text(String(authService.currentUser?.username.prefix(1) ?? "U").uppercased())
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.arkadGold)
-                            )
-                    }
-                    .frame(width: 32, height: 32)
-                    .clipShape(Circle())
                     
-                    // Text field
-                    HStack {
-                        TextField(replyingTo != nil ? "Reply to @\(replyingTo!.authorUsername)..." : "Add a comment...", text: $newComment, axis: .vertical)
-                            .lineLimit(1...4)
-                            .focused($isCommentFieldFocused)
+                    // Post content
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(post.content)
+                            .font(.body)
+                            .lineLimit(nil)
                         
-                        if !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button(action: submitComment) {
-                                if isSubmittingComment {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                        .frame(width: 20, height: 20)
-                                } else {
-                                    Image(systemName: "arrow.up.circle.fill")
-                                        .font(.title2)
+                        // Hashtags and tickers
+                        if !post.hashtags.isEmpty || !post.tickerSymbols.isEmpty {
+                            HStack {
+                                ForEach(post.hashtags, id: \.self) { hashtag in
+                                    Text("#\(hashtag)")
+                                        .font(.caption)
                                         .foregroundColor(.arkadGold)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.arkadGold.opacity(0.1))
+                                        .cornerRadius(8)
+                                }
+                                
+                                ForEach(post.tickerSymbols, id: \.self) { ticker in
+                                    Text("$\(ticker)")
+                                        .font(.caption)
+                                        .foregroundColor(.green)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.green.opacity(0.1))
+                                        .cornerRadius(8)
                                 }
                             }
-                            .disabled(isSubmittingComment)
+                        }
+                        
+                        // Engagement stats
+                        HStack(spacing: 20) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "heart")
+                                Text("\(post.likesCount)")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            
+                            HStack(spacing: 4) {
+                                Image(systemName: "message")
+                                Text("\(post.commentsCount)")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("\(post.sharesCount)")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            
+                            Spacer()
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(20)
+                    .padding(.horizontal)
+                    
+                    Divider()
+                    
+                    // TODO: Add comments section here
+                    VStack {
+                        Text("Comments coming soon...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .padding()
+                    }
+                    
+                    Spacer(minLength: 100)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
             }
-        }
-        .background(Color(.systemBackground))
-    }
-    
-    // MARK: - Helper Properties
-    private var topLevelComments: [Comment] {
-        return comments.filter { $0.parentCommentId == nil }
-    }
-    
-    private func getReplies(for commentId: String) -> [Comment] {
-        return comments.filter { $0.parentCommentId == commentId }
-    }
-    
-    // MARK: - Helper Methods
-    private func loadComments() {
-        Task {
-            let fetchedComments = await homeViewModel.loadComments(for: post.id)
-            await MainActor.run {
-                comments = fetchedComments
-                sortComments()
-                isLoadingComments = false
-            }
-        }
-    }
-    
-    private func sortComments() {
-        switch selectedCommentSort {
-        case .recent:
-            comments.sort { $0.createdAt > $1.createdAt }
-        case .top:
-            comments.sort { $0.likesCount > $1.likesCount }
-        case .oldest:
-            comments.sort { $0.createdAt < $1.createdAt }
-        }
-    }
-    
-    private func submitComment() {
-        guard !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        
-        isSubmittingComment = true
-        
-        Task {
-            await homeViewModel.createComment(
-                postId: post.id,
-                content: newComment,
-                parentCommentId: replyingTo?.id
-            )
-            
-            await MainActor.run {
-                newComment = ""
-                replyingTo = nil
-                isSubmittingComment = false
-                isCommentFieldFocused = false
-                
-                // Reload comments
-                loadComments()
-            }
-        }
-    }
-    
-    private func toggleCommentLike(commentId: String) async {
-        await homeViewModel.toggleCommentLike(commentId: commentId)
-        
-        // Update local state
-        if commentLikes.contains(commentId) {
-            commentLikes.remove(commentId)
-        } else {
-            commentLikes.insert(commentId)
+            .navigationBarHidden(true)
         }
     }
 }

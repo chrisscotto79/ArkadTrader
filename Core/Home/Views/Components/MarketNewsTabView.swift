@@ -1,145 +1,13 @@
-//
-//  MarketNewsTabView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/17/25.
-//
-
-
-// File: Core/Home/Views/Components/MarketNewsComponents.swift
-// Market news components with ticker interactions and article viewing
+// File: Core/Home/Views/Components/MarketNewsTabView.swift
+// Simple MarketNewsTabView for HomeView
 
 import SwiftUI
-import SafariServices
 
-// MARK: - Market News Tab View
 struct MarketNewsTabView: View {
     @EnvironmentObject var homeViewModel: HomeViewModel
-    @State private var selectedArticle: MarketNewsArticle?
-    @State private var showingArticleDetail = false
-    @State private var showingWebView = false
-    @State private var selectedURL: URL?
     @State private var scrollToTopId = UUID()
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Market overview header
-            marketOverviewSection
-            
-            // Main news content
-            newsContent
-        }
-        .refreshable {
-            await homeViewModel.refreshMarketNews()
-        }
-        .sheet(isPresented: $showingArticleDetail) {
-            if let article = selectedArticle {
-                ArticleDetailView(article: article)
-                    .environmentObject(homeViewModel)
-            }
-        }
-        .sheet(isPresented: $showingWebView) {
-            if let url = selectedURL {
-                SafariView(url: url)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ScrollToTop"))) { _ in
-            withAnimation {
-                scrollToTopId = UUID()
-            }
-        }
-    }
-    
-    // MARK: - Market Overview Section
-    private var marketOverviewSection: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("Market Overview")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
-                    Text("Live")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.green)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.green.opacity(0.1))
-                .cornerRadius(4)
-            }
-            .padding(.horizontal, 16)
-            
-            // Market indices
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    // Mock market data - replace with real data
-                    MarketIndexCard(
-                        name: "S&P 500",
-                        symbol: "SPX",
-                        value: "4,567.89",
-                        change: "+23.45",
-                        changePercent: "+0.52%",
-                        isPositive: true
-                    ) {
-                        homeViewModel.applyTickerFilter("SPX")
-                    }
-                    
-                    MarketIndexCard(
-                        name: "NASDAQ",
-                        symbol: "IXIC",
-                        value: "14,234.56",
-                        change: "-45.67",
-                        changePercent: "-0.32%",
-                        isPositive: false
-                    ) {
-                        homeViewModel.applyTickerFilter("IXIC")
-                    }
-                    
-                    MarketIndexCard(
-                        name: "DOW",
-                        symbol: "DJI",
-                        value: "34,876.23",
-                        change: "+156.78",
-                        changePercent: "+0.45%",
-                        isPositive: true
-                    ) {
-                        homeViewModel.applyTickerFilter("DJI")
-                    }
-                    
-                    MarketIndexCard(
-                        name: "VIX",
-                        symbol: "VIX",
-                        value: "18.45",
-                        change: "-1.23",
-                        changePercent: "-6.26%",
-                        isPositive: false
-                    ) {
-                        homeViewModel.applyTickerFilter("VIX")
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
-        .padding(.vertical, 16)
-        .background(Color(.systemBackground))
-        .overlay(
-            Rectangle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(height: 1),
-            alignment: .bottom
-        )
-    }
-    
-    // MARK: - News Content
-    private var newsContent: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
@@ -228,483 +96,188 @@ struct MarketNewsTabView: View {
                 .foregroundColor(.primary)
                 .padding(.horizontal, 16)
             
-            ForEach(homeViewModel.getRegularNews(), id: \.id) { article in
-                NewsArticleCard(article: article) {
-                    handleArticleTap(article)
+            LazyVStack(spacing: 12) {
+                ForEach(homeViewModel.getRegularNews(), id: \.id) { article in
+                    NewsCard(article: article) {
+                        handleArticleTap(article)
+                    }
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
             }
         }
     }
     
     // MARK: - Helper Methods
     private func handleArticleTap(_ article: MarketNewsArticle) {
-        selectedArticle = article
-        showingArticleDetail = true
+        homeViewModel.selectedArticle = article
+        // TODO: Navigate to article detail or open in Safari
     }
 }
 
-// MARK: - Market Index Card
-struct MarketIndexCard: View {
-    let name: String
-    let symbol: String
-    let value: String
-    let change: String
-    let changePercent: String
-    let isPositive: Bool
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(name)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    Text(symbol)
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundColor(.arkadGold)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.arkadGold.opacity(0.1))
-                        .cornerRadius(3)
-                }
-                
-                Text(value)
-                    .font(.headline)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                HStack(spacing: 4) {
-                    Image(systemName: isPositive ? "arrow.up" : "arrow.down")
-                        .font(.caption2)
-                        .foregroundColor(isPositive ? .green : .red)
-                    
-                    Text(change)
-                        .font(.caption)
-                        .foregroundColor(isPositive ? .green : .red)
-                    
-                    Text(changePercent)
-                        .font(.caption)
-                        .foregroundColor(isPositive ? .green : .red)
-                }
-            }
-            .padding()
-            .frame(width: 130)
-            .background(Color.white)
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - Trending News Card
+// MARK: - Supporting Views
 struct TrendingNewsCard: View {
     let article: MarketNewsArticle
     let onTap: () -> Void
-    @State private var imageLoadError = false
     
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 12) {
-                // Article image
+            VStack(alignment: .leading, spacing: 8) {
                 AsyncImage(url: URL(string: article.imageUrl ?? "")) { image in
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 280, height: 140)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 } placeholder: {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.arkadGold.opacity(0.1))
-                        .frame(width: 280, height: 140)
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.3))
                         .overlay(
-                            VStack {
-                                Image(systemName: "newspaper")
-                                    .font(.title)
-                                    .foregroundColor(.arkadGold.opacity(0.6))
-                                
-                                if imageLoadError {
-                                    Text("Image unavailable")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
+                            Image(systemName: "newspaper")
+                                .foregroundColor(.gray)
                         )
                 }
-                .onAppear {
-                    if article.imageUrl == nil {
-                        imageLoadError = true
-                    }
-                }
+                .frame(width: 200, height: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    // Source and time
-                    HStack {
-                        if let source = article.source {
-                            Text(source.uppercased())
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.arkadGold)
-                        }
-                        
-                        Spacer()
-                        
-                        Text(formatTimeAgo(article.publishedUtc))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    // Title
+                VStack(alignment: .leading, spacing: 4) {
                     Text(article.title)
-                        .font(.subheadline)
+                        .font(.headline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.primary)
                         .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                        .foregroundColor(.primary)
                     
-                    // Summary
-                    if let summary = article.summary, !summary.isEmpty {
-                        Text(summary)
+                    if let source = article.source {
+                        Text(source)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
                     }
                     
-                    // Ticker symbols
-                    if !article.tickerSymbols.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(article.tickerSymbols.prefix(3), id: \.self) { ticker in
-                                    Text(ticker)
-                                        .font(.caption2)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.blue)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(Color.blue.opacity(0.1))
-                                        .cornerRadius(3)
-                                }
-                            }
-                        }
-                    }
+                    Text(article.publishedUtc.timeAgoDisplay)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .frame(width: 280, alignment: .leading)
+                .frame(width: 200, alignment: .leading)
             }
-            .padding()
-            .background(Color.white)
-            .cornerRadius(16)
-            .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
-    private func formatTimeAgo(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
 }
 
-// MARK: - News Article Card
-struct NewsArticleCard: View {
+struct NewsCard: View {
     let article: MarketNewsArticle
     let onTap: () -> Void
-    @State private var imageLoadError = false
     
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Article image
                 AsyncImage(url: URL(string: article.imageUrl ?? "")) { image in
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 80, height: 80)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 } placeholder: {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.arkadGold.opacity(0.1))
-                        .frame(width: 80, height: 80)
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.3))
                         .overlay(
                             Image(systemName: "newspaper")
-                                .font(.title3)
-                                .foregroundColor(.arkadGold.opacity(0.6))
+                                .foregroundColor(.gray)
                         )
                 }
-                .onAppear {
-                    if article.imageUrl == nil {
-                        imageLoadError = true
-                    }
-                }
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 
                 VStack(alignment: .leading, spacing: 6) {
-                    // Source and time
+                    Text(article.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(3)
+                        .foregroundColor(.primary)
+                    
+                    if let description = article.description {
+                        Text(description)
+                            .font(.caption)
+                            .lineLimit(2)
+                            .foregroundColor(.secondary)
+                    }
+                    
                     HStack {
                         if let source = article.source {
-                            Text(source.uppercased())
-                                .font(.caption2)
-                                .fontWeight(.semibold)
+                            Text(source)
+                                .font(.caption)
                                 .foregroundColor(.arkadGold)
                         }
                         
                         Spacer()
                         
-                        Text(formatTimeAgo(article.publishedUtc))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    // Title
-                    Text(article.title)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    
-                    // Summary
-                    if let summary = article.summary, !summary.isEmpty {
-                        Text(summary)
+                        Text(article.publishedUtc.timeAgoDisplay)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
                     }
-                    
-                    // Ticker symbols
-                    if !article.tickerSymbols.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(article.tickerSymbols.prefix(3), id: \.self) { ticker in
-                                    Text(ticker)
-                                        .font(.caption2)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.blue)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(Color.blue.opacity(0.1))
-                                        .cornerRadius(3)
-                                }
-                                
-                                if article.tickerSymbols.count > 3 {
-                                    Text("+\(article.tickerSymbols.count - 3)")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                    }
-                    
-                    Spacer()
                 }
                 
                 Spacer()
             }
             .padding()
-            .background(Color.white)
+            .background(Color(.systemBackground))
             .cornerRadius(12)
-            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
-    private func formatTimeAgo(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
 }
 
-// MARK: - Article Detail View
-struct ArticleDetailView: View {
-    let article: MarketNewsArticle
-    @EnvironmentObject var homeViewModel: HomeViewModel
-    @Environment(\.dismiss) var dismiss
-    @State private var showingOriginalArticle = false
+// MARK: - Loading and Empty States
+struct LoadingView: View {
+    let message: String
     
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Header image
-                    if let imageUrl = article.imageUrl {
-                        AsyncImage(url: URL(string: imageUrl)) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(maxHeight: 200)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                        } placeholder: {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.arkadGold.opacity(0.1))
-                                .frame(height: 200)
-                                .overlay(
-                                    ProgressView()
-                                        .tint(.arkadGold)
-                                )
-                        }
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Source and date
-                        HStack {
-                            if let source = article.source {
-                                Text(source.uppercased())
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.arkadGold)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.arkadGold.opacity(0.1))
-                                    .cornerRadius(4)
-                            }
-                            
-                            Spacer()
-                            
-                            Text(article.publishedUtc.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        // Title
-                        Text(article.title)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                        
-                        // Summary/Description
-                        if let description = article.description ?? article.summary {
-                            Text(description)
-                                .font(.body)
-                                .foregroundColor(.primary)
-                                .lineSpacing(4)
-                        }
-                        
-                        // Ticker symbols
-                        if !article.tickerSymbols.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Related Symbols")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
-                                
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 8) {
-                                        ForEach(article.tickerSymbols, id: \.self) { ticker in
-                                            Button(action: {
-                                                homeViewModel.applyTickerFilter(ticker)
-                                                dismiss()
-                                            }) {
-                                                Text(ticker)
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                                    .foregroundColor(.blue)
-                                                    .padding(.horizontal, 8)
-                                                    .padding(.vertical, 4)
-                                                    .background(Color.blue.opacity(0.1))
-                                                    .cornerRadius(8)
-                                            }
-                                            .buttonStyle(PlainButtonStyle())
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Keywords
-                        if !article.keywords.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Keywords")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
-                                
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 8) {
-                                        ForEach(article.keywords, id: \.self) { keyword in
-                                            Text(keyword)
-                                                .font(.caption)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(Color.secondary.opacity(0.1))
-                                                .foregroundColor(.secondary)
-                                                .cornerRadius(8)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Read full article button
-                        if let articleUrl = article.articleUrl {
-                            Button(action: {
-                                showingOriginalArticle = true
-                            }) {
-                                HStack {
-                                    Text("Read Full Article")
-                                        .fontWeight(.medium)
-                                    
-                                    Spacer()
-                                    
-                                    Image(systemName: "arrow.up.right")
-                                        .font(.caption)
-                                }
-                                .foregroundColor(.white)
-                                .padding()
-                                .background(Color.arkadGold)
-                                .cornerRadius(8)
-                            }
-                            .sheet(isPresented: $showingOriginalArticle) {
-                                SafariView(url: URL(string: articleUrl)!)
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-            }
-            .navigationTitle("Article")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Back") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if let articleUrl = article.articleUrl {
-                        Button(action: {
-                            UIPasteboard.general.string = articleUrl
-                        }) {
-                            Image(systemName: "link")
-                        }
-                    }
-                }
-            }
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.2)
+                .tint(.arkadGold)
+            
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
         }
     }
 }
 
-// MARK: - Safari View
-struct SafariView: UIViewControllerRepresentable {
-    let url: URL
-    
-    func makeUIViewController(context: Context) -> SFSafariViewController {
-        return SFSafariViewController(url: url)
+struct LoadingMoreView: View {
+    var body: some View {
+        HStack {
+            ProgressView()
+                .scaleEffect(0.8)
+                .tint(.arkadGold)
+            
+            Text("Loading more...")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
     }
-    
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
-// MARK: - Empty News View
+struct LoadMoreButton: View {
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text("Load More")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Image(systemName: "arrow.down.circle")
+                    .font(.subheadline)
+            }
+            .foregroundColor(.arkadGold)
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(Color.arkadGold.opacity(0.1))
+            .cornerRadius(12)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 struct EmptyNewsView: View {
     var body: some View {
         VStack(spacing: 20) {
