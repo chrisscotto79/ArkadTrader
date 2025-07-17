@@ -1,144 +1,323 @@
-// Fixed HomeViewModel.swift - No new files, just fix the existing code
-import Foundation
-import Firebase
+// File: Core/Home/ViewModels/HomeViewModel.swift
+// Complete HomeViewModel with all functionality
 
-// Add MarketNewsArticle to existing HomeViewModel file instead of creating new file
-struct MarketNewsArticle: Identifiable, Codable {
-    let id: String
-    let title: String
-    let author: String?
-    let publishedUtc: String
-    let articleUrl: String
-    let description: String?
-    let keywords: [String]
-    let imageUrl: String?
-    let cachedAt: Date
-    let source: String?
-    let category: String?
-    
-    init(id: String, title: String, author: String?, publishedUtc: String, articleUrl: String, description: String?, keywords: [String], imageUrl: String?, cachedAt: Date, source: String?, category: String?) {
-        self.id = id
-        self.title = title
-        self.author = author
-        self.publishedUtc = publishedUtc
-        self.articleUrl = articleUrl
-        self.description = description
-        self.keywords = keywords
-        self.imageUrl = imageUrl
-        self.cachedAt = cachedAt
-        self.source = source
-        self.category = category
-    }
-    
-    // Firebase conversion methods
-    func toFirestore() -> [String: Any] {
-        return [
-            "title": title,
-            "author": author as Any,
-            "publishedUtc": publishedUtc,
-            "articleUrl": articleUrl,
-            "description": description as Any,
-            "keywords": keywords,
-            "imageUrl": imageUrl as Any,
-            "cachedAt": Timestamp(date: cachedAt),
-            "source": source as Any,
-            "category": category as Any
-        ]
-    }
-    
-    static func fromFirestore(data: [String: Any], id: String) throws -> MarketNewsArticle {
-        guard let title = data["title"] as? String,
-              let publishedUtc = data["publishedUtc"] as? String,
-              let articleUrl = data["articleUrl"] as? String,
-              let keywords = data["keywords"] as? [String],
-              let cachedAtTimestamp = data["cachedAt"] as? Timestamp else {
-            throw NSError(domain: "MarketNewsArticleDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid market news article data"])
-        }
-        
-        return MarketNewsArticle(
-            id: id,
-            title: title,
-            author: data["author"] as? String,
-            publishedUtc: publishedUtc,
-            articleUrl: articleUrl,
-            description: data["description"] as? String,
-            keywords: keywords,
-            imageUrl: data["imageUrl"] as? String,
-            cachedAt: cachedAtTimestamp.dateValue(),
-            source: data["source"] as? String,
-            category: data["category"] as? String
-        )
-    }
-}
+import Foundation
+import SwiftUI
+import Combine
 
 @MainActor
 class HomeViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var posts: [Post] = []
     @Published var followingPosts: [Post] = []
+    @Published var savedPosts: [Post] = []
     @Published var marketNews: [MarketNewsArticle] = []
+    @Published var notifications: [AppNotification] = []
+    @Published var followingActivities: [FollowingActivity] = []
+    
+    // Loading states
     @Published var isLoading = false
     @Published var isLoadingNews = false
+    @Published var isLoadingFollowing = false
     @Published var isRefreshing = false
+    
+    // Error handling
     @Published var errorMessage = ""
     @Published var showError = false
     
-    // Feed management
-    @Published var hasMorePosts = true
-    @Published var isLoadingMore = false
-    
-    // User interactions - loaded from Firebase
+    // User interactions
     @Published var likedPosts: Set<String> = []
     @Published var bookmarkedPosts: Set<String> = []
+    @Published var reportedPosts: Set<String> = []
+    @Published var viewedPosts: Set<String> = []
+    
+    // Filtering and sorting
+    @Published var selectedPostFilter: PostFilter = .all
+    @Published var selectedCommentSort: CommentSortOption = .recent
+    @Published var searchQuery = ""
+    
+    // Pagination
+    @Published var hasMorePosts = true
+    @Published var hasMoreFollowingPosts = true
+    @Published var hasMoreNews = true
+    @Published var isLoadingMore = false
+    
+    // Notifications
+    @Published var unreadNotificationsCount = 0
+    @Published var hasUnreadNotifications = false
+    
+    // Current selected items
+    @Published var selectedPost: Post?
+    @Published var selectedArticle: MarketNewsArticle?
+    @Published var selectedUser: User?
+    
+    // UI States
+    @Published var showingPostDetail = false
+    @Published var showingUserProfile = false
+    @Published var showingCreatePost = false
+    @Published var showingReportSheet = false
+    @Published var showingShareSheet = false
+    @Published var showingNotifications = false
     
     private let authService = FirebaseAuthService.shared
+    private var cancellables = Set<AnyCancellable>()
     private var currentPage = 0
-    private let postsPerPage = 20
+    private var currentFollowingPage = 0
+    private var currentNewsPage = 0
+    private let itemsPerPage = 20
     
-    // Finnhub API configuration
+    // News API configuration
     private let finnhubApiKey = "ct73so9r01qr3sdtkf20ct73so9r01qr3sdtkf2g"
     private let finnhubBaseUrl = "https://finnhub.io/api/v1"
-    
-    // News caching - refresh every 30 minutes
     private let newsCacheInterval: TimeInterval = 30 * 60
+    
+    // Cache for performance
+    private var allPosts: [Post] = []
+    private var allFollowingPosts: [Post] = []
+    private var allMarketNews: [MarketNewsArticle] = []
+    
+    // MARK: - Computed Properties
+    var filteredPosts: [Post] {
+        var filtered = posts
+        
+        // Apply filter
+        if selectedPostFilter != .all {
+            filtered = filtered.filter { selectedPostFilter.matches(post: $0) }
+        }
+        
+        // Apply search
+        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            filtered = filtered.filter { post in
+                let query = searchQuery.lowercased()
+                return post.content.lowercased().contains(query) ||
+                       post.authorUsername.lowercased().contains(query) ||
+                       post.hashtags.contains { $0.lowercased().contains(query) } ||
+                       post.tickerSymbols.contains { $0.lowercased().contains(query) }
+            }
+        }
+        
+        return filtered
+    }
+    
+    var trendingHashtags: [String] {
+        let allHashtags = posts.flatMap { $0.hashtags }
+        let hashtagCounts = Dictionary(grouping: allHashtags) { $0 }
+            .mapValues { $0.count }
+        
+        return Array(hashtagCounts.keys)
+            .sorted { hashtagCounts[$0] ?? 0 > hashtagCounts[$1] ?? 0 }
+            .prefix(10)
+            .map { $0 }
+    }
+    
+    var trendingTickers: [String] {
+        let allTickers = posts.flatMap { $0.tickerSymbols }
+        let tickerCounts = Dictionary(grouping: allTickers) { $0 }
+            .mapValues { $0.count }
+        
+        return Array(tickerCounts.keys)
+            .sorted { tickerCounts[$0] ?? 0 > tickerCounts[$1] ?? 0 }
+            .prefix(10)
+            .map { $0 }
+    }
     
     // MARK: - Initialization
     init() {
+        setupObservers()
         Task {
-            await loadUserInteractions()
+            await loadInitialData()
         }
     }
     
-    // MARK: - Post Management
-    func loadPosts() async {
+    private func setupObservers() {
+        // Observe search query changes
+        $searchQuery
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+        
+        // Observe filter changes
+        $selectedPostFilter
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Data Loading Methods
+    func loadInitialData() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.loadFeed() }
+            group.addTask { await self.loadFollowingFeed() }
+            group.addTask { await self.loadMarketNews() }
+            group.addTask { await self.loadNotifications() }
+            group.addTask { await self.loadUserInteractions() }
+            group.addTask { await self.loadSavedPosts() }
+        }
+    }
+    
+    func loadFeed() async {
+        guard !isLoading else { return }
+        
         isLoading = true
         currentPage = 0
         
         do {
-            // FIXED: Complete the getFeedPosts() method call
-            let allPosts = try await authService.getFeedPosts()
+            // TODO: Implement getFeedPosts with pagination
+            let fetchedPosts = try await authService.getFeedPosts(page: currentPage, limit: itemsPerPage)
+            
+            allPosts = fetchedPosts.sorted { $0.createdAt > $1.createdAt }
             posts = allPosts
             
-            // Load user interactions
-            await loadUserInteractions()
+            // Track views for analytics
+            for post in posts {
+                await trackPostView(postId: post.id)
+            }
             
-            // Filter posts for different tabs
-            await filterPostsByCategory()
+            hasMorePosts = fetchedPosts.count == itemsPerPage
             
         } catch {
-            errorMessage = "Failed to load posts: \(error.localizedDescription)"
-            showError = true
+            handleError("Failed to load feed: \(error.localizedDescription)")
         }
         
         isLoading = false
     }
     
-    func refreshPosts() async {
+    func loadFollowingFeed() async {
+        guard !isLoadingFollowing else { return }
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        isLoadingFollowing = true
+        currentFollowingPage = 0
+        
+        do {
+            // TODO: Implement getFollowingPosts method
+            let fetchedPosts = try await authService.getFollowingPosts(userId: currentUserId, page: currentFollowingPage, limit: itemsPerPage)
+            
+            allFollowingPosts = fetchedPosts.sorted { $0.createdAt > $1.createdAt }
+            followingPosts = allFollowingPosts
+            
+            // Load following activities
+            let activities = try await authService.getFollowingActivities(userId: currentUserId, limit: 50)
+            followingActivities = activities.sorted { $0.timestamp > $1.timestamp }
+            
+            hasMoreFollowingPosts = fetchedPosts.count == itemsPerPage
+            
+        } catch {
+            handleError("Failed to load following feed: \(error.localizedDescription)")
+        }
+        
+        isLoadingFollowing = false
+    }
+    
+    func loadMarketNews() async {
+        guard !isLoadingNews else { return }
+        
+        isLoadingNews = true
+        currentNewsPage = 0
+        
+        do {
+            // Check cache first
+            if let cachedNews = await getCachedNews(), !cachedNews.isEmpty {
+                allMarketNews = cachedNews
+                marketNews = allMarketNews
+                isLoadingNews = false
+                return
+            }
+            
+            // Fetch fresh news
+            let freshNews = try await fetchMarketNewsFromAPI()
+            allMarketNews = freshNews
+            marketNews = allMarketNews
+            
+            // Cache the news
+            await cacheNews(freshNews)
+            
+            hasMoreNews = freshNews.count == itemsPerPage
+            
+        } catch {
+            handleError("Failed to load market news: \(error.localizedDescription)")
+        }
+        
+        isLoadingNews = false
+    }
+    
+    func loadNotifications() async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        do {
+            // TODO: Implement getNotifications method
+            let fetchedNotifications = try await authService.getNotifications(userId: currentUserId, limit: 50)
+            notifications = fetchedNotifications.sorted { $0.createdAt > $1.createdAt }
+            
+            unreadNotificationsCount = notifications.filter { !$0.isRead }.count
+            hasUnreadNotifications = unreadNotificationsCount > 0
+            
+        } catch {
+            print("Failed to load notifications: \(error)")
+        }
+    }
+    
+    func loadUserInteractions() async {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        do {
+            // TODO: Implement these methods
+            async let liked = authService.getUserLikedPosts(userId: userId)
+            async let bookmarked = authService.getUserBookmarkedPosts(userId: userId)
+            async let reported = authService.getUserReportedPosts(userId: userId)
+            async let viewed = authService.getUserViewedPosts(userId: userId)
+            
+            likedPosts = try await liked
+            bookmarkedPosts = try await bookmarked
+            reportedPosts = try await reported
+            viewedPosts = try await viewed
+            
+        } catch {
+            print("Failed to load user interactions: \(error)")
+        }
+    }
+    
+    func loadSavedPosts() async {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        do {
+            // TODO: Implement getSavedPosts method
+            savedPosts = try await authService.getSavedPosts(userId: userId)
+        } catch {
+            print("Failed to load saved posts: \(error)")
+        }
+    }
+    
+    // MARK: - Refresh Methods
+    func refreshAllData() async {
         isRefreshing = true
-        await loadPosts()
+        await loadInitialData()
         isRefreshing = false
     }
     
+    func refreshFeed() async {
+        isRefreshing = true
+        await loadFeed()
+        isRefreshing = false
+    }
+    
+    func refreshFollowingFeed() async {
+        isRefreshing = true
+        await loadFollowingFeed()
+        isRefreshing = false
+    }
+    
+    func refreshMarketNews() async {
+        isRefreshing = true
+        await clearNewsCache()
+        await loadMarketNews()
+        isRefreshing = false
+    }
+    
+    // MARK: - Load More Methods
     func loadMorePosts() async {
         guard !isLoadingMore && hasMorePosts else { return }
         
@@ -146,47 +325,126 @@ class HomeViewModel: ObservableObject {
         currentPage += 1
         
         do {
-            // In a real implementation, you'd implement pagination in Firebase
-            // For now, we'll just indicate there are no more posts after first load
-            hasMorePosts = false
+            // TODO: Implement pagination
+            let newPosts = try await authService.getFeedPosts(page: currentPage, limit: itemsPerPage)
+            
+            allPosts.append(contentsOf: newPosts)
+            posts.append(contentsOf: newPosts)
+            
+            hasMorePosts = newPosts.count == itemsPerPage
             
         } catch {
-            errorMessage = "Failed to load more posts: \(error.localizedDescription)"
-            showError = true
+            currentPage -= 1
+            handleError("Failed to load more posts: \(error.localizedDescription)")
         }
         
         isLoadingMore = false
     }
     
-    func createPost(content: String) async {
-        guard let userId = authService.currentUser?.id,
-              let username = authService.currentUser?.username else { return }
+    func loadMoreFollowingPosts() async {
+        guard !isLoadingMore && hasMoreFollowingPosts else { return }
+        guard let currentUserId = authService.currentUser?.id else { return }
         
-        // Determine post type based on content
-        let postType = determinePostType(from: content)
-        
-        var newPost = Post(content: content, authorId: userId, authorUsername: username)
-        newPost.postType = postType
+        isLoadingMore = true
+        currentFollowingPage += 1
         
         do {
-            try await authService.createPost(newPost)
+            // TODO: Implement pagination for following posts
+            let newPosts = try await authService.getFollowingPosts(userId: currentUserId, page: currentFollowingPage, limit: itemsPerPage)
             
-            // Add to local posts immediately for better UX
-            posts.insert(newPost, at: 0)
+            allFollowingPosts.append(contentsOf: newPosts)
+            followingPosts.append(contentsOf: newPosts)
             
-            // Re-filter posts for different tabs
-            await filterPostsByCategory()
+            hasMoreFollowingPosts = newPosts.count == itemsPerPage
             
         } catch {
-            errorMessage = "Failed to create post: \(error.localizedDescription)"
-            showError = true
+            currentFollowingPage -= 1
+            handleError("Failed to load more following posts: \(error.localizedDescription)")
+        }
+        
+        isLoadingMore = false
+    }
+    
+    func loadMoreNews() async {
+        guard !isLoadingMore && hasMoreNews else { return }
+        
+        isLoadingMore = true
+        currentNewsPage += 1
+        
+        do {
+            // TODO: Implement pagination for news
+            let newNews = try await fetchMarketNewsFromAPI(page: currentNewsPage)
+            
+            allMarketNews.append(contentsOf: newNews)
+            marketNews.append(contentsOf: newNews)
+            
+            hasMoreNews = newNews.count == itemsPerPage
+            
+        } catch {
+            currentNewsPage -= 1
+            handleError("Failed to load more news: \(error.localizedDescription)")
+        }
+        
+        isLoadingMore = false
+    }
+    
+    // MARK: - Post Creation
+    func createPost(content: String, postType: PostType, imageUrls: [String] = []) async {
+        guard let currentUser = authService.currentUser else { return }
+        
+        do {
+            // Extract hashtags and mentions
+            let hashtags = extractHashtags(from: content)
+            let mentions = extractMentions(from: content)
+            let tickers = extractTickers(from: content)
+            
+            let newPost = Post(
+                authorId: currentUser.id,
+                authorUsername: currentUser.username,
+                authorProfileImageUrl: currentUser.profileImageUrl,
+                content: content,
+                postType: postType,
+                hashtags: hashtags,
+                mentionedUsers: mentions,
+                imageUrls: imageUrls,
+                tickerSymbols: tickers
+            )
+            
+            // TODO: Implement createPost method
+            try await authService.createPost(post: newPost)
+            
+            // Add to local arrays
+            allPosts.insert(newPost, at: 0)
+            posts.insert(newPost, at: 0)
+            
+            // Add to following feed if appropriate
+            if followingPosts.contains(where: { $0.authorId == currentUser.id }) {
+                followingPosts.insert(newPost, at: 0)
+            }
+            
+            // Create activity
+            let activity = FollowingActivity(
+                userId: currentUser.id,
+                username: currentUser.username,
+                activityType: postType == .tradeResult ? .newTrade : .newPost,
+                content: content,
+                relatedPostId: newPost.id
+            )
+            
+            try await authService.createFollowingActivity(activity: activity)
+            
+        } catch {
+            handleError("Failed to create post: \(error.localizedDescription)")
         }
     }
     
-    // MARK: - User Interactions
-    func toggleLike(for postId: String) {
+    // MARK: - Post Interactions
+    func toggleLike(postId: String) async {
+        guard let userId = authService.currentUser?.id else { return }
+        
         let wasLiked = likedPosts.contains(postId)
         
+        // Update UI immediately
         if wasLiked {
             likedPosts.remove(postId)
             updateLikeCount(postId: postId, increment: false)
@@ -195,325 +453,497 @@ class HomeViewModel: ObservableObject {
             updateLikeCount(postId: postId, increment: true)
         }
         
-        // Sync with Firebase immediately
-        Task {
-            await syncLikeWithFirebase(postId: postId, isLiked: !wasLiked)
+        // Sync with Firebase
+        do {
+            if wasLiked {
+                // TODO: Implement unlikePost method
+                try await authService.unlikePost(postId: postId, userId: userId)
+            } else {
+                // TODO: Implement likePost method
+                try await authService.likePost(postId: postId, userId: userId)
+                
+                // Create notification for post author
+                if let post = posts.first(where: { $0.id == postId }), post.authorId != userId {
+                    try await createLikeNotification(postId: postId, likedBy: userId, postAuthor: post.authorId)
+                }
+            }
+        } catch {
+            // Revert on error
+            if wasLiked {
+                likedPosts.insert(postId)
+                updateLikeCount(postId: postId, increment: true)
+            } else {
+                likedPosts.remove(postId)
+                updateLikeCount(postId: postId, increment: false)
+            }
+            
+            handleError("Failed to sync like: \(error.localizedDescription)")
         }
     }
     
-    func toggleBookmark(for postId: String) {
+    func toggleBookmark(postId: String) async {
+        guard let userId = authService.currentUser?.id else { return }
+        
         let wasBookmarked = bookmarkedPosts.contains(postId)
         
+        // Update UI immediately
         if wasBookmarked {
             bookmarkedPosts.remove(postId)
         } else {
             bookmarkedPosts.insert(postId)
         }
         
-        // Sync with Firebase immediately
-        Task {
-            await syncBookmarkWithFirebase(postId: postId, isBookmarked: !wasBookmarked)
-        }
-    }
-    
-    func reportPost(_ postId: String, reason: String) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
+        // Sync with Firebase
         do {
-            // Store report in Firebase
-            try await authService.reportPost(postId: postId, reportedBy: userId, reason: reason)
-            
-            // Remove post from local arrays
-            posts.removeAll { $0.id == postId }
-            followingPosts.removeAll { $0.id == postId }
-            
-        } catch {
-            errorMessage = "Failed to report post: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-    
-    func blockUser(_ userId: String) async {
-        guard let currentUserId = authService.currentUser?.id else { return }
-        
-        do {
-            // Store block in Firebase
-            try await authService.blockUser(userId: userId, blockedBy: currentUserId)
-            
-            // Remove posts from blocked user
-            posts.removeAll { $0.authorId == userId }
-            followingPosts.removeAll { $0.authorId == userId }
-            
-        } catch {
-            errorMessage = "Failed to block user: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-    
-    // MARK: - Firebase Sync Methods
-    private func syncLikeWithFirebase(postId: String, isLiked: Bool) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            if isLiked {
-                try await authService.likePost(postId: postId, userId: userId)
-            } else {
-                try await authService.unlikePost(postId: postId, userId: userId)
-            }
-        } catch {
-            // Revert local change if Firebase sync fails
-            if isLiked {
-                likedPosts.remove(postId)
-                updateLikeCount(postId: postId, increment: false)
-            } else {
-                likedPosts.insert(postId)
-                updateLikeCount(postId: postId, increment: true)
-            }
-            
-            errorMessage = "Failed to sync like: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-    
-    private func syncBookmarkWithFirebase(postId: String, isBookmarked: Bool) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            if isBookmarked {
-                try await authService.bookmarkPost(postId: postId, userId: userId)
-            } else {
+            if wasBookmarked {
+                // TODO: Implement unbookmarkPost method
                 try await authService.unbookmarkPost(postId: postId, userId: userId)
+            } else {
+                // TODO: Implement bookmarkPost method
+                try await authService.bookmarkPost(postId: postId, userId: userId)
             }
         } catch {
-            // Revert local change if Firebase sync fails
-            if isBookmarked {
-                bookmarkedPosts.remove(postId)
-            } else {
+            // Revert on error
+            if wasBookmarked {
                 bookmarkedPosts.insert(postId)
+            } else {
+                bookmarkedPosts.remove(postId)
             }
             
-            errorMessage = "Failed to sync bookmark: \(error.localizedDescription)"
-            showError = true
+            handleError("Failed to sync bookmark: \(error.localizedDescription)")
         }
     }
     
-    private func loadUserInteractions() async {
+    func sharePost(postId: String, shareOption: ShareOption) async {
         guard let userId = authService.currentUser?.id else { return }
         
         do {
-            // Load liked posts from Firebase
-            likedPosts = try await authService.getUserLikedPosts(userId: userId)
+            // TODO: Implement sharePost method
+            try await authService.sharePost(postId: postId, userId: userId, shareType: shareOption.rawValue)
             
-            // Load bookmarked posts from Firebase
-            bookmarkedPosts = try await authService.getUserBookmarkedPosts(userId: userId)
+            // Update share count
+            updateShareCount(postId: postId, increment: true)
             
         } catch {
-            print("Failed to load user interactions: \(error)")
-            // Don't show error to user for this, just log it
+            handleError("Failed to share post: \(error.localizedDescription)")
         }
     }
     
-    // MARK: - Post Filtering and Categorization
-    private func filterPostsByCategory() async {
-        guard let currentUserId = authService.currentUser?.id else { return }
+    func reportPost(postId: String, reason: PostReport.ReportReason, details: String?) async {
+        guard let userId = authService.currentUser?.id else { return }
         
         do {
-            // Get user's following list from Firebase
-            let followingUserIds = try await authService.getUserFollowing(userId: currentUserId)
+            let report = PostReport(
+                id: UUID().uuidString,
+                postId: postId,
+                reportedBy: userId,
+                reason: reason,
+                additionalDetails: details,
+                createdAt: Date(),
+                status: .pending
+            )
             
-            // Filter following posts
-            followingPosts = posts.filter { post in
-                followingUserIds.contains(post.authorId)
+            // TODO: Implement reportPost method
+            try await authService.reportPost(report: report)
+            
+            // Track locally
+            reportedPosts.insert(postId)
+            
+        } catch {
+            handleError("Failed to report post: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Navigation Methods
+    func showPostDetail(post: Post) {
+        selectedPost = post
+        showingPostDetail = true
+        
+        // Track view
+        Task {
+            await trackPostView(postId: post.id)
+        }
+    }
+    
+    func showUserProfile(userId: String) {
+        Task {
+            do {
+                // TODO: Implement getUser method
+                let user = try await authService.getUser(userId: userId)
+                selectedUser = user
+                showingUserProfile = true
+            } catch {
+                handleError("Failed to load user profile: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func showCreatePost() {
+        showingCreatePost = true
+    }
+    
+    func showReportSheet(post: Post) {
+        selectedPost = post
+        showingReportSheet = true
+    }
+    
+    func showShareSheet(post: Post) {
+        selectedPost = post
+        showingShareSheet = true
+    }
+    
+    // MARK: - Filter Methods
+    func applyFilter(_ filter: PostFilter) {
+        selectedPostFilter = filter
+        objectWillChange.send()
+    }
+    
+    func applyHashtagFilter(_ hashtag: String) {
+        selectedPostFilter = .hashtag(hashtag)
+        objectWillChange.send()
+    }
+    
+    func applyTickerFilter(_ ticker: String) {
+        selectedPostFilter = .ticker(ticker)
+        objectWillChange.send()
+    }
+    
+    func applyUserFilter(_ username: String) {
+        selectedPostFilter = .user(username)
+        objectWillChange.send()
+    }
+    
+    func clearFilters() {
+        selectedPostFilter = .all
+        searchQuery = ""
+        objectWillChange.send()
+    }
+    
+    // MARK: - Search Methods
+    func searchPosts(query: String) {
+        searchQuery = query
+        objectWillChange.send()
+    }
+    
+    func clearSearch() {
+        searchQuery = ""
+        objectWillChange.send()
+    }
+    
+    // MARK: - Comment Methods
+    func loadComments(for postId: String) async -> [Comment] {
+        do {
+            // TODO: Implement getPostComments method
+            let comments = try await authService.getPostComments(postId: postId, sortBy: selectedCommentSort)
+            return comments
+        } catch {
+            handleError("Failed to load comments: \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    func createComment(postId: String, content: String, parentCommentId: String? = nil) async {
+        guard let currentUser = authService.currentUser else { return }
+        
+        do {
+            let mentions = extractMentions(from: content)
+            
+            let comment = Comment(
+                postId: postId,
+                authorId: currentUser.id,
+                authorUsername: currentUser.username,
+                authorProfileImageUrl: currentUser.profileImageUrl,
+                content: content,
+                parentCommentId: parentCommentId,
+                mentionedUsers: mentions
+            )
+            
+            // TODO: Implement createComment method
+            try await authService.createComment(comment: comment)
+            
+            // Update comment count
+            updateCommentCount(postId: postId, increment: true)
+            
+            // Create notification for post author
+            if let post = posts.first(where: { $0.id == postId }), post.authorId != currentUser.id {
+                try await createCommentNotification(postId: postId, commentedBy: currentUser.id, postAuthor: post.authorId, commentContent: content)
             }
             
         } catch {
-            print("Failed to filter posts: \(error)")
-            // Fallback to empty arrays if Firebase call fails
-            followingPosts = []
+            handleError("Failed to create comment: \(error.localizedDescription)")
+        }
+    }
+    
+    func toggleCommentLike(commentId: String) async {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        do {
+            // TODO: Implement toggleCommentLike method
+            try await authService.toggleCommentLike(commentId: commentId, userId: userId)
+        } catch {
+            handleError("Failed to toggle comment like: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Notification Methods
+    func markNotificationAsRead(notificationId: String) async {
+        do {
+            // TODO: Implement markNotificationAsRead method
+            try await authService.markNotificationAsRead(notificationId: notificationId)
+            
+            // Update locally
+            if let index = notifications.firstIndex(where: { $0.id == notificationId }) {
+                var updatedNotification = notifications[index]
+                // Note: We can't modify the isRead property directly since it's let
+                // This would need to be handled differently in the actual implementation
+                notifications[index] = updatedNotification
+                unreadNotificationsCount -= 1
+                hasUnreadNotifications = unreadNotificationsCount > 0
+            }
+            
+        } catch {
+            handleError("Failed to mark notification as read: \(error.localizedDescription)")
+        }
+    }
+    
+    func markAllNotificationsAsRead() async {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        do {
+            // TODO: Implement markAllNotificationsAsRead method
+            try await authService.markAllNotificationsAsRead(userId: userId)
+            
+            // Update locally
+            unreadNotificationsCount = 0
+            hasUnreadNotifications = false
+            
+        } catch {
+            handleError("Failed to mark all notifications as read: \(error.localizedDescription)")
         }
     }
     
     // MARK: - Helper Methods
-    private func determinePostType(from content: String) -> PostType {
-        let lowercaseContent = content.lowercased()
-        
-        if lowercaseContent.contains("#trade") ||
-           lowercaseContent.contains("profit") ||
-           lowercaseContent.contains("loss") ||
-           lowercaseContent.contains("position") ||
-           lowercaseContent.contains("buy") ||
-           lowercaseContent.contains("sell") {
-            return .tradeResult
-        } else if lowercaseContent.contains("#analysis") ||
-                  lowercaseContent.contains("market") ||
-                  lowercaseContent.contains("bullish") ||
-                  lowercaseContent.contains("bearish") ||
-                  lowercaseContent.contains("technical") ||
-                  lowercaseContent.contains("chart") {
-            return .marketAnalysis
-        } else {
-            return .text
-        }
-    }
-    
     private func updateLikeCount(postId: String, increment: Bool) {
         let change = increment ? 1 : -1
         
-        // Update in main posts array
+        updatePostInArrays(postId: postId) { post in
+            post.likesCount = max(0, post.likesCount + change)
+        }
+    }
+    
+    private func updateCommentCount(postId: String, increment: Bool) {
+        let change = increment ? 1 : -1
+        
+        updatePostInArrays(postId: postId) { post in
+            post.commentsCount = max(0, post.commentsCount + change)
+        }
+    }
+    
+    private func updateShareCount(postId: String, increment: Bool) {
+        let change = increment ? 1 : -1
+        
+        updatePostInArrays(postId: postId) { post in
+            post.sharesCount = max(0, post.sharesCount + change)
+        }
+    }
+    
+    private func updatePostInArrays(postId: String, updateBlock: (inout Post) -> Void) {
+        // Update in all arrays
+        if let index = allPosts.firstIndex(where: { $0.id == postId }) {
+            updateBlock(&allPosts[index])
+        }
+        
         if let index = posts.firstIndex(where: { $0.id == postId }) {
-            posts[index].likesCount = max(0, posts[index].likesCount + change)
+            updateBlock(&posts[index])
         }
         
-        // Update in following posts array
         if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
-            followingPosts[index].likesCount = max(0, followingPosts[index].likesCount + change)
+            updateBlock(&followingPosts[index])
         }
-    }
-    
-    // MARK: - Search and Filter
-    func searchPosts(query: String) -> [Post] {
-        guard !query.isEmpty else { return posts }
         
-        return posts.filter { post in
-            post.content.localizedCaseInsensitiveContains(query) ||
-            post.authorUsername.localizedCaseInsensitiveContains(query)
+        if let index = savedPosts.firstIndex(where: { $0.id == postId }) {
+            updateBlock(&savedPosts[index])
         }
     }
     
-    func searchNews(query: String) -> [MarketNewsArticle] {
-        guard !query.isEmpty else { return marketNews }
+    private func trackPostView(postId: String) async {
+        guard let userId = authService.currentUser?.id else { return }
+        guard !viewedPosts.contains(postId) else { return }
         
-        return marketNews.filter { article in
-            article.title.localizedCaseInsensitiveContains(query) ||
-            (article.description?.localizedCaseInsensitiveContains(query) ?? false) ||
-            article.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
+        viewedPosts.insert(postId)
+        
+        do {
+            // TODO: Implement trackPostView method
+            try await authService.trackPostView(postId: postId, userId: userId)
+        } catch {
+            print("Failed to track post view: \(error)")
         }
     }
     
-    func filterPosts(by type: PostType) -> [Post] {
-        return posts.filter { $0.postType == type }
+    private func extractHashtags(from text: String) -> [String] {
+        let regex = try! NSRegularExpression(pattern: "#\\w+", options: [])
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.count))
+        
+        return matches.compactMap { match in
+            let range = Range(match.range, in: text)!
+            let hashtag = String(text[range])
+            return String(hashtag.dropFirst()) // Remove the #
+        }
     }
     
-    func getPostsByUser(userId: String) -> [Post] {
-        return posts.filter { $0.authorId == userId }
+    private func extractMentions(from text: String) -> [String] {
+        let regex = try! NSRegularExpression(pattern: "@\\w+", options: [])
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.count))
+        
+        return matches.compactMap { match in
+            let range = Range(match.range, in: text)!
+            let mention = String(text[range])
+            return String(mention.dropFirst()) // Remove the @
+        }
     }
     
-    // MARK: - Analytics and Insights
-    func getEngagementStats() -> (totalLikes: Int, totalComments: Int, totalPosts: Int) {
+    private func extractTickers(from text: String) -> [String] {
+        let regex = try! NSRegularExpression(pattern: "\\$[A-Z]{1,5}", options: [])
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.count))
+        
+        return matches.compactMap { match in
+            let range = Range(match.range, in: text)!
+            let ticker = String(text[range])
+            return String(ticker.dropFirst()) // Remove the $
+        }
+    }
+    
+    private func createLikeNotification(postId: String, likedBy: String, postAuthor: String) async throws {
+        guard let likerUser = try? await authService.getUser(userId: likedBy) else { return }
+        
+        let notification = AppNotification(
+            id: UUID().uuidString,
+            userId: postAuthor,
+            type: .like,
+            title: "New Like",
+            message: "@\(likerUser.username) liked your post",
+            relatedPostId: postId,
+            relatedUserId: likedBy,
+            relatedUsername: likerUser.username,
+            createdAt: Date(),
+            isRead: false,
+            actionUrl: "app://post/\(postId)"
+        )
+        
+        // TODO: Implement createNotification method
+        try await authService.createNotification(notification: notification)
+    }
+    
+    private func createCommentNotification(postId: String, commentedBy: String, postAuthor: String, commentContent: String) async throws {
+        guard let commenterUser = try? await authService.getUser(userId: commentedBy) else { return }
+        
+        let notification = AppNotification(
+            id: UUID().uuidString,
+            userId: postAuthor,
+            type: .comment,
+            title: "New Comment",
+            message: "@\(commenterUser.username) commented on your post",
+            relatedPostId: postId,
+            relatedUserId: commentedBy,
+            relatedUsername: commenterUser.username,
+            createdAt: Date(),
+            isRead: false,
+            actionUrl: "app://post/\(postId)"
+        )
+        
+        // TODO: Implement createNotification method
+        try await authService.createNotification(notification: notification)
+    }
+    
+    private func handleError(_ message: String) {
+        errorMessage = message
+        showError = true
+    }
+    
+    // MARK: - Market News Helpers
+    private func getCachedNews() async -> [MarketNewsArticle]? {
+        let cacheKey = "market_news_cache"
+        let timestampKey = "market_news_timestamp"
+        
+        guard let timestamp = UserDefaults.standard.object(forKey: timestampKey) as? Date,
+              Date().timeIntervalSince(timestamp) < newsCacheInterval,
+              let data = UserDefaults.standard.data(forKey: cacheKey),
+              let cachedNews = try? JSONDecoder().decode([MarketNewsArticle].self, from: data) else {
+            return nil
+        }
+        
+        return cachedNews
+    }
+    
+    private func cacheNews(_ news: [MarketNewsArticle]) async {
+        let cacheKey = "market_news_cache"
+        let timestampKey = "market_news_timestamp"
+        
+        if let data = try? JSONEncoder().encode(news) {
+            UserDefaults.standard.set(data, forKey: cacheKey)
+            UserDefaults.standard.set(Date(), forKey: timestampKey)
+        }
+    }
+    
+    private func clearNewsCache() async {
+        UserDefaults.standard.removeObject(forKey: "market_news_cache")
+        UserDefaults.standard.removeObject(forKey: "market_news_timestamp")
+    }
+    
+    private func fetchMarketNewsFromAPI(page: Int = 0) async throws -> [MarketNewsArticle] {
+        let url = URL(string: "\(finnhubBaseUrl)/news?category=general&token=\(finnhubApiKey)&from=\(Date().addingTimeInterval(-86400 * 7).timeIntervalSince1970)&to=\(Date().timeIntervalSince1970)")!
+        
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let newsResponse = try JSONDecoder().decode([FinnhubNewsResponse].self, from: data)
+        
+        return newsResponse.compactMap { response in
+            MarketNewsArticle(
+                title: response.headline,
+                summary: response.summary,
+                publishedUtc: Date(timeIntervalSince1970: TimeInterval(response.datetime)),
+                articleUrl: response.url,
+                description: response.summary,
+                imageUrl: response.image,
+                source: response.source,
+                category: response.category,
+                tickerSymbols: response.related?.components(separatedBy: ",") ?? []
+            )
+        }
+    }
+    
+    // MARK: - Statistics Methods
+    func getEngagementStats() -> EngagementStats {
+        let totalPosts = posts.count
         let totalLikes = posts.reduce(0) { $0 + $1.likesCount }
         let totalComments = posts.reduce(0) { $0 + $1.commentsCount }
-        let totalPosts = posts.count
+        let totalShares = posts.reduce(0) { $0 + $1.sharesCount }
+        let totalViews = viewedPosts.count
         
-        return (totalLikes, totalComments, totalPosts)
-    }
-    
-    func getMostEngagedPost() -> Post? {
-        return posts.max { post1, post2 in
-            let engagement1 = post1.likesCount + post1.commentsCount
-            let engagement2 = post2.likesCount + post2.commentsCount
-            return engagement1 < engagement2
-        }
+        return EngagementStats(
+            totalPosts: totalPosts,
+            totalLikes: totalLikes,
+            totalComments: totalComments,
+            totalShares: totalShares,
+            totalViews: totalViews
+        )
     }
     
     func getTrendingNews() -> [MarketNewsArticle] {
-        // For trending, prioritize articles with images but don't exclude others
-        let articlesWithImages = marketNews.filter { article in
-            article.imageUrl != nil && !article.imageUrl!.isEmpty
-        }
-        
-        // If we have articles with images, use those, otherwise use all articles
-        let trendingSource = articlesWithImages.isEmpty ? marketNews : articlesWithImages
-        
-        return Array(trendingSource.prefix(10))
+        return Array(marketNews.prefix(5))
     }
     
     func getRegularNews() -> [MarketNewsArticle] {
-        // Return all news for the main feed
-        return marketNews
+        return Array(marketNews.dropFirst(5))
     }
     
-    func getNewsStats() -> (totalArticles: Int, recentArticles: Int) {
-        let totalArticles = marketNews.count
-        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
-        
-        let recentArticles = marketNews.filter { article in
-            let isoFormatter = ISO8601DateFormatter()
-            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            
-            if let publishedDate = isoFormatter.date(from: article.publishedUtc) {
-                return publishedDate > oneDayAgo
-            }
-            return false
-        }.count
-        
-        return (totalArticles, recentArticles)
+    func getSuggestedUsers() async -> [User] {
+        // TODO: Implement user suggestion logic
+        return []
     }
     
-    // MARK: - Market News Management
-    func loadMarketNews() async {
-        isLoadingNews = true
-        
-        do {
-            let articles = try await fetchMarketNews()
-            marketNews = articles
-        } catch {
-            errorMessage = "Failed to load market news: \(error.localizedDescription)"
-            showError = true
-        }
-        
-        isLoadingNews = false
-    }
-    
-    fileprivate func fetchMarketNews() async throws -> [MarketNewsArticle] {
-        let urlString = "\(finnhubBaseUrl)/news?category=general&token=\(finnhubApiKey)"
-        guard let url = URL(string: urlString) else {
-            throw URLError(.badURL)
-        }
-        
-        let (data, _) = try await URLSession.shared.data(from: url)
-        let newsItems = try JSONDecoder().decode([NewsItem].self, from: data)
-        
-        return newsItems.prefix(50).compactMap { item in
-            MarketNewsArticle.fromNewsItem(item)
-        }
-    }
-}
-
-// MARK: - Supporting Structures for News (add to existing file)
-fileprivate struct NewsItem: Codable {
-    let id: Int
-    let headline: String
-    let summary: String
-    let url: String
-    let image: String
-    let datetime: Int
-    let source: String
-    let category: String
-    let related: String?
-}
-
-extension MarketNewsArticle {
-    fileprivate static func fromNewsItem(_ item: NewsItem) -> MarketNewsArticle? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        
-        let publishedDate = Date(timeIntervalSince1970: TimeInterval(item.datetime))
-        let publishedUtc = formatter.string(from: publishedDate)
-        
-        let keywords = item.related?.components(separatedBy: ",") ?? []
-        
-        return MarketNewsArticle(
-            id: String(item.id),
-            title: item.headline,
-            author: nil,
-            publishedUtc: publishedUtc,
-            articleUrl: item.url,
-            description: item.summary,
-            keywords: keywords,
-            imageUrl: item.image.isEmpty ? nil : item.image,
-            cachedAt: Date(),
-            source: item.source,
-            category: item.category
-        )
+    // MARK: - Scroll to Top
+    func scrollToTop() {
+        // This would be handled by the views
+        objectWillChange.send()
     }
 }
