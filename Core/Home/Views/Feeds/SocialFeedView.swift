@@ -73,7 +73,7 @@ struct SocialFeedView: View {
                     LazyVStack(spacing: 16) {
                         ForEach(homeViewModel.posts, id: \.id) { post in
                             // ENHANCED: Explicitly pass environment object and add debug info
-                            EnhancedUserPostCard(post: post, homeViewModel: homeViewModel)
+                            UserPostCard(post: post, homeViewModel: homeViewModel)
                                 .environmentObject(authService)
                         }
                         

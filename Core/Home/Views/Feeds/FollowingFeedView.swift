@@ -9,8 +9,9 @@ import SwiftUI
 
 struct FollowingFeedView: View {
     @StateObject private var viewModel = FollowingFeedViewModel()
+    @StateObject private var homeViewModel = HomeViewModel()  // ADD THIS LINE
     @EnvironmentObject var authService: FirebaseAuthService
-    
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
@@ -89,7 +90,7 @@ struct FeedItemView: View {
     var body: some View {
         switch item {
         case .post(let post):
-            PostCardView(post: post)
+            UserPostCard(post: post, homeViewModel:HomeViewModel())  // CHANGE THIS LINE
         case .trade(let trade):
             TradeCardView(trade: trade)
         case .activity(let activity):

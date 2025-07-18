@@ -458,6 +458,21 @@ class FirebaseAuthService: ObservableObject {
     func deleteMessage(messageId: String) async throws {
         try await FirebaseServices.shared.deleteMessage(messageId: messageId)
     }
+    // Add this to FirebaseAuthService.swift
+    func getUserLikedComments(userId: String) async throws -> Set<String> {
+        return try await FirebaseServices.shared.getUserLikedComments(userId: userId)
+    }
+    // MARK: - Comment Like Wrapper Methods
+
+    // MARK: - Comment Like Wrapper Methods (add to FirebaseAuthService.swift)
+
+    func likeComment(commentId: String, userId: String) async throws {
+        try await FirebaseServices.shared.likeComment(commentId: commentId, userId: userId)
+    }
+
+    func unlikeComment(commentId: String, userId: String) async throws {
+        try await FirebaseServices.shared.unlikeComment(commentId: commentId, userId: userId)
+    }
     
     func getUnreadMessageCount(userId: String) async throws -> Int {
         return try await FirebaseServices.shared.getUnreadMessageCount(userId: userId)

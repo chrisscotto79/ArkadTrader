@@ -104,7 +104,14 @@ class HomeViewModel: ObservableObject {
     
     // MARK: - Initialization
     init() {
+        // Monitor authentication state
         Task {
+            // Wait for authentication to complete
+            while !authService.isAuthenticated {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            }
+            
+            // Now load user interactions
             await loadUserInteractions()
         }
     }
@@ -189,18 +196,28 @@ class HomeViewModel: ObservableObject {
         
         if wasLiked {
             likedPosts.remove(postId)
-            updateLikeCount(postId: postId, increment: false)
         } else {
             likedPosts.insert(postId)
-            updateLikeCount(postId: postId, increment: true)
         }
         
-        // Sync with Firebase immediately
+        // Only sync with Firebase - let Firebase handle the count
         Task {
             await syncLikeWithFirebase(postId: postId, isLiked: !wasLiked)
         }
     }
-    
+    func updatePostCommentCount(postId: String, newCount: Int) {
+        // Update in main posts array
+        if let index = posts.firstIndex(where: { $0.id == postId }) {
+            posts[index].commentsCount = newCount
+        }
+        
+        // Update in following posts array
+        if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
+            followingPosts[index].commentsCount = newCount
+        }
+        
+        print("✅ Updated comment count for post \(postId) to \(newCount)")
+    }
     func toggleBookmark(for postId: String) {
         let wasBookmarked = bookmarkedPosts.contains(postId)
         
@@ -260,18 +277,37 @@ class HomeViewModel: ObservableObject {
             } else {
                 try await authService.unlikePost(postId: postId, userId: userId)
             }
+            
+            // ✅ UPDATE LOCAL POST COUNTS AFTER FIREBASE SUCCESS
+            await MainActor.run {
+                updateLocalPostCount(postId: postId, increment: isLiked)
+            }
+            
         } catch {
-            // Revert local change if Firebase sync fails
+            // Revert local like state if Firebase sync fails
             if isLiked {
                 likedPosts.remove(postId)
-                updateLikeCount(postId: postId, increment: false)
             } else {
                 likedPosts.insert(postId)
-                updateLikeCount(postId: postId, increment: true)
             }
             
             errorMessage = "Failed to sync like: \(error.localizedDescription)"
             showError = true
+        }
+    }
+
+    // ✅ ADD THIS NEW METHOD
+    private func updateLocalPostCount(postId: String, increment: Bool) {
+        let change = increment ? 1 : -1
+        
+        // Update in main posts array
+        if let index = posts.firstIndex(where: { $0.id == postId }) {
+            posts[index].likesCount = max(0, posts[index].likesCount + change)
+        }
+        
+        // Update in following posts array
+        if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
+            followingPosts[index].likesCount = max(0, followingPosts[index].likesCount + change)
         }
     }
     
@@ -298,19 +334,42 @@ class HomeViewModel: ObservableObject {
     }
     
     private func loadUserInteractions() async {
-        guard let userId = authService.currentUser?.id else { return }
+        print("🔍 === LOADING USER INTERACTIONS ===")
+        print("📱 Is authenticated: \(authService.isAuthenticated)")
+        print("👤 Current user: \(authService.currentUser?.username ?? "nil")")
+        print("🆔 Current user ID: \(authService.currentUser?.id ?? "nil")")
+        
+        guard let userId = authService.currentUser?.id else {
+            print("❌ No user ID found - SKIPPING like loading")
+            return
+        }
+        
+        print("🔄 Fetching liked posts for user: \(userId)")
         
         do {
-            // Load liked posts from Firebase
-            likedPosts = try await authService.getUserLikedPosts(userId: userId)
+            let fetchedLikes = try await authService.getUserLikedPosts(userId: userId)
+            print("✅ Firebase returned \(fetchedLikes.count) liked posts:")
+            print("📝 Liked post IDs: \(fetchedLikes)")
             
-            // Load bookmarked posts from Firebase
-            bookmarkedPosts = try await authService.getUserBookmarkedPosts(userId: userId)
+            await MainActor.run {
+                likedPosts = fetchedLikes
+                print("💾 Updated likedPosts in HomeViewModel: \(likedPosts)")
+            }
+            
+            let fetchedBookmarks = try await authService.getUserBookmarkedPosts(userId: userId)
+            print("✅ Firebase returned \(fetchedBookmarks.count) bookmarked posts")
+            
+            await MainActor.run {
+                bookmarkedPosts = fetchedBookmarks
+            }
             
         } catch {
-            print("Failed to load user interactions: \(error)")
-            // Don't show error to user for this, just log it
+            print("❌ ERROR loading user interactions: \(error)")
+            print("📋 Error details: \(error.localizedDescription)")
         }
+        
+        print("🏁 === FINISHED LOADING USER INTERACTIONS ===")
+    
     }
     
     // MARK: - Post Filtering and Categorization

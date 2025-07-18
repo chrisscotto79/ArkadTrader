@@ -400,14 +400,14 @@ class FirebaseServices {
     func likePost(postId: String, userId: String) async throws {
         let batch = db.batch()
         
-        // Add like document
-        let likeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+        // Add like document under user
+        let likeRef = db.collection("users").document(userId).collection("likes").document(postId)
         batch.setData([
-            "userId": userId,
+            "postId": postId,
             "likedAt": Timestamp(date: Date())
         ], forDocument: likeRef)
         
-        // Increment like count
+        // Increment like count on post
         let postRef = db.collection("posts").document(postId)
         batch.updateData(["likesCount": FieldValue.increment(Int64(1))], forDocument: postRef)
         
@@ -417,11 +417,11 @@ class FirebaseServices {
     func unlikePost(postId: String, userId: String) async throws {
         let batch = db.batch()
         
-        // Remove like document
-        let likeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+        // Remove like document from user
+        let likeRef = db.collection("users").document(userId).collection("likes").document(postId)
         batch.deleteDocument(likeRef)
         
-        // Decrement like count
+        // Decrement like count on post
         let postRef = db.collection("posts").document(postId)
         batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
         
@@ -429,13 +429,10 @@ class FirebaseServices {
     }
     
     func getUserLikedPosts(userId: String) async throws -> Set<String> {
-        let snapshot = try await db.collectionGroup("likes")
-            .whereField("userId", isEqualTo: userId)
-            .getDocuments()
+        let snapshot = try await db.collection("users").document(userId)
+            .collection("likes").getDocuments()
         
-        return Set(snapshot.documents.compactMap { document in
-            document.reference.parent.parent?.documentID
-        })
+        return Set(snapshot.documents.map { $0.documentID })
     }
     
     // MARK: - Bookmark Methods
@@ -648,14 +645,53 @@ class FirebaseServices {
     func getCommentsForPost(postId: String) async throws -> [Comment] {
         let snapshot = try await db.collection("posts").document(postId)
             .collection("comments")
-            .order(by: "createdAt", descending: false)
+            // .order(by: "createdAt", descending: false)  // ❌ Remove this line temporarily
             .getDocuments()
         
-        return snapshot.documents.compactMap { document in
+        let comments = snapshot.documents.compactMap { document in
             try? Comment.fromFirestore(data: document.data(), id: document.documentID)
         }
+        
+        // ✅ Sort in memory instead
+        return comments.sorted { $0.createdAt < $1.createdAt }
     }
     
+    
+    // MARK: - Comment Like Methods
+
+    // MARK: - Comment Like Methods (add to FirebaseServices.swift)
+
+    func likeComment(commentId: String, userId: String) async throws {
+        print("💾 Saving comment like to Firebase...")
+        
+        let likeRef = db.collection("users").document(userId)
+            .collection("commentLikes").document(commentId)
+        
+        try await likeRef.setData([
+            "commentId": commentId,
+            "likedAt": Timestamp(date: Date())
+        ])
+        
+        print("✅ Comment like saved to Firebase")
+    }
+
+    func unlikeComment(commentId: String, userId: String) async throws {
+        print("🗑️ Removing comment like from Firebase...")
+        
+        let likeRef = db.collection("users").document(userId)
+            .collection("commentLikes").document(commentId)
+        
+        try await likeRef.delete()
+        
+        print("✅ Comment unlike saved to Firebase")
+    }
+    // Add this method to FirebaseServices.swift
+    func getUserLikedComments(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId)
+            .collection("commentLikes").getDocuments()
+        
+        return Set(snapshot.documents.map { $0.documentID })
+    }
     func deleteComment(commentId: String, postId: String) async throws {
         let batch = db.batch()
         

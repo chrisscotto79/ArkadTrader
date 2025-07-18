@@ -6,29 +6,31 @@ import SwiftUI
 struct UserPostCard: View {
     let post: Post
     @ObservedObject var homeViewModel: HomeViewModel
-    @State private var isLiked = false
-    @State private var likesCount: Int
     @State private var showOtherUserProfile = false
     @State private var profileUser: User?
     @State private var isLoadingUser = false
     @State private var debugMessage = ""
+    @State private var showComments = false
+
     
     @EnvironmentObject var authService: FirebaseAuthService
     
     init(post: Post, homeViewModel: HomeViewModel) {
         self.post = post
         self.homeViewModel = homeViewModel
-        self._likesCount = State(initialValue: post.likesCount)
-        self._isLiked = State(initialValue: homeViewModel.likedPosts.contains(post.id))
+        
+        
     }
     
     var body: some View {
+        
         VStack(alignment: .leading, spacing: 16) {
             // User Header - CLICKABLE with Debug
             Button(action: {
                 print("🔴 Profile button tapped for: \(post.authorUsername)")
                 handleProfileTap()
-            }) {
+            }
+            ) {
                 HStack(spacing: 12) {
                     // Profile Avatar - Clickable
                     ZStack {
@@ -78,6 +80,8 @@ struct UserPostCard: View {
                         .foregroundColor(.gray.opacity(0.5))
                 }
             }
+            
+                
             .buttonStyle(PlainButtonStyle())
             
             // Post type badge (if not text)
@@ -106,24 +110,25 @@ struct UserPostCard: View {
                 // Like button
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                        isLiked.toggle()
-                        likesCount += isLiked ? 1 : -1
                         homeViewModel.toggleLike(for: post.id)
                     }
                 }) {
                     HStack(spacing: 6) {
-                        Image(systemName: isLiked ? "heart.fill" : "heart")
-                            .foregroundColor(isLiked ? .red : .gray)
+                        Image(systemName: homeViewModel.likedPosts.contains(post.id) ? "heart.fill" : "heart")
+                            .foregroundColor(homeViewModel.likedPosts.contains(post.id) ? .red : .gray)
                         
-                        Text("\(likesCount)")
+                        Text("\(post.likesCount)")  // ✅ Just the actual count
                             .font(.caption)
                             .fontWeight(.medium)
-                            .foregroundColor(isLiked ? .red : .gray)
+                            .foregroundColor(homeViewModel.likedPosts.contains(post.id) ? .red : .gray)
                     }
                 }
                 
                 // Comment button
-                Button(action: {}) {
+                // Comment button
+                Button(action: {
+                    showComments = true
+                }) {
                     HStack(spacing: 6) {
                         Image(systemName: "message")
                             .foregroundColor(.gray)
@@ -186,6 +191,19 @@ struct UserPostCard: View {
                 .padding()
             }
         }
+        .sheet(isPresented: $showComments) {
+            CommentsView(
+                postId: post.id,
+                onCommentCountChanged: { newCount in
+                    // Update the post's comment count locally
+                    homeViewModel.updatePostCommentCount(postId: post.id, newCount: newCount)
+                }
+            )
+            .environmentObject(authService)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        
         .onAppear {
             // Debug info on appear
             debugMessage = authService.isAuthenticated ? "✓" : "✗"
