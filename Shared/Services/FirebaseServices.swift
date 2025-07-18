@@ -620,14 +620,15 @@ class FirebaseServices {
     
     // MARK: - Comment Methods
     
-    func addComment(postId: String, content: String, authorId: String, authorUsername: String) async throws {
+    func addComment(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) async throws {
         let batch = db.batch()
         
         let comment = Comment(
             postId: postId,
             content: content,
             authorId: authorId,
-            authorUsername: authorUsername
+            authorUsername: authorUsername,
+            parentCommentId: parentCommentId  // ✅ Add this
         )
         
         // Add comment
@@ -635,9 +636,11 @@ class FirebaseServices {
             .collection("comments").document(comment.id)
         batch.setData(comment.toFirestore(), forDocument: commentRef)
         
-        // Update comment count
-        let postRef = db.collection("posts").document(postId)
-        batch.updateData(["commentsCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+        // Update comment count (only increment for top-level comments)
+        if parentCommentId == nil {  // ✅ Add this condition
+            let postRef = db.collection("posts").document(postId)
+            batch.updateData(["commentsCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+        }
         
         try await batch.commit()
     }
@@ -833,6 +836,9 @@ class FirebaseServices {
     // MARK: - Report and Block Methods
     
     func reportPost(postId: String, reportedBy: String, reason: String) async throws {
+        let batch = db.batch()
+        
+        // Add the report
         let report: [String: Any] = [
             "postId": postId,
             "reportedBy": reportedBy,
@@ -841,7 +847,43 @@ class FirebaseServices {
             "status": "pending"
         ]
         
-        try await db.collection("reports").document().setData(report)
+        let reportRef = db.collection("reports").document()
+        batch.setData(report, forDocument: reportRef)
+        
+        // ✅ Track user's reported posts
+        let userReportRef = db.collection("users").document(reportedBy)
+            .collection("reportedPosts").document(postId)
+        batch.setData([
+            "postId": postId,
+            "reportedAt": Timestamp(date: Date())
+        ], forDocument: userReportRef)
+        
+        // ✅ Increment report count on the post
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData(["reportCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+        
+        try await batch.commit()
+        
+        // ✅ Check if post should be auto-hidden (3+ reports)
+        try await checkPostReportCount(postId: postId)
+    }
+
+    private func checkPostReportCount(postId: String) async throws {
+        let postDoc = try await db.collection("posts").document(postId).getDocument()
+        let reportCount = postDoc.data()?["reportCount"] as? Int ?? 0
+        
+        print("📊 Post \(postId) has \(reportCount) reports")
+        
+        if reportCount >= 3 {
+            // Auto-hide the post
+            try await db.collection("posts").document(postId).updateData([
+                "isHidden": true,
+                "hiddenAt": Timestamp(date: Date()),
+                "hiddenReason": "Multiple reports (\(reportCount) reports)"
+            ])
+            
+            print("🚨 Auto-hidden post \(postId) due to \(reportCount) reports")
+        }
     }
     
     func reportUser(userId: String, reportedBy: String, reason: String) async throws {
@@ -1237,9 +1279,11 @@ struct Comment: Identifiable, Codable {
     let authorUsername: String
     let createdAt: Date
     let likesCount: Int
+    let parentCommentId: String?  // ✅ Add this for replies
+
 
     // Initializer for creating a new comment
-    init(postId: String, content: String, authorId: String, authorUsername: String) {
+    init(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) {
         self.id = UUID().uuidString
         self.postId = postId
         self.content = content
@@ -1247,10 +1291,12 @@ struct Comment: Identifiable, Codable {
         self.authorUsername = authorUsername
         self.createdAt = Date()
         self.likesCount = 0
+        self.parentCommentId = parentCommentId  // ✅ Add this
+
     }
 
     // Initializer for loading from Firestore
-    init(id: String, postId: String, content: String, authorId: String, authorUsername: String, createdAt: Date, likesCount: Int) {
+    init(id: String, postId: String, content: String, authorId: String, authorUsername: String, createdAt: Date, likesCount: Int, parentCommentId: String? = nil) {
         self.id = id
         self.postId = postId
         self.content = content
@@ -1258,10 +1304,12 @@ struct Comment: Identifiable, Codable {
         self.authorUsername = authorUsername
         self.createdAt = createdAt
         self.likesCount = likesCount
+        self.parentCommentId = parentCommentId  // ✅ Add this
+
     }
 
     func toFirestore() -> [String: Any] {
-        return [
+        var data: [String: Any] = [
             "postId": postId,
             "content": content,
             "authorId": authorId,
@@ -1269,6 +1317,13 @@ struct Comment: Identifiable, Codable {
             "createdAt": Timestamp(date: createdAt),
             "likesCount": likesCount
         ]
+        
+        // ✅ Only add parentCommentId if it exists
+        if let parentCommentId = parentCommentId {
+            data["parentCommentId"] = parentCommentId
+        }
+        
+        return data
     }
 
     static func fromFirestore(data: [String: Any], id: String) throws -> Comment {
@@ -1288,7 +1343,8 @@ struct Comment: Identifiable, Codable {
             authorId: authorId,
             authorUsername: authorUsername,
             createdAt: createdAtTimestamp.dateValue(),
-            likesCount: likesCount
+            likesCount: likesCount,
+            parentCommentId: data["parentCommentId"] as? String  // ✅ Add this - it's optional
         )
     }
 }

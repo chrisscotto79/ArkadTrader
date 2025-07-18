@@ -189,7 +189,7 @@ class ProfileViewModel: ObservableObject {
     }
     
     // MARK: - Content Management
-    func createPost(content: String) async {
+    func createPost(content: String, tickers: [String] = [], images: [UIImage] = []) async {
         guard let userId = authService.currentUser?.id,
               let username = authService.currentUser?.username else { return }
         

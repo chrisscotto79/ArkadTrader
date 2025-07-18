@@ -93,9 +93,9 @@ struct HomeView: View {
             .navigationBarHidden(true)
         }
         .sheet(isPresented: $showCreatePost) {
-            CreatePostView { content in
+            CreatePostView { content, tickers, images in
                 Task {
-                    await homeViewModel.createPost(content: content)
+                    await homeViewModel.createPost(content: content, tickers: tickers, images: images)
                 }
             }
         }

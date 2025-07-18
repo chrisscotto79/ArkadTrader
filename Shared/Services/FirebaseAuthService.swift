@@ -377,8 +377,8 @@ class FirebaseAuthService: ObservableObject {
     
     // MARK: - Comment Wrapper Methods
     
-    func addComment(postId: String, content: String, authorId: String, authorUsername: String) async throws {
-        try await FirebaseServices.shared.addComment(postId: postId, content: content, authorId: authorId, authorUsername: authorUsername)
+    func addComment(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) async throws {
+        try await FirebaseServices.shared.addComment(postId: postId, content: content, authorId: authorId, authorUsername: authorUsername, parentCommentId: parentCommentId)
     }
     
     func getCommentsForPost(postId: String) async throws -> [Comment] {

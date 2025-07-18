@@ -1,6 +1,7 @@
 // Fixed HomeViewModel.swift - No new files, just fix the existing code
 import Foundation
 import Firebase
+import FirebaseStorage
 
 // Add MarketNewsArticle to existing HomeViewModel file instead of creating new file
 struct MarketNewsArticle: Identifiable, Codable {
@@ -91,6 +92,48 @@ class HomeViewModel: ObservableObject {
     @Published var likedPosts: Set<String> = []
     @Published var bookmarkedPosts: Set<String> = []
     
+    @Published var hiddenPosts: Set<String> = []
+    @Published var reportedPostsByUser: Set<String> = []
+    
+    func hideReportedPost(postId: String, reportedBy: String) {
+        // Hide immediately for the reporter
+        reportedPostsByUser.insert(postId)
+        
+        // Remove from visible posts arrays
+        posts.removeAll { $0.id == postId }
+        followingPosts.removeAll { $0.id == postId }
+        
+        print("✅ Hidden post \(postId) from user \(reportedBy)")
+    }
+
+    func checkAndHidePost(postId: String) async {
+        // This will be called by Firebase when report count threshold is reached
+        hiddenPosts.insert(postId)
+        
+        await MainActor.run {
+            // Remove from all local arrays
+            posts.removeAll { $0.id == postId }
+            followingPosts.removeAll { $0.id == postId }
+        }
+        
+        print("🚨 Auto-hidden post \(postId) due to multiple reports")
+    }
+
+    // Filter posts to exclude hidden ones
+    private func filterHiddenPosts() {
+        let currentUserId = authService.currentUser?.id ?? ""
+        
+        posts = posts.filter { post in
+            !hiddenPosts.contains(post.id) &&
+            !reportedPostsByUser.contains(post.id)
+        }
+        
+        followingPosts = followingPosts.filter { post in
+            !hiddenPosts.contains(post.id) &&
+            !reportedPostsByUser.contains(post.id)
+        }
+    }
+    
     private let authService = FirebaseAuthService.shared
     private var currentPage = 0
     private let postsPerPage = 20
@@ -165,30 +208,72 @@ class HomeViewModel: ObservableObject {
         isLoadingMore = false
     }
     
-    func createPost(content: String) async {
+    func createPost(content: String, tickers: [String] = [], images: [UIImage] = []) async {
         guard let userId = authService.currentUser?.id,
               let username = authService.currentUser?.username else { return }
         
-        // Determine post type based on content
+        // ✅ Skip image upload, but keep all other trading features
         let postType = determinePostType(from: content)
         
-        var newPost = Post(content: content, authorId: userId, authorUsername: username)
-        newPost.postType = postType
+        var newPost = Post(
+            content: content,
+            authorId: userId,
+            authorUsername: username,
+            postType: postType,
+            tickers: tickers,
+            imageUrls: [] // ✅ Empty for now - no images
+        )
+        
+        // ✅ Add trading data if it's a trade result
+        if postType == .tradeResult {
+            newPost.tradingData = extractTradingDataFromContent(content)
+        }
         
         do {
             try await authService.createPost(newPost)
-            
-            // Add to local posts immediately for better UX
             posts.insert(newPost, at: 0)
-            
-            // Re-filter posts for different tabs
             await filterPostsByCategory()
-            
         } catch {
             errorMessage = "Failed to create post: \(error.localizedDescription)"
             showError = true
         }
     }
+
+    // ✅ Add this helper method
+    private func extractTradingDataFromContent(_ content: String) -> TradingData? {
+        var tradingData = TradingData()
+        
+        // Extract profit/loss patterns like "$500", "+$1,200", "-$200"
+        let profitPattern = "[+-]?\\$[0-9,]+\\.?[0-9]*"
+        if let profitMatch = content.range(of: profitPattern, options: .regularExpression) {
+            tradingData.profitLossString = String(content[profitMatch])
+        }
+        
+        return tradingData
+    }
+
+    // ✅ Add image upload method
+    private func uploadImage(_ image: UIImage, postId: String, imageIndex: Int) async throws -> String? {
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            print("❌ Failed to convert image to data")
+            return nil
+        }
+        
+        let fileName = "\(postId)_\(imageIndex).jpg"
+        let storageRef = Storage.storage().reference().child("post_images/\(fileName)")
+        
+        do {
+            print("🔄 Uploading image: \(fileName)")
+            let _ = try await storageRef.putDataAsync(imageData)
+            let downloadURL = try await storageRef.downloadURL()
+            print("✅ Image uploaded successfully: \(downloadURL.absoluteString)")
+            return downloadURL.absoluteString
+        } catch {
+            print("❌ Image upload failed: \(error)")
+            return nil // Return nil instead of throwing
+        }
+    }
+
     
     // MARK: - User Interactions
     func toggleLike(for postId: String) {
