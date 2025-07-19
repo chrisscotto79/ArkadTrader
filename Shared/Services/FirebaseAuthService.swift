@@ -47,6 +47,22 @@ class FirebaseAuthService: ObservableObject {
         }
     }
     
+    // MARK: - User Refresh Method
+    /// Reloads the current user from Firebase (useful after updates)
+    func refreshCurrentUser() async {
+        guard let userId = currentUser?.id else { return }
+        
+        do {
+            let refreshedUser = try await FirebaseServices.shared.getUserById(userId: userId)
+            await MainActor.run {
+                self.currentUser = refreshedUser
+            }
+            print("✅ Current user refreshed successfully")
+        } catch {
+            print("❌ Error refreshing current user: \(error)")
+        }
+    }
+    
     // MARK: - Authentication Methods
     
     func login(email: String, password: String) async throws {

@@ -73,6 +73,10 @@ struct ProfileView: View {
     
     @MainActor
     private func refreshProfile() async {
+        // Refresh the current user data from Firebase
+        await authService.refreshCurrentUser()
+        
+        // Refresh other profile data
         portfolioViewModel.refreshPortfolio()
         await postsViewModel.refreshPosts()
         await groupsViewModel.refreshGroups()
