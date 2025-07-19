@@ -279,13 +279,17 @@ class HomeViewModel: ObservableObject {
     func toggleLike(for postId: String) {
         let wasLiked = likedPosts.contains(postId)
         
+        // Update UI immediately for responsiveness
         if wasLiked {
             likedPosts.remove(postId)
         } else {
             likedPosts.insert(postId)
         }
         
-        // Only sync with Firebase - let Firebase handle the count
+        // Update local count immediately
+        updateLocalPostCount(postId: postId, increment: !wasLiked)
+        
+        // Sync with Firebase (don't update count again)
         Task {
             await syncLikeWithFirebase(postId: postId, isLiked: !wasLiked)
         }
@@ -363,17 +367,24 @@ class HomeViewModel: ObservableObject {
                 try await authService.unlikePost(postId: postId, userId: userId)
             }
             
-            // ✅ UPDATE LOCAL POST COUNTS AFTER FIREBASE SUCCESS
-            await MainActor.run {
-                updateLocalPostCount(postId: postId, increment: isLiked)
-            }
+            // ❌ REMOVE THIS SECTION - it's causing double counting
+            // await MainActor.run {
+            //     updateLocalPostCount(postId: postId, increment: isLiked)
+            // }
+            
+            print("✅ Firebase sync successful - count already updated in UI")
             
         } catch {
             // Revert local like state if Firebase sync fails
-            if isLiked {
-                likedPosts.remove(postId)
-            } else {
-                likedPosts.insert(postId)
+            await MainActor.run {
+                if isLiked {
+                    likedPosts.remove(postId)
+                } else {
+                    likedPosts.insert(postId)
+                }
+                
+                // Revert the count change too
+                updateLocalPostCount(postId: postId, increment: !isLiked)
             }
             
             errorMessage = "Failed to sync like: \(error.localizedDescription)"

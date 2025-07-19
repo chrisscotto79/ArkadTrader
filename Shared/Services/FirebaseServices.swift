@@ -395,45 +395,356 @@ class FirebaseServices {
         }
     }
     
+    private func checkIfUserLikedPost(postId: String, userId: String) async throws -> Bool {
+        // Check both locations
+        let postLikeDoc = try await db.collection("posts").document(postId)
+            .collection("likes").document(userId).getDocument()
+        
+        let userNewLikeDoc = try await db.collection("users").document(userId)
+            .collection("likedPosts").document(postId).getDocument()
+        
+        let userOldLikeDoc = try await db.collection("users").document(userId)
+            .collection("likes").document(postId).getDocument()
+        
+        return postLikeDoc.exists || userNewLikeDoc.exists || userOldLikeDoc.exists
+    }
+    private func checkLikeLocations(postId: String, userId: String) async throws -> Set<String> {
+        var locations: Set<String> = []
+        
+        // Check post likes collection
+        do {
+            let postLikeDoc = try await db.collection("posts").document(postId)
+                .collection("likes").document(userId).getDocument()
+            if postLikeDoc.exists {
+                locations.insert("post")
+            }
+        } catch {
+            print("⚠️ Error checking post like: \(error)")
+        }
+        
+        // Check user new likes collection
+        do {
+            let userNewLikeDoc = try await db.collection("users").document(userId)
+                .collection("likedPosts").document(postId).getDocument()
+            if userNewLikeDoc.exists {
+                locations.insert("userNew")
+            }
+        } catch {
+            print("⚠️ Error checking user new like: \(error)")
+        }
+        
+        // Check user old likes collection
+        do {
+            let userOldLikeDoc = try await db.collection("users").document(userId)
+                .collection("likes").document(postId).getDocument()
+            if userOldLikeDoc.exists {
+                locations.insert("userOld")
+            }
+        } catch {
+            print("⚠️ Error checking user old like: \(error)")
+        }
+        
+        return locations
+    }
     // MARK: - Like/Unlike Methods
     
     func likePost(postId: String, userId: String) async throws {
+        print("💾 === LIKING POST (ROBUST VERSION) ===")
+        print("📝 Post ID: \(postId)")
+        print("👤 User ID: \(userId)")
+        
+        // ✅ First check if user has already liked this post (prevent double-liking)
+        let isAlreadyLiked = try await checkIfUserLikedPost(postId: postId, userId: userId)
+        if isAlreadyLiked {
+            print("⚠️ User has already liked this post - skipping")
+            return
+        }
+        
         let batch = db.batch()
         
-        // Add like document under user
-        let likeRef = db.collection("users").document(userId).collection("likes").document(postId)
+        // ✅ 1. Add like document in POST's likes subcollection
+        let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+        batch.setData([
+            "userId": userId,
+            "likedAt": Timestamp(date: Date())
+        ], forDocument: postLikeRef)
+        print("✅ Will write to: posts/\(postId)/likes/\(userId)")
+        
+        // ✅ 2. Add like document in USER's likedPosts subcollection
+        let userLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
         batch.setData([
             "postId": postId,
             "likedAt": Timestamp(date: Date())
-        ], forDocument: likeRef)
+        ], forDocument: userLikeRef)
+        print("✅ Will write to: users/\(userId)/likedPosts/\(postId)")
         
-        // Increment like count on post
+        // ✅ 3. Update post's like count
         let postRef = db.collection("posts").document(postId)
         batch.updateData(["likesCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+        print("✅ Will increment likesCount on post")
         
         try await batch.commit()
+        print("✅ Like batch committed successfully!")
     }
-    
+
     func unlikePost(postId: String, userId: String) async throws {
+        print("🗑️ === UNLIKING POST (ROBUST VERSION) ===")
+        print("📝 Post ID: \(postId)")
+        print("👤 User ID: \(userId)")
+        
+        // ✅ Check what like documents actually exist before deleting
+        let likeLocations = try await checkLikeLocations(postId: postId, userId: userId)
+        
+        if likeLocations.isEmpty {
+            print("⚠️ No like documents found - user hasn't liked this post")
+            return
+        }
+        
+        print("📍 Found likes in locations: \(likeLocations)")
+        
         let batch = db.batch()
+        var shouldDecrementCount = false
         
-        // Remove like document from user
-        let likeRef = db.collection("users").document(userId).collection("likes").document(postId)
-        batch.deleteDocument(likeRef)
+        // ✅ Remove from POST's likes collection if it exists there
+        if likeLocations.contains("post") {
+            let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+            batch.deleteDocument(postLikeRef)
+            shouldDecrementCount = true
+            print("✅ Will delete: posts/\(postId)/likes/\(userId)")
+        }
         
-        // Decrement like count on post
-        let postRef = db.collection("posts").document(postId)
-        batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
+        // ✅ Remove from USER's new likes collection if it exists there
+        if likeLocations.contains("userNew") {
+            let userNewLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
+            batch.deleteDocument(userNewLikeRef)
+            if !shouldDecrementCount {
+                shouldDecrementCount = true
+            }
+            print("✅ Will delete: users/\(userId)/likedPosts/\(postId)")
+        }
+        
+        // ✅ Remove from USER's old likes collection if it exists there (cleanup)
+        if likeLocations.contains("userOld") {
+            let userOldLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+            batch.deleteDocument(userOldLikeRef)
+            if !shouldDecrementCount {
+                shouldDecrementCount = true
+            }
+            print("✅ Will delete OLD: users/\(userId)/likes/\(postId)")
+        }
+        
+        // ✅ Only decrement count once, regardless of how many locations had the like
+        if shouldDecrementCount {
+            let postRef = db.collection("posts").document(postId)
+            batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
+            print("✅ Will decrement likesCount on post")
+        }
         
         try await batch.commit()
+        print("✅ Unlike completed successfully!")
     }
+
+   
     
-    func getUserLikedPosts(userId: String) async throws -> Set<String> {
-        let snapshot = try await db.collection("users").document(userId)
-            .collection("likes").getDocuments()
+    
+    
+    // ✅ NEW helper method to ensure a specific like is migrated
+    func ensureLikeMigration(postId: String, userId: String) async {
+        print("🔄 Ensuring migration for post: \(postId), user: \(userId)")
         
-        return Set(snapshot.documents.map { $0.documentID })
+        // Check if the like exists in old location but not new location
+        do {
+            let oldLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+            let oldLikeDoc = try await oldLikeRef.getDocument()
+            
+            let newLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
+            let newLikeDoc = try await newLikeRef.getDocument()
+            
+            let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+            let postLikeDoc = try await postLikeRef.getDocument()
+            
+            // If we have old like but missing new ones, migrate this specific like
+            if oldLikeDoc.exists && (!newLikeDoc.exists || !postLikeDoc.exists) {
+                print("🔄 Migrating single like: \(postId)")
+                
+                let batch = db.batch()
+                
+                // Add to new user location
+                if !newLikeDoc.exists {
+                    batch.setData([
+                        "postId": postId,
+                        "likedAt": Timestamp(date: Date()),
+                        "migratedFromOldFormat": true
+                    ], forDocument: newLikeRef)
+                }
+                
+                // Add to post location
+                if !postLikeDoc.exists {
+                    batch.setData([
+                        "userId": userId,
+                        "likedAt": Timestamp(date: Date()),
+                        "migratedFromOldFormat": true
+                    ], forDocument: postLikeRef)
+                }
+                
+                try await batch.commit()
+                print("✅ Single like migration completed")
+            }
+        } catch {
+            print("⚠️ Error during single like migration: \(error)")
+        }
     }
+    func getUserLikedPosts(userId: String) async throws -> Set<String> {
+        print("🔍 === LOADING USER LIKED POSTS (ROBUST VERSION) ===")
+        print("👤 User ID: \(userId)")
+        
+        var allLikedPosts: Set<String> = []
+        
+        // ✅ Load from NEW location (likedPosts)
+        do {
+            print("🔄 Checking NEW location: users/\(userId)/likedPosts")
+            let newLikesSnapshot = try await db.collection("users").document(userId)
+                .collection("likedPosts").getDocuments()
+            
+            let newLikes = Set(newLikesSnapshot.documents.map { $0.documentID })
+            allLikedPosts.formUnion(newLikes)
+            print("✅ Found \(newLikes.count) likes in NEW location")
+        } catch {
+            print("⚠️ Could not read from likedPosts: \(error)")
+        }
+        
+        // ✅ Load from OLD location (likes) - but don't duplicate
+        do {
+            print("🔄 Checking OLD location: users/\(userId)/likes")
+            let oldLikesSnapshot = try await db.collection("users").document(userId)
+                .collection("likes").getDocuments()
+            
+            let oldLikes = Set(oldLikesSnapshot.documents.map { $0.documentID })
+            
+            // Only add old likes that aren't already in new location
+            let newOldLikes = oldLikes.subtracting(allLikedPosts)
+            allLikedPosts.formUnion(newOldLikes)
+            
+            print("✅ Found \(oldLikes.count) total in OLD location, \(newOldLikes.count) new ones")
+            
+            // ✅ Auto-migrate old likes if found
+            if !newOldLikes.isEmpty {
+                print("🔄 Auto-migrating \(newOldLikes.count) old likes")
+                Task {
+                    await migrateSpecificLikes(userId: userId, postIds: newOldLikes)
+                }
+            }
+        } catch {
+            print("⚠️ Could not read from likes: \(error)")
+        }
+        
+        print("✅ Total unique liked posts: \(allLikedPosts.count)")
+        return allLikedPosts
+    }
+    private func migrateSpecificLikes(userId: String, postIds: Set<String>) async {
+        print("🔄 Migrating \(postIds.count) specific likes for user \(userId)")
+        
+        let batch = db.batch()
+        var batchCount = 0
+        
+        for postId in postIds {
+            // Add to new user location
+            let newUserLikeRef = db.collection("users").document(userId)
+                .collection("likedPosts").document(postId)
+            batch.setData([
+                "postId": postId,
+                "likedAt": Timestamp(date: Date()),
+                "migratedFromOldFormat": true
+            ], forDocument: newUserLikeRef)
+            
+            // Add to post's likes collection
+            let postLikeRef = db.collection("posts").document(postId)
+                .collection("likes").document(userId)
+            batch.setData([
+                "userId": userId,
+                "likedAt": Timestamp(date: Date()),
+                "migratedFromOldFormat": true
+            ], forDocument: postLikeRef)
+            
+            batchCount += 2
+            
+            // Commit in batches to avoid hitting Firestore limits
+            if batchCount >= 400 {
+                do {
+                    try await batch.commit()
+                    print("✅ Migrated batch of likes")
+                    batchCount = 0
+                } catch {
+                    print("❌ Error migrating batch: \(error)")
+                }
+            }
+        }
+        
+        // Commit remaining operations
+        if batchCount > 0 {
+            do {
+                try await batch.commit()
+                print("✅ Migration completed")
+            } catch {
+                print("❌ Error in final migration: \(error)")
+            }
+        }
+    }
+    func migrateOldLikes(userId: String, oldLikes: Set<String>) async throws {
+        print("🔄 === MIGRATING OLD LIKES ===")
+        
+        let batch = db.batch()
+        var batchCount = 0
+        
+        for postId in oldLikes {
+            // 1. Add to new user location (likedPosts)
+            let newUserLikeRef = db.collection("users").document(userId)
+                .collection("likedPosts").document(postId)
+            batch.setData([
+                "postId": postId,
+                "likedAt": Timestamp(date: Date()),
+                "migratedFromOldFormat": true
+            ], forDocument: newUserLikeRef)
+            
+            // 2. Add to post's likes subcollection
+            let postLikeRef = db.collection("posts").document(postId)
+                .collection("likes").document(userId)
+            batch.setData([
+                "userId": userId,
+                "likedAt": Timestamp(date: Date()),
+                "migratedFromOldFormat": true
+            ], forDocument: postLikeRef)
+            
+            // 3. Delete from old location
+            let oldLikeRef = db.collection("users").document(userId)
+                .collection("likes").document(postId)
+            batch.deleteDocument(oldLikeRef)
+            
+            batchCount += 3
+            
+            // Commit batch if getting close to limit
+            if batchCount >= 450 {
+                do {
+                    try await batch.commit()
+                    print("✅ Migrated batch of likes")
+                    batchCount = 0
+                } catch {
+                    print("❌ Error migrating batch: \(error)")
+                }
+            }
+        }
+        
+        // Commit remaining operations
+        if batchCount > 0 {
+            do {
+                try await batch.commit()
+                print("✅ Migration completed successfully")
+            } catch {
+                print("❌ Error in final migration batch: \(error)")
+            }
+        }
+    }
+    // ✅ Updated unlike method to be more defensive
     
     // MARK: - Bookmark Methods
     
