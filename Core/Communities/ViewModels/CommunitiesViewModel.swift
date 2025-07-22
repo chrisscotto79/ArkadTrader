@@ -1,12 +1,5 @@
-//
-//  CommunitiesViewModel.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/19/25.
-//
-
 // File: Core/Communities/ViewModels/CommunitiesViewModel.swift
-// Main Communities Tab ViewModel
+// Updated Communities ViewModel with Complete Service Integration
 
 import Foundation
 import Combine
@@ -21,6 +14,7 @@ class CommunitiesViewModel: ObservableObject {
     @Published var errorMessage = ""
     
     // User stats
+    @Published var userStats: UserCommunityStats?
     @Published var activeCommunities = 0
     @Published var userGlobalRank = 0
     
@@ -28,9 +22,10 @@ class CommunitiesViewModel: ObservableObject {
     @Published var searchQuery = ""
     @Published var selectedCategory: CommunityType? = nil
     @Published var showPrivateCommunities = false
+    @Published var sortType: CommunitySortType = .memberCount
     
     // MARK: - Private Properties
-    private let communityService = CommunityFirebaseService()
+    private let communityService = CommunityFirebaseService.shared
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
     
@@ -45,7 +40,10 @@ class CommunitiesViewModel: ObservableObject {
         authService.$currentUser
             .compactMap { $0 }
             .sink { [weak self] _ in
-                Task { await self?.loadUserCommunities() }
+                Task {
+                    await self?.loadUserCommunities()
+                    await self?.loadUserStats()
+                }
             }
             .store(in: &cancellables)
         
@@ -55,7 +53,23 @@ class CommunitiesViewModel: ObservableObject {
             .sink { [weak self] query in
                 if !query.isEmpty {
                     Task { await self?.searchCommunities(query: query) }
+                } else {
+                    Task { await self?.loadDiscoveryCommunities() }
                 }
+            }
+            .store(in: &cancellables)
+        
+        // React to category changes
+        $selectedCategory
+            .sink { [weak self] _ in
+                Task { await self?.loadDiscoveryCommunities() }
+            }
+            .store(in: &cancellables)
+        
+        // React to privacy filter changes
+        $showPrivateCommunities
+            .sink { [weak self] _ in
+                Task { await self?.loadDiscoveryCommunities() }
             }
             .store(in: &cancellables)
     }
@@ -68,288 +82,307 @@ class CommunitiesViewModel: ObservableObject {
             isLoading = true
             errorMessage = ""
             
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await self.loadFeaturedCommunities() }
-                group.addTask { await self.loadDiscoveryCommunities() }
-                group.addTask { await self.loadUserCommunities() }
-                group.addTask { await self.loadUserStats() }
-            }
+            async let featuredTask = loadFeaturedCommunities()
+            async let discoveryTask = loadDiscoveryCommunities()
+            async let userCommunitiesTask = loadUserCommunities()
+            async let userStatsTask = loadUserStats()
+            
+            // Wait for all tasks to complete
+            await featuredTask
+            await discoveryTask
+            await userCommunitiesTask
+            await userStatsTask
             
             isLoading = false
         }
     }
     
-    /// Refresh all communities data
+    /// Refresh all data
     func refreshData() {
         Task {
             await loadInitialData()
         }
     }
     
-    /// Join a community
-    func joinCommunity(_ community: Community) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
+    // MARK: - Data Loading Methods
+    
+    /// Load featured communities
+    func loadFeaturedCommunities() async {
         do {
-            try await communityService.joinCommunity(communityId: community.id, userId: userId)
+            let featured = try await communityService.loadFeaturedCommunities(limit: 3)
+            featuredCommunities = featured
+        } catch {
+            handleError(error, context: "loading featured communities")
+        }
+    }
+    
+    /// Load discovery communities with filters
+    func loadDiscoveryCommunities() async {
+        do {
+            var communities: [Community]
             
-            // Update local state
-            if !userCommunities.contains(where: { $0.id == community.id }) {
-                var updatedCommunity = community
-                updatedCommunity.memberCount += 1
-                userCommunities.append(updatedCommunity)
-                
-                // Update discovery list
-                if let index = discoveryCommunities.firstIndex(where: { $0.id == community.id }) {
-                    discoveryCommunities[index].memberCount += 1
-                }
+            // Apply category filter
+            if let category = selectedCategory {
+                communities = try await communityService.loadCommunitiesByCategory(category)
+            } else {
+                communities = try await communityService.loadDiscoveryCommunities()
             }
             
-            await loadUserStats()
+            // Apply privacy filter
+            communities = communityService.filterCommunitiesByPrivacy(
+                communities,
+                showPrivate: showPrivateCommunities
+            )
+            
+            // Apply sorting
+            communities = communityService.sortCommunities(communities, by: sortType)
+            
+            discoveryCommunities = communities
             
         } catch {
-            errorMessage = "Failed to join community: \(error.localizedDescription)"
+            handleError(error, context: "loading discovery communities")
+        }
+    }
+    
+    /// Load user's communities
+    func loadUserCommunities() async {
+        guard let userId = authService.currentUser?.id else {
+            userCommunities = []
+            return
+        }
+        
+        do {
+            let communities = try await communityService.loadUserCommunities(userId: userId)
+            userCommunities = communities
+            activeCommunities = communities.count
+        } catch {
+            handleError(error, context: "loading user communities")
+        }
+    }
+    
+    /// Load user statistics
+    func loadUserStats() async {
+        guard let userId = authService.currentUser?.id else {
+            userStats = nil
+            return
+        }
+        
+        do {
+            let stats = try await communityService.getUserCommunityStats(userId: userId)
+            userStats = stats
+            activeCommunities = stats.activeCommunities
+            userGlobalRank = stats.globalRank
+        } catch {
+            handleError(error, context: "loading user stats")
+        }
+    }
+    
+    // MARK: - Community Actions
+    
+    /// Join a community
+    func joinCommunity(_ community: Community) {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        Task {
+            do {
+                try await communityService.joinCommunity(
+                    communityId: community.id,
+                    userId: userId
+                )
+                
+                // Refresh data after joining
+                await loadUserCommunities()
+                await loadDiscoveryCommunities()
+                await loadUserStats()
+                
+            } catch {
+                handleError(error, context: "joining community")
+            }
         }
     }
     
     /// Leave a community
-    func leaveCommunity(_ community: Community) async {
+    func leaveCommunity(_ community: Community) {
         guard let userId = authService.currentUser?.id else { return }
         
-        do {
-            try await communityService.leaveCommunity(communityId: community.id, userId: userId)
-            
-            // Update local state
-            userCommunities.removeAll { $0.id == community.id }
-            
-            // Update discovery list
-            if let index = discoveryCommunities.firstIndex(where: { $0.id == community.id }) {
-                discoveryCommunities[index].memberCount -= 1
+        Task {
+            do {
+                try await communityService.leaveCommunity(
+                    communityId: community.id,
+                    userId: userId
+                )
+                
+                // Refresh data after leaving
+                await loadUserCommunities()
+                await loadDiscoveryCommunities()
+                await loadUserStats()
+                
+            } catch {
+                handleError(error, context: "leaving community")
             }
-            
-            await loadUserStats()
-            
-        } catch {
-            errorMessage = "Failed to leave community: \(error.localizedDescription)"
         }
     }
     
     /// Create a new community
-    func createCommunity(_ community: Community) async -> Bool {
-        do {
-            try await communityService.createCommunity(community)
-            
-            // Add to user communities
-            userCommunities.append(community)
-            
-            // Refresh data
-            await loadDiscoveryCommunities()
-            await loadUserStats()
-            
-            return true
-        } catch {
-            errorMessage = "Failed to create community: \(error.localizedDescription)"
-            return false
+    func createCommunity(_ community: Community) {
+        guard let userId = authService.currentUser?.id else { return }
+        
+        Task {
+            do {
+                // Check if user can create more communities
+                let canCreate = try await communityService.canUserCreateCommunity(userId: userId)
+                guard canCreate.canCreate else {
+                    errorMessage = canCreate.message
+                    return
+                }
+                
+                try await communityService.createCommunity(community)
+                
+                // Refresh data after creating
+                await loadUserCommunities()
+                await loadDiscoveryCommunities()
+                await loadUserStats()
+                
+            } catch {
+                handleError(error, context: "creating community")
+            }
         }
     }
     
+    // MARK: - Search and Filtering
+    
+    /// Search communities
+    func searchCommunities(query: String) async {
+        do {
+            // Simple search first
+            var results = try await communityService.searchCommunities(query: query)
+            
+            // Apply filters manually
+            if let category = selectedCategory {
+                results = results.filter { $0.type == category }
+            }
+            
+            if !showPrivateCommunities {
+                results = results.filter { !$0.isPrivate }
+            }
+            
+            discoveryCommunities = results
+        } catch {
+            handleError(error, context: "searching communities")
+        }
+    }
+    
+    /// Filter by category
+    func filterByCategory(_ category: CommunityType?) {
+        selectedCategory = category
+        // Auto-triggers loadDiscoveryCommunities via binding
+    }
+    
+    /// Toggle private communities visibility
+    func togglePrivateCommunities() {
+        showPrivateCommunities.toggle()
+        // Auto-triggers loadDiscoveryCommunities via binding
+    }
+    
+    /// Sort communities
+    func sortCommunitiesBy(_ sortType: CommunitySortType) {
+        self.sortType = sortType
+        discoveryCommunities = communityService.sortCommunities(discoveryCommunities, by: sortType)
+    }
+    
+    // MARK: - Community Information
+    
     /// Check if user is member of community
-    func isUserMemberOf(_ community: Community) -> Bool {
+    func isUserMember(of community: Community) -> Bool {
         return userCommunities.contains { $0.id == community.id }
     }
     
-    /// Get user's role in community
-    func getUserRoleIn(_ community: Community) async -> String? {
-        guard let userId = authService.currentUser?.id else { return nil }
-        return try? await communityService.getUserRole(communityId: community.id, userId: userId)
+    /// Check if user owns community
+    func isUserOwner(of community: Community) -> Bool {
+        guard let userId = authService.currentUser?.id else { return false }
+        return community.createdBy == userId
     }
     
-    // MARK: - Private Methods
+    /// Get communities created by user
+    var userOwnedCommunities: [Community] {
+        guard let userId = authService.currentUser?.id else { return [] }
+        return userCommunities.filter { $0.createdBy == userId }
+    }
     
-    private func loadFeaturedCommunities() async {
+    /// Get communities user is member of (but didn't create)
+    var userMemberCommunities: [Community] {
+        guard let userId = authService.currentUser?.id else { return [] }
+        return userCommunities.filter { $0.createdBy != userId }
+    }
+    
+    /// Get count of communities by type
+    func communitiesCount(for type: CommunityType) -> Int {
+        return discoveryCommunities.filter { $0.type == type }.count
+    }
+    
+    // MARK: - Validation
+    
+    /// Validate community creation data
+    func validateCommunityData(name: String, description: String) -> (isValid: Bool, message: String) {
+        let nameValidation = communityService.validateCommunityName(name)
+        if !nameValidation.isValid {
+            return nameValidation
+        }
+        
+        let descriptionValidation = communityService.validateCommunityDescription(description)
+        if !descriptionValidation.isValid {
+            return descriptionValidation
+        }
+        
+        return (true, "")
+    }
+    
+    // MARK: - Error Handling
+    
+    private func handleError(_ error: Error, context: String) {
+        let message = communityService.handleCommunityError(error)
+        errorMessage = "Error \(context): \(message)"
+        print("❌ CommunitiesViewModel - Error \(context): \(error)")
+    }
+    
+    /// Clear error message
+    func clearError() {
+        errorMessage = ""
+    }
+    
+    // MARK: - Computed Properties
+    
+    /// Whether user has any communities
+    var hasUserCommunities: Bool {
+        !userCommunities.isEmpty
+    }
+    
+    /// Count of communities user created
+    var userCreatedCommunitiesCount: Int {
+        userOwnedCommunities.count
+    }
+    
+    /// Whether data is currently loading
+    var isDataLoading: Bool {
+        isLoading
+    }
+    
+    /// Whether there's an active error
+    var hasError: Bool {
+        !errorMessage.isEmpty
+    }
+    
+    // MARK: - Leaderboard Data
+    
+    @Published var leaderboardData: CommunityLeaderboards?
+    
+    /// Load leaderboard data
+    func loadLeaderboards() async {
         do {
-            featuredCommunities = try await communityService.getFeaturedCommunities(limit: 10)
+            let leaderboards = try await communityService.getCommunityLeaderboards()
+            leaderboardData = leaderboards
         } catch {
-            print("Error loading featured communities: \(error)")
+            handleError(error, context: "loading leaderboards")
         }
-    }
-    
-    private func loadDiscoveryCommunities() async {
-        do {
-            discoveryCommunities = try await communityService.getPublicCommunities(limit: 50)
-        } catch {
-            print("Error loading discovery communities: \(error)")
-            errorMessage = "Failed to load communities"
-        }
-    }
-    
-    private func loadUserCommunities() async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            userCommunities = try await communityService.getUserCommunities(userId: userId)
-        } catch {
-            print("Error loading user communities: \(error)")
-        }
-    }
-    
-    private func loadUserStats() async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            let stats = try await communityService.getUserCommunityStats(userId: userId)
-            activeCommunities = stats.activeCommunities
-            userGlobalRank = stats.globalRank
-        } catch {
-            print("Error loading user stats: \(error)")
-        }
-    }
-    
-    private func searchCommunities(query: String) async {
-        do {
-            let results = try await communityService.searchCommunities(
-                query: query,
-                category: selectedCategory,
-                includePrivate: showPrivateCommunities
-            )
-            discoveryCommunities = results
-        } catch {
-            print("Error searching communities: \(error)")
-            errorMessage = "Search failed"
-        }
-    }
-    
-    // MARK: - Filtering
-    func filterCommunitiesByCategory(_ category: CommunityType?) {
-        selectedCategory = category
-        Task {
-            await loadDiscoveryCommunities()
-        }
-    }
-    
-    func togglePrivateCommunities() {
-        showPrivateCommunities.toggle()
-        Task {
-            await loadDiscoveryCommunities()
-        }
-    }
-    
-    // MARK: - Sorting
-    func sortCommunitiesBy(_ sortType: CommunitySortType) {
-        switch sortType {
-        case .memberCount:
-            discoveryCommunities.sort { $0.memberCount > $1.memberCount }
-        case .newest:
-            discoveryCommunities.sort { $0.createdAt > $1.createdAt }
-        case .alphabetical:
-            discoveryCommunities.sort { $0.name < $1.name }
-        case .mostActive:
-            // TODO: Implement activity sorting when we have activity data
-            break
-        }
-    }
-}
-
-// MARK: - Supporting Types
-enum CommunitySortType: CaseIterable {
-    case memberCount
-    case newest
-    case alphabetical
-    case mostActive
-    
-    var displayName: String {
-        switch self {
-        case .memberCount: return "Most Members"
-        case .newest: return "Newest"
-        case .alphabetical: return "A-Z"
-        case .mostActive: return "Most Active"
-        }
-    }
-}
-
-// MARK: - User Community Stats
-struct UserCommunityStats {
-    let activeCommunities: Int
-    let globalRank: Int
-    let totalMembers: Int
-    let communitiesOwned: Int
-    let communitiesModerated: Int
-}
-
-// MARK: - Placeholder Service
-class CommunityFirebaseService {
-    
-    // MARK: - Community CRUD
-    func createCommunity(_ community: Community) async throws {
-        // TODO: Implement with Firebase
-        // This will use the existing FirebaseServices community methods
-        try await FirebaseServices.shared.createCommunity(community)
-    }
-    
-    func getFeaturedCommunities(limit: Int) async throws -> [Community] {
-        // TODO: Implement featured algorithm
-        // For now, return most popular public communities
-        return try await FirebaseServices.shared.getCommunities(limit: limit)
-    }
-    
-    func getPublicCommunities(limit: Int) async throws -> [Community] {
-        return try await FirebaseServices.shared.getCommunities(limit: limit)
-    }
-    
-    func getUserCommunities(userId: String) async throws -> [Community] {
-        return try await FirebaseServices.shared.getUserCommunities(userId: userId)
-    }
-    
-    func searchCommunities(query: String, category: CommunityType?, includePrivate: Bool) async throws -> [Community] {
-        // TODO: Implement advanced search with filters
-        return try await FirebaseServices.shared.searchCommunities(query: query)
-    }
-    
-    // MARK: - Membership
-    func joinCommunity(communityId: String, userId: String) async throws {
-        try await FirebaseServices.shared.joinCommunity(communityId: communityId, userId: userId)
-    }
-    
-    func leaveCommunity(communityId: String, userId: String) async throws {
-        try await FirebaseServices.shared.leaveCommunity(communityId: communityId, userId: userId)
-    }
-    
-    func getUserRole(communityId: String, userId: String) async throws -> String {
-        // TODO: Implement role checking
-        return "member"
-    }
-    
-    // MARK: - Stats
-    func getUserCommunityStats(userId: String) async throws -> UserCommunityStats {
-        // TODO: Implement comprehensive stats
-        let userCommunities = try await getUserCommunities(userId: userId)
-        
-        return UserCommunityStats(
-            activeCommunities: userCommunities.count,
-            globalRank: Int.random(in: 1...1000), // TODO: Calculate real rank
-            totalMembers: userCommunities.reduce(0) { $0 + $1.memberCount },
-            communitiesOwned: userCommunities.filter { $0.createdBy == userId }.count,
-            communitiesModerated: 0 // TODO: Implement moderator tracking
-        )
-    }
-}
-
-// MARK: - Preview Data
-extension CommunitiesViewModel {
-    static func preview() -> CommunitiesViewModel {
-        let viewModel = CommunitiesViewModel()
-        
-        // Mock data for previews
-        viewModel.featuredCommunities = [
-            Community(name: "Day Traders Elite", description: "Advanced day trading strategies and live market analysis", type: .dayTrading, creatorId: "mock1"),
-            Community(name: "Options Hub", description: "Options trading community for all skill levels", type: .options, creatorId: "mock2"),
-            Community(name: "Crypto Signals", description: "Cryptocurrency trading signals and discussions", type: .crypto, creatorId: "mock3")
-        ]
-        
-        viewModel.discoveryCommunities = viewModel.featuredCommunities
-        viewModel.activeCommunities = 3
-        viewModel.userGlobalRank = 42
-        
-        return viewModel
     }
 }

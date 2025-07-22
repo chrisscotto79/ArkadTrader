@@ -1,15 +1,14 @@
 // File: Core/Communities/Views/Main/CommunitiesView.swift
-// Clean Communities View - All Errors Fixed
+// Updated Communities View with Hamburger Slide Menu
 
 import SwiftUI
 
 struct CommunitiesView: View {
     @EnvironmentObject var authService: FirebaseAuthService
-    @State private var communities: [Community] = []
-    @State private var userCommunities: [Community] = []
+    @StateObject private var viewModel = CommunitiesViewModel()
     @State private var showCreateCommunity = false
     @State private var selectedTab: CommunityMainTab = .discover
-    @State private var isLoading = true
+    @State private var showSideMenu = false // New state for hamburger menu
     
     var body: some View {
         ZStack {
@@ -17,14 +16,16 @@ struct CommunitiesView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Header (no navigation title)
+                // Updated Header with hamburger menu
                 headerSection
                 
-                // Tab Selector (vertical layout)
-                tabSection
-                
-                // Content
+                // Main Content (no tab section anymore)
                 contentSection
+            }
+            
+            // Side Menu Overlay
+            if showSideMenu {
+                sideMenuOverlay
             }
             
             // Floating Create Button (only on discover and my communities)
@@ -40,26 +41,48 @@ struct CommunitiesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showCreateCommunity) {
+        .sheet(isPresented: $showCreateCommunity, onDismiss: {
+            // Refresh data when creation sheet is dismissed
+            viewModel.refreshData()
+        }) {
             createSheet
         }
         .onAppear {
-            loadAllData()
+            viewModel.loadInitialData()
         }
     }
 }
 
-// MARK: - Header Section
+// MARK: - Header Section (Updated)
 extension CommunitiesView {
     private var headerSection: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("Communities")
+                // Hamburger Menu Button
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showSideMenu.toggle()
+                    }
+                }) {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.title2)
+                        .foregroundColor(.primary)
+                        .frame(width: 44, height: 44)
+                        .background(Color(.systemBackground))
+                        .clipShape(Circle())
+                        .shadow(color: .gray.opacity(0.2), radius: 2, x: 0, y: 1)
+                }
+                
+                Spacer()
+                
+                // Current Section Title
+                Text(selectedTab.displayName)
                     .font(.largeTitle)
                     .fontWeight(.bold)
                 
                 Spacer()
                 
+                // Search Button (moved from separate button to header)
                 Button(action: { selectedTab = .search }) {
                     Image(systemName: "magnifyingglass")
                         .font(.title2)
@@ -67,12 +90,13 @@ extension CommunitiesView {
                         .frame(width: 44, height: 44)
                         .background(Color(.systemBackground))
                         .clipShape(Circle())
+                        .shadow(color: .gray.opacity(0.2), radius: 2, x: 0, y: 1)
                 }
             }
             .padding(.horizontal, 20)
             
-            // Only show stats if user actually has communities
-            if !userCommunities.isEmpty {
+            // Only show stats if user actually has communities and we're in relevant tabs
+            if viewModel.hasUserCommunities && (selectedTab == .discover || selectedTab == .myCommunities) {
                 realStatsRow
             }
         }
@@ -82,9 +106,9 @@ extension CommunitiesView {
     
     private var realStatsRow: some View {
         HStack(spacing: 16) {
-            statBox(title: "Joined", value: "\(userCommunities.count)", icon: "person.3.fill")
-            statBox(title: "Active", value: "\(userCommunities.count)", icon: "chart.line.uptrend.xyaxis")
-            statBox(title: "Created", value: "\(userCreatedCommunitiesCount)", icon: "trophy.fill")
+            statBox(title: "Joined", value: "\(viewModel.userCommunities.count)", icon: "person.3.fill")
+            statBox(title: "Active", value: "\(viewModel.activeCommunities)", icon: "chart.line.uptrend.xyaxis")
+            statBox(title: "Created", value: "\(viewModel.userCreatedCommunitiesCount)", icon: "trophy.fill")
         }
         .padding(.horizontal, 20)
     }
@@ -110,59 +134,218 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Tab Section
+// MARK: - Side Menu
 extension CommunitiesView {
-    private var tabSection: some View {
-        VStack(spacing: 0) {
-            // First row of tabs
-            HStack(spacing: 0) {
-                tabButton(.discover)
-                tabButton(.myCommunities)
-                tabButton(.leaderboard)
-            }
+    private var sideMenuOverlay: some View {
+        ZStack {
+            // Dark overlay
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showSideMenu = false
+                    }
+                }
             
-            // Second row of tabs
-            HStack(spacing: 0) {
-                tabButton(.activity)
-                tabButton(.search)
+            HStack {
+                // Side Menu Content
+                sideMenu
+                
                 Spacer()
-                    .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(Color(.systemGroupedBackground))
     }
     
-    private func tabButton(_ tab: CommunityMainTab) -> some View {
-        Button(action: { selectedTab = tab }) {
-            VStack(spacing: 6) {
+    private var sideMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Menu Header
+            menuHeader
+            
+            // Menu Items
+            VStack(spacing: 0) {
+                ForEach(CommunityMainTab.allCases, id: \.self) { tab in
+                    menuItem(tab)
+                }
+            }
+            
+            Spacer()
+            
+            // Menu Footer
+            menuFooter
+        }
+        .frame(width: 280)
+        .background(Color(.systemBackground))
+        .shadow(color: .black.opacity(0.1), radius: 10, x: 5, y: 0)
+        .offset(x: showSideMenu ? 0 : -300)
+        .animation(.easeInOut(duration: 0.3), value: showSideMenu)
+    }
+    
+    private var menuHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Communities")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showSideMenu = false
+                    }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.title3)
+                        .foregroundColor(.gray)
+                }
+            }
+            
+            if let user = authService.currentUser {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Welcome back,")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text(user.fullName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(20)
+        .background(
+            LinearGradient(
+                colors: [Color.blue.opacity(0.1), Color.clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+    
+    private func menuItem(_ tab: CommunityMainTab) -> some View {
+        Button(action: {
+            selectedTab = tab
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showSideMenu = false
+            }
+        }) {
+            HStack(spacing: 16) {
                 Image(systemName: getTabIcon(for: tab))
                     .font(.title3)
                     .foregroundColor(selectedTab == tab ? .blue : .gray)
+                    .frame(width: 24)
                 
                 Text(tab.displayName)
-                    .font(.caption)
+                    .font(.subheadline)
                     .fontWeight(selectedTab == tab ? .semibold : .regular)
-                    .foregroundColor(selectedTab == tab ? .blue : .gray)
-                    .multilineTextAlignment(.center)
+                    .foregroundColor(selectedTab == tab ? .blue : .primary)
+                
+                Spacer()
+                
+                if selectedTab == tab {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                Rectangle()
                     .fill(selectedTab == tab ? Color.blue.opacity(0.1) : Color.clear)
             )
         }
-        .frame(maxWidth: .infinity)
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var menuFooter: some View {
+        VStack(spacing: 16) {
+            Divider()
+                .padding(.horizontal, 20)
+            
+            // Quick Stats in Menu
+            if viewModel.hasUserCommunities {
+                VStack(spacing: 8) {
+                    Text("Quick Stats")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    
+                    HStack {
+                        VStack(spacing: 4) {
+                            Text("\(viewModel.userCommunities.count)")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.blue)
+                            
+                            Text("Joined")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text("\(viewModel.userCreatedCommunitiesCount)")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.green)
+                            
+                            Text("Created")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text("\(viewModel.activeCommunities)")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.orange)
+                            
+                            Text("Active")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
+            }
+            
+            // Create Community Button in Menu
+            Button(action: {
+                showCreateCommunity = true
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    showSideMenu = false
+                }
+            }) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(.blue)
+                    
+                    Text("Create Community")
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.blue)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(Color.blue.opacity(0.1))
+                .cornerRadius(10)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
     }
 }
 
-// MARK: - Content Section
+// MARK: - Content Section (Unchanged)
 extension CommunitiesView {
     private var contentSection: some View {
         Group {
-            if isLoading {
+            if viewModel.isLoading {
                 loadingView
             } else {
                 ScrollView {
@@ -201,15 +384,15 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Discover Content
+// MARK: - Discover Content (Unchanged)
 extension CommunitiesView {
     private var discoverContent: some View {
         VStack(spacing: 24) {
-            if communities.isEmpty {
+            if viewModel.discoveryCommunities.isEmpty {
                 emptyDiscoverState
             } else {
                 // Featured Communities (top 3 by member count)
-                if communities.count > 0 {
+                if viewModel.featuredCommunities.count > 0 {
                     featuredSection
                 }
                 
@@ -225,11 +408,11 @@ extension CommunitiesView {
     
     private var featuredSection: some View {
         FeaturedCommunitiesSection.standard(
-            communities: featuredCommunities,
+            communities: viewModel.featuredCommunities,
             onCommunityTap: { community in
                 print("Featured community tapped: \(community.name)")
             },
-            onSeeAllTap: communities.count > 3 ? {
+            onSeeAllTap: viewModel.featuredCommunities.count > 3 ? {
                 print("See all featured communities")
             } : nil
         )
@@ -261,15 +444,15 @@ extension CommunitiesView {
                 .padding(.horizontal, 20)
             
             VStack(spacing: 12) {
-                ForEach(communities) { community in
+                ForEach(viewModel.discoveryCommunities) { community in
                     CommunityCard.regular(
                         community: community,
-                        isUserMember: isUserMember(community),
+                        isUserMember: viewModel.isUserMember(of: community),
                         onTap: {
                             print("Community tapped: \(community.name)")
                         },
                         onJoin: {
-                            joinCommunity(community)
+                            viewModel.joinCommunity(community)
                         }
                     )
                 }
@@ -289,7 +472,7 @@ extension CommunitiesView {
                 .fontWeight(.medium)
                 .multilineTextAlignment(.center)
             
-            Text("\(communitiesCount(for: type))")
+            Text("\(viewModel.communitiesCount(for: type))")
                 .font(.caption2)
                 .foregroundColor(.gray)
         }
@@ -300,16 +483,16 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - My Communities Content
+// MARK: - My Communities Content (Unchanged)
 extension CommunitiesView {
     private var myCommunitiesContent: some View {
         VStack(spacing: 20) {
-            if userCommunities.isEmpty {
+            if viewModel.userCommunities.isEmpty {
                 emptyMyCommunitiesState
             } else {
                 VStack(alignment: .leading, spacing: 24) {
                     // Communities I Own
-                    if !userOwnedCommunities.isEmpty {
+                    if !viewModel.userOwnedCommunities.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("Communities I Own")
                                 .font(.title2)
@@ -317,7 +500,7 @@ extension CommunitiesView {
                                 .padding(.horizontal, 20)
                             
                             VStack(spacing: 12) {
-                                ForEach(userOwnedCommunities) { community in
+                                ForEach(viewModel.userOwnedCommunities) { community in
                                     CommunityCard.userCommunity(
                                         community: community,
                                         isOwner: true,
@@ -332,7 +515,7 @@ extension CommunitiesView {
                     }
                     
                     // Communities I'm a Member Of
-                    if !userMemberCommunities.isEmpty {
+                    if !viewModel.userMemberCommunities.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("Communities I'm In")
                                 .font(.title2)
@@ -340,7 +523,7 @@ extension CommunitiesView {
                                 .padding(.horizontal, 20)
                             
                             VStack(spacing: 12) {
-                                ForEach(userMemberCommunities) { community in
+                                ForEach(viewModel.userMemberCommunities) { community in
                                     CommunityCard.userCommunity(
                                         community: community,
                                         isOwner: false,
@@ -360,11 +543,11 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Other Content Tabs
+// MARK: - Other Content Tabs (Unchanged)
 extension CommunitiesView {
     private var leaderboardContent: some View {
         VStack(spacing: 24) {
-            if communities.isEmpty {
+            if viewModel.discoveryCommunities.isEmpty {
                 emptyStateView(
                     icon: "trophy.circle",
                     title: "No Leaderboards Yet",
@@ -380,14 +563,14 @@ extension CommunitiesView {
                     // Top Communities by Members
                     leaderboardSection(
                         title: "Most Popular",
-                        communities: communities.sorted { $0.memberCount > $1.memberCount }.prefix(5),
+                        communities: viewModel.discoveryCommunities.sorted { $0.memberCount > $1.memberCount }.prefix(5),
                         metric: "members"
                     )
                     
                     // Newest Communities
                     leaderboardSection(
                         title: "Newest",
-                        communities: communities.sorted { $0.createdAt > $1.createdAt }.prefix(5),
+                        communities: viewModel.discoveryCommunities.sorted { $0.createdAt > $1.createdAt }.prefix(5),
                         metric: "days old"
                     )
                 }
@@ -398,7 +581,7 @@ extension CommunitiesView {
     
     private var activityContent: some View {
         VStack(spacing: 24) {
-            if communities.isEmpty {
+            if viewModel.discoveryCommunities.isEmpty {
                 emptyStateView(
                     icon: "clock.circle",
                     title: "No Activity Yet",
@@ -412,8 +595,8 @@ extension CommunitiesView {
                         .padding(.horizontal, 20)
                     
                     VStack(spacing: 16) {
-                        ForEach(0..<min(communities.count, 5), id: \.self) { index in
-                            simpleActivityRow(community: communities[index])
+                        ForEach(0..<min(viewModel.discoveryCommunities.count, 5), id: \.self) { index in
+                            simpleActivityRow(community: viewModel.discoveryCommunities[index])
                         }
                     }
                     .padding(.horizontal, 20)
@@ -441,7 +624,7 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Supporting Views
+// MARK: - Supporting Views (Unchanged)
 extension CommunitiesView {
     private func leaderboardSection(title: String, communities: ArraySlice<Community>, metric: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -549,7 +732,7 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Empty States
+// MARK: - Empty States (Unchanged)
 extension CommunitiesView {
     private var emptyDiscoverState: some View {
         VStack(spacing: 24) {
@@ -612,7 +795,7 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Create Button & Sheet
+// MARK: - Create Button & Sheet (Unchanged)
 extension CommunitiesView {
     private var createButton: some View {
         Button(action: { showCreateCommunity = true }) {
@@ -641,89 +824,12 @@ extension CommunitiesView {
     }
     
     private var createSheet: some View {
-        NavigationView {
-            VStack(spacing: 30) {
-                Image(systemName: "person.3.fill")
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
-                
-                Text("Create Community")
-                    .font(.title)
-                    .fontWeight(.bold)
-                
-                Text("Community creation features are coming soon! You'll be able to create and manage your own trading communities.")
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(.gray)
-                    .padding(.horizontal, 30)
-                
-                Button("Got it") {
-                    showCreateCommunity = false
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(Color.blue)
-                .cornerRadius(12)
-            }
-            .padding(40)
-            .navigationTitle("Create")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(leading: Button("Cancel") { showCreateCommunity = false })
-        }
+        CreateCommunityView()
     }
 }
 
-// MARK: - Helper Methods
+// MARK: - Helper Methods (Updated)
 extension CommunitiesView {
-    private func loadAllData() {
-        Task {
-            isLoading = true
-            
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await self.loadAllCommunities() }
-                group.addTask { await self.loadUserCommunities() }
-            }
-            
-            isLoading = false
-        }
-    }
-    
-    private func loadAllCommunities() async {
-        do {
-            communities = try await authService.getCommunities()
-        } catch {
-            print("Error loading all communities: \(error)")
-        }
-    }
-    
-    private func loadUserCommunities() async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            userCommunities = try await authService.getUserCommunities(userId: userId)
-        } catch {
-            print("Error loading user communities: \(error)")
-        }
-    }
-    
-    private func joinCommunity(_ community: Community) {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        Task {
-            do {
-                try await authService.joinCommunity(communityId: community.id, userId: userId)
-                await loadAllData()
-            } catch {
-                print("Error joining community: \(error)")
-            }
-        }
-    }
-    
-    private func isUserMember(_ community: Community) -> Bool {
-        return userCommunities.contains { $0.id == community.id }
-    }
-    
     private func getTabIcon(for tab: CommunityMainTab) -> String {
         switch tab {
         case .discover: return "magnifyingglass.circle"
@@ -732,10 +838,6 @@ extension CommunitiesView {
         case .activity: return "clock.fill"
         case .search: return "magnifyingglass"
         }
-    }
-    
-    private func communitiesCount(for type: CommunityType) -> Int {
-        return communities.filter { $0.type == type }.count
     }
     
     private func getCommunityTypeColor(for type: CommunityType) -> Color {
@@ -793,28 +895,9 @@ extension CommunitiesView {
         case .general: return .blue
         }
     }
-    
-    private var userCreatedCommunitiesCount: Int {
-        guard let userId = authService.currentUser?.id else { return 0 }
-        return userCommunities.filter { $0.createdBy == userId }.count
-    }
-    
-    private var userOwnedCommunities: [Community] {
-        guard let userId = authService.currentUser?.id else { return [] }
-        return userCommunities.filter { $0.createdBy == userId }
-    }
-    
-    private var userMemberCommunities: [Community] {
-        guard let userId = authService.currentUser?.id else { return [] }
-        return userCommunities.filter { $0.createdBy != userId }
-    }
-    
-    private var featuredCommunities: [Community] {
-        return Array(communities.sorted { $0.memberCount > $1.memberCount }.prefix(3))
-    }
 }
 
-// MARK: - Supporting Types
+// MARK: - Supporting Types (Unchanged)
 enum CommunityMainTab: CaseIterable {
     case discover
     case myCommunities
