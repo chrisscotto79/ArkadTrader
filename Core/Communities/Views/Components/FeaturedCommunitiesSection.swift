@@ -102,13 +102,15 @@ struct FeaturedCommunitiesSection: View {
     }
     
     private func featuredCommunityCard(_ community: Community) -> some View {
-        CommunityCard.featured(
-            community: community,
-            onTap: {
-                handleCommunityTap(community)
-            }
-        )
+        NavigationLink(destination: CommunityDetailView(community: community)) {
+            CommunityCard.featured(
+                community: community,
+                onTap: nil
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
+
     
     // MARK: - Enhanced Featured Card (Alternative Layout)
     private func enhancedFeaturedCard(_ community: Community) -> some View {

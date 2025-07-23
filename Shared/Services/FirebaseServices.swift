@@ -97,6 +97,7 @@ class FirebaseServices {
             try? Post.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
+    
 
     func getFollowingTrades(userId: String, limit: Int = 20) async throws -> [Trade] {
         // Get user's following list
@@ -233,6 +234,7 @@ class FirebaseServices {
     func deleteTrade(tradeId: String) async throws {
         try await db.collection("trades").document(tradeId).delete()
     }
+    
     
     func getUserTrades(userId: String) async throws -> [Trade] {
         let snapshot = try await db.collection("trades")
@@ -393,6 +395,129 @@ class FirebaseServices {
             post.content.lowercased().contains(query.lowercased()) ||
             post.authorUsername.lowercased().contains(query.lowercased())
         }
+    }
+    private func createDefaultChannels(for communityId: String) async throws {
+        let batch = db.batch()
+        
+        // Create #general channel
+        let generalChannel = Channel(
+            name: "general",
+            type: .text,
+            communityId: communityId,
+            isDefault: true,
+            adminOnly: false
+        )
+        
+        let generalRef = db.collection("communities").document(communityId)
+            .collection("channels").document(generalChannel.id)
+        batch.setData(generalChannel.toFirestore(), forDocument: generalRef)
+        
+        // Create #callouts channel
+        let calloutsChannel = Channel(
+            name: "callouts",
+            type: .callouts,
+            communityId: communityId,
+            isDefault: true,
+            adminOnly: true
+        )
+        
+        let calloutsRef = db.collection("communities").document(communityId)
+            .collection("channels").document(calloutsChannel.id)
+        batch.setData(calloutsChannel.toFirestore(), forDocument: calloutsRef)
+        
+        try await batch.commit()
+    }
+
+    /// Get all channels for a community
+    func getCommunityChannels(communityId: String) async throws -> [Channel] {
+        let snapshot = try await db.collection("communities").document(communityId)
+            .collection("channels")
+            .order(by: "createdAt", descending: false)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Channel.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+
+    /// Create a new channel in a community
+    func createChannel(_ channel: Channel) async throws {
+        let channelRef = db.collection("communities").document(channel.communityId)
+            .collection("channels").document(channel.id)
+        
+        try await channelRef.setData(channel.toFirestore())
+    }
+
+    /// Delete a channel (only if not default)
+    func deleteChannel(channelId: String, communityId: String) async throws {
+        // First check if it's a default channel
+        let channelSnapshot = try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId).getDocument()
+        
+        if let data = channelSnapshot.data(),
+           let isDefault = data["isDefault"] as? Bool,
+           isDefault {
+            throw NSError(domain: "CommunityError", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Cannot delete default channels"])
+        }
+        
+        // Delete the channel
+        try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId).delete()
+    }
+
+    // MARK: - Community Message Methods
+
+    /// Send a message to a channel
+    func sendCommunityMessage(_ message: CommunityMessage) async throws {
+        let messageRef = db.collection("communities").document(message.communityId)
+            .collection("channels").document(message.channelId)
+            .collection("messages").document(message.id)
+        
+        try await messageRef.setData(message.toFirestore())
+    }
+
+    /// Get messages for a channel
+    func getChannelMessages(communityId: String, channelId: String, limit: Int = 50) async throws -> [CommunityMessage] {
+        let snapshot = try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages")
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        let messages = snapshot.documents.compactMap { document in
+            try? CommunityMessage.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        return messages.reversed() // Return in chronological order
+    }
+
+    /// Listen to real-time messages in a channel
+    func listenToChannelMessages(communityId: String, channelId: String, completion: @escaping ([CommunityMessage]) -> Void) {
+        db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages")
+            .order(by: "createdAt", descending: false)
+            .addSnapshotListener { snapshot, error in
+                guard let documents = snapshot?.documents else {
+                    print("Error fetching channel messages: \(error?.localizedDescription ?? "Unknown error")")
+                    return
+                }
+                
+                let messages = documents.compactMap { document -> CommunityMessage? in
+                    try? CommunityMessage.fromFirestore(data: document.data(), id: document.documentID)
+                }
+                
+                completion(messages)
+            }
+    }
+
+    /// Delete a message from a channel
+    func deleteCommunityMessage(messageId: String, communityId: String, channelId: String) async throws {
+        try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages").document(messageId)
+            .delete()
     }
     
     private func checkIfUserLikedPost(postId: String, userId: String) async throws -> Bool {
@@ -789,6 +914,9 @@ class FirebaseServices {
         ], forDocument: userRef)
         
         try await batch.commit()
+        
+        // Create default channels after community is created
+        try await createDefaultChannels(for: community.id)
     }
     
     func updateCommunity(_ community: Community) async throws {
