@@ -1,516 +1,383 @@
-//
-//  CommunityDetailView.swift
-//  ArkadTrader
-//
-//  ENHANCED VERSION - Beautiful Discord-like Community Interface
-//
+// File: Core/Communities/Views/Detail/CommunityDetailView.swift
+// COMPLETELY REWRITTEN - Clean, Simple, Working Implementation
 
 import SwiftUI
 
 struct CommunityDetailView: View {
     let community: Community
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var detailViewModel = EnhancedCommunityDetailViewModel()
+    @StateObject private var viewModel = CommunityDetailViewModel()
     @State private var showMembersList = false
     @State private var showCommunitySettings = false
-    @State private var showCreateChannel = false
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Top Navigation Bar
-            enhancedNavigationBar
-            
-            // Community Header
-            enhancedCommunityHeader
-            
-            // Quick Actions Bar
-            quickActionsBar
-            
-            // Channels List
-            enhancedChannelsList
-            
-            Spacer()
+        ScrollView {
+            VStack(spacing: 20) {
+                // Navigation Header
+                navigationHeader
+                
+                // Community Info Card
+                communityInfoCard
+                
+                // Action Buttons
+                actionButtons
+                
+                // Channels Section
+                channelsSection
+            }
+            .padding(.horizontal, 20)
         }
-        .background(
-            LinearGradient(
-                colors: [Color(.systemGroupedBackground), Color(.systemBackground).opacity(0.5)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .background(Color(.systemGroupedBackground))
         .navigationBarHidden(true)
+        .onAppear {
+            viewModel.loadCommunityData(community: community)
+        }
         .sheet(isPresented: $showMembersList) {
-            CommunityMembersView(community: community)
+            MembersListSheet(community: community)
         }
         .sheet(isPresented: $showCommunitySettings) {
-            CommunitySettingsView(community: community)
-        }
-        .sheet(isPresented: $showCreateChannel) {
-            CreateChannelView(community: community)
-        }
-        .onAppear {
-            print("🏘️ === ENHANCED CommunityDetailView APPEARED ===")
-            print("   Community: \(community.name)")
-            print("   ID: \(community.id)")
-            print("   Type: \(community.type.displayName)")
-            print("   Members: \(community.memberCount)")
-            print("   Private: \(community.isPrivate)")
-            print("   Creator: \(community.createdBy)")
-            print("🏘️ === CommunityDetailView LOADED SUCCESSFULLY ===")
-            
-            detailViewModel.loadCommunityData(community: community)
+            CommunitySettingsSheet(community: community)
         }
     }
 }
 
-// MARK: - Enhanced Navigation Bar
+// MARK: - Navigation Header
 extension CommunityDetailView {
-    private var enhancedNavigationBar: some View {
+    private var navigationHeader: some View {
         HStack {
-            // Back Button with animation
-            Button(action: {
-                print("⬅️ Back button tapped in CommunityDetailView")
+            Button("Back") {
                 dismiss()
-            }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.left")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                    
-                    Text("Communities")
-                        .font(.body)
-                        .fontWeight(.medium)
-                }
-                .foregroundColor(.blue)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.blue.opacity(0.1))
-                )
             }
+            .foregroundColor(.blue)
             
             Spacer()
             
-            // Community Name with icon
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(communityColor)
-                    .frame(width: 24, height: 24)
-                    .overlay(
-                        Text(getCommunityInitials())
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                    )
-                
-                Text(community.name)
-                    .font(.headline)
-                    .fontWeight(.bold)
-                    .lineLimit(1)
-            }
+            Text(community.name)
+                .font(.headline)
+                .fontWeight(.bold)
             
             Spacer()
             
-            // Settings Button
-            Button(action: {
-                print("⚙️ Settings tapped for: \(community.name)")
-                showCommunitySettings = true
-            }) {
-                Image(systemName: "ellipsis.circle.fill")
-                    .font(.title3)
+            Button(action: { showCommunitySettings = true }) {
+                Image(systemName: "ellipsis.circle")
                     .foregroundColor(.gray)
-                    .background(
-                        Circle()
-                            .fill(Color(.systemBackground))
-                            .shadow(color: .black.opacity(0.1), radius: 2)
-                    )
             }
         }
-        .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(
-            Color(.systemBackground)
-                .shadow(color: .black.opacity(0.08), radius: 1, x: 0, y: 1)
-        )
     }
 }
 
-// MARK: - Enhanced Community Header
+// MARK: - Community Info Card
 extension CommunityDetailView {
-    private var enhancedCommunityHeader: some View {
+    private var communityInfoCard: some View {
         VStack(spacing: 20) {
-            // Community Avatar with glow effect
-            ZStack {
-                Circle()
-                    .fill(communityColor.opacity(0.2))
-                    .frame(width: 120, height: 120)
-                    .blur(radius: 10)
-                
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [communityColor, communityColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 100, height: 100)
-                    .overlay(
-                        Text(getCommunityInitials())
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                    )
-                    .shadow(color: communityColor.opacity(0.4), radius: 10, x: 0, y: 5)
-            }
+            // Community Avatar
+            Circle()
+                .fill(communityColor)
+                .frame(width: 80, height: 80)
+                .overlay(
+                    Text(getCommunityInitials())
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                )
             
-            // Community Info
+            // Community Details
             VStack(spacing: 12) {
                 Text(community.name)
-                    .font(.title)
+                    .font(.title2)
                     .fontWeight(.bold)
-                    .multilineTextAlignment(.center)
                 
-                // Stats Row
-                HStack(spacing: 24) {
-                    statItem(icon: "person.3.fill", value: "\(community.memberCount)", label: "Members", color: .blue)
-                    statItem(icon: "message.fill", value: "2", label: "Channels", color: .green)
-                    statItem(icon: "crown.fill", value: detailViewModel.isUserAdmin ? "Admin" : "Member", label: "Role", color: .orange)
+                if !community.description.isEmpty {
+                    Text(community.description)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
                 }
                 
-                // Community Type & Privacy
+                // Stats
+                HStack(spacing: 30) {
+                    VStack {
+                        Text("\(community.memberCount)")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text("Members")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    VStack {
+                        Text("\(viewModel.channels.count)")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text("Channels")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    VStack {
+                        Text(viewModel.userRole.capitalized)
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text("Role")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                // Badges
                 HStack(spacing: 12) {
                     // Type Badge
-                    HStack(spacing: 6) {
-                        Image(systemName: getTypeIcon())
-                            .font(.caption)
-                        Text(community.type.displayName)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule()
-                            .fill(communityColor)
-                            .shadow(color: communityColor.opacity(0.3), radius: 4, x: 0, y: 2)
-                    )
+                    Text(community.type.displayName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(communityColor)
+                        .cornerRadius(12)
                     
                     // Privacy Badge
                     if community.isPrivate {
-                        HStack(spacing: 6) {
-                            Image(systemName: "lock.fill")
-                                .font(.caption)
-                            Text("Private")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(Color.orange.opacity(0.15))
-                        )
+                        Text("Private")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.15))
+                            .cornerRadius(12)
                     }
                 }
             }
-            
-            // Description
-            if !community.description.isEmpty {
-                Text(community.description)
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-                    .lineLimit(3)
-            }
         }
-        .padding(.vertical, 32)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
-        )
-        .padding(.horizontal, 20)
-    }
-    
-    private func statItem(icon: String, value: String, label: String, color: Color) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(color)
-            
-            Text(value)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-            
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
+        .padding(24)
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
     }
 }
 
-// MARK: - Quick Actions Bar
+// MARK: - Action Buttons
 extension CommunityDetailView {
-    private var quickActionsBar: some View {
-        HStack(spacing: 16) {
-            // View Members
-            quickActionButton(
-                icon: "person.3.fill",
-                title: "Members",
-                color: .blue
-            ) {
-                showMembersList = true
-            }
-            
-            // Invite People (if admin)
-            if detailViewModel.isUserAdmin {
-                quickActionButton(
-                    icon: "person.badge.plus",
-                    title: "Invite",
-                    color: .green
-                ) {
-                    print("📤 Invite people tapped")
-                    // TODO: Show invite sheet
-                }
-            }
-            
-            // Notifications
-            quickActionButton(
-                icon: "bell.fill",
-                title: "Notifications",
-                color: .orange
-            ) {
-                print("🔔 Notifications tapped")
-                // TODO: Show notification settings
-            }
-            
-            Spacer()
-            
-            // Leave/Manage Community
-            if detailViewModel.isUserAdmin {
-                quickActionButton(
-                    icon: "gear",
-                    title: "Manage",
-                    color: .gray
-                ) {
-                    showCommunitySettings = true
+    private var actionButtons: some View {
+        HStack(spacing: 12) {
+            // Primary Action Button
+            if viewModel.isUserMember {
+                if viewModel.userRole == "owner" {
+                    Button("Manage Community") {
+                        showCommunitySettings = true
+                    }
+                    .buttonStyle(PrimaryButtonStyle(color: .blue))
+                } else {
+                    Button("Leave Community") {
+                        viewModel.leaveCommunity()
+                    }
+                    .buttonStyle(PrimaryButtonStyle(color: .red))
                 }
             } else {
-                quickActionButton(
-                    icon: "rectangle.portrait.and.arrow.right",
-                    title: "Leave",
-                    color: .red
-                ) {
-                    print("🚪 Leave community tapped")
-                    // TODO: Show leave confirmation
+                Button(community.isPrivate ? "Request to Join" : "Join Community") {
+                    viewModel.joinCommunity()
                 }
+                .buttonStyle(PrimaryButtonStyle(color: communityColor))
             }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-    }
-    
-    private func quickActionButton(icon: String, title: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(color)
-                    .frame(width: 28, height: 28)
-                
-                Text(title)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
+            
+            // Members Button
+            Button(action: { showMembersList = true }) {
+                Image(systemName: "person.3")
+                    .foregroundColor(.blue)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: color.opacity(0.2), radius: 3, x: 0, y: 2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(color.opacity(0.2), lineWidth: 1)
-            )
+            .frame(width: 44, height: 44)
+            .background(Color.blue.opacity(0.1))
+            .cornerRadius(12)
         }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 
-// MARK: - Enhanced Channels List
+// MARK: - Channels Section
 extension CommunityDetailView {
-    private var enhancedChannelsList: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private var channelsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
             // Section Header
             HStack {
-                HStack(spacing: 8) {
-                    Image(systemName: "number.square.fill")
-                        .font(.title3)
-                        .foregroundColor(.blue)
-                    
-                    Text("CHANNELS")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                }
+                Text("CHANNELS")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
                 
                 Spacer()
                 
-                if detailViewModel.isUserAdmin {
-                    Button(action: {
-                        print("➕ Add channel tapped")
-                        showCreateChannel = true
-                    }) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title3)
-                            .foregroundColor(.blue)
-                            .background(
-                                Circle()
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: .blue.opacity(0.3), radius: 3)
-                            )
+                if viewModel.canManageChannels {
+                    Button("Setup") {
+                        Task {
+                            await viewModel.setupDefaultChannels()
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                }
+            }
+            
+            // Channels List
+            VStack(spacing: 0) {
+                if viewModel.isLoading {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading channels...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 40)
+                } else if viewModel.channels.isEmpty {
+                    emptyChannelsView
+                } else {
+                    ForEach(viewModel.channels) { channel in
+                        NavigationLink(destination: ChannelChatView(community: community, channel: channel)) {
+                            ChannelRow(channel: channel)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        
+                        if channel.id != viewModel.channels.last?.id {
+                            Divider()
+                                .padding(.leading, 50)
+                        }
                     }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            
-            // Channels
-            VStack(spacing: 0) {
-                // Default Channels
-                enhancedChannelRow(
-                    name: "general",
-                    icon: "number",
-                    color: .blue,
-                    description: "General discussion for all members",
-                    isAdminOnly: false,
-                    unreadCount: 0
-                )
-                
-                Divider()
-                    .padding(.leading, 72)
-                
-                enhancedChannelRow(
-                    name: "callouts",
-                    icon: "megaphone",
-                    color: .orange,
-                    description: "Trading callouts and signals",
-                    isAdminOnly: true,
-                    unreadCount: 3
-                )
-                
-                // Custom Channels (placeholder for future implementation)
-                if detailViewModel.hasCustomChannels {
-                    Divider()
-                        .padding(.leading, 72)
-                    
-                    // Example custom channel
-                    enhancedChannelRow(
-                        name: "strategies",
-                        icon: "chart.line.uptrend.xyaxis",
-                        color: .purple,
-                        description: "Share and discuss trading strategies",
-                        isAdminOnly: false,
-                        unreadCount: 1
-                    )
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-            )
-            .padding(.horizontal, 20)
+            .background(Color(.systemBackground))
+            .cornerRadius(12)
         }
     }
     
-    private func enhancedChannelRow(name: String, icon: String, color: Color, description: String, isAdminOnly: Bool, unreadCount: Int) -> some View {
-        Button(action: {
-            print("💬 Enhanced channel tapped: #\(name)")
-            print("   Community: \(community.name)")
-            print("   Admin only: \(isAdminOnly)")
-            // TODO: Navigate to channel chat view
-        }) {
-            HStack(spacing: 16) {
-                // Channel Icon with background
-                ZStack {
-                    Circle()
-                        .fill(color.opacity(0.15))
-                        .frame(width: 40, height: 40)
-                    
-                    Image(systemName: icon)
-                        .font(.title3)
-                        .foregroundColor(color)
-                }
-                
-                // Channel Info
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text("#\(name)")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
-                        if isAdminOnly {
-                            Text("ADMIN")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.orange)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.orange.opacity(0.15))
-                                )
-                        }
-                        
-                        Spacer()
-                        
-                        // Unread count badge
-                        if unreadCount > 0 {
-                            Text("\(unreadCount)")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.red)
-                                )
-                        }
+    private var emptyChannelsView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "number.square.dashed")
+                .font(.system(size: 40))
+                .foregroundColor(.gray.opacity(0.5))
+            
+            Text("No channels yet")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            Text("Channels help organize conversations by topic")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            
+            if viewModel.canManageChannels {
+                Button("Create Default Channels") {
+                    Task {
+                        await viewModel.setupDefaultChannels()
                     }
-                    
-                    Text(description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
                 }
-                
-                // Chevron
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                .buttonStyle(PrimaryButtonStyle(color: communityColor))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .background(Color(.systemBackground))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.vertical, 40)
     }
 }
 
-// MARK: - Helper Properties & Methods
+// MARK: - Channel Row Component
+struct ChannelRow: View {
+    let channel: Channel
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Channel Icon
+            Circle()
+                .fill(channelColor.opacity(0.15))
+                .frame(width: 32, height: 32)
+                .overlay(
+                    Image(systemName: channelIcon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(channelColor)
+                )
+            
+            // Channel Info
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("#\(channel.name)")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    
+                    if channel.adminOnly {
+                        Text("ADMIN")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    
+                    Spacer()
+                }
+                
+                Text(channelDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+    
+    private var channelColor: Color {
+        switch channel.type {
+        case .text: return .blue
+        case .callouts: return .orange
+        case .voice: return .green
+        }
+    }
+    
+    private var channelIcon: String {
+        switch channel.type {
+        case .text: return "number"
+        case .callouts: return "megaphone"
+        case .voice: return "speaker.wave.2"
+        }
+    }
+    
+    private var channelDescription: String {
+        switch channel.type {
+        case .text:
+            return channel.adminOnly ? "Admin-only discussion" : "General discussion"
+        case .callouts:
+            return "Trading signals and callouts"
+        case .voice:
+            return "Voice chat channel"
+        }
+    }
+}
+
+// MARK: - Button Styles
+struct PrimaryButtonStyle: ButtonStyle {
+    let color: Color
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(color)
+            .cornerRadius(12)
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Helper Methods
 extension CommunityDetailView {
     private var communityColor: Color {
         switch community.type {
@@ -533,49 +400,10 @@ extension CommunityDetailView {
             return String(community.name.prefix(2)).uppercased()
         }
     }
-    
-    private func getTypeIcon() -> String {
-        switch community.type {
-        case .dayTrading: return "chart.line.uptrend.xyaxis"
-        case .swingTrading: return "waveform.path"
-        case .options: return "arrow.up.arrow.down.circle"
-        case .crypto: return "bitcoinsign.circle"
-        case .stocks: return "building.columns"
-        case .general: return "person.3.fill"
-        }
-    }
 }
 
-// MARK: - Enhanced ViewModel
-@MainActor
-class EnhancedCommunityDetailViewModel: ObservableObject {
-    @Published var isLoading = false
-    @Published var isUserAdmin = false
-    @Published var hasCustomChannels = false
-    @Published var memberCount = 0
-    
-    private let authService = FirebaseAuthService.shared
-    
-    func loadCommunityData(community: Community) {
-        print("🔄 EnhancedCommunityDetailViewModel: Loading data for \(community.name)")
-        
-        // Check if user is admin (community creator)
-        if let userId = authService.currentUser?.id {
-            isUserAdmin = (community.createdBy == userId)
-            print("   User is admin: \(isUserAdmin)")
-        }
-        
-        memberCount = community.memberCount
-        
-        // For demo purposes, show custom channels for some communities
-        hasCustomChannels = community.memberCount > 5
-        
-        print("   Enhanced community data loaded")
-    }
-}
-
-// MARK: - Placeholder Views for Sheets
-struct CommunityMembersView: View {
+// MARK: - Sheet Views
+struct MembersListSheet: View {
     let community: Community
     @Environment(\.dismiss) private var dismiss
     
@@ -583,85 +411,87 @@ struct CommunityMembersView: View {
         NavigationView {
             VStack {
                 Text("Members of \(community.name)")
-                    .font(.title)
+                    .font(.title2)
                     .padding()
                 
-                Text("Coming soon - member list functionality")
+                Text("Member management coming soon")
                     .foregroundColor(.secondary)
                 
                 Spacer()
             }
             .navigationTitle("Members")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
-                trailing: Button("Done") { dismiss() }
-            )
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }
 
-struct CommunitySettingsView: View {
+struct CommunitySettingsSheet: View {
     let community: Community
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         NavigationView {
-            VStack {
-                Text("Settings for \(community.name)")
-                    .font(.title)
-                    .padding()
+            List {
+                Section(header: Text("Community Info")) {
+                    HStack {
+                        Text("Name")
+                        Spacer()
+                        Text(community.name)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack {
+                        Text("Type")
+                        Spacer()
+                        Text(community.type.displayName)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack {
+                        Text("Members")
+                        Spacer()
+                        Text("\(community.memberCount)")
+                            .foregroundColor(.secondary)
+                    }
+                }
                 
-                Text("Coming soon - community settings")
-                    .foregroundColor(.secondary)
-                
-                Spacer()
+                Section(header: Text("Actions")) {
+                    Button("Edit Community") {
+                        // TODO: Edit functionality
+                    }
+                    
+                    Button("Manage Members") {
+                        // TODO: Member management
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
-                trailing: Button("Done") { dismiss() }
-            )
-        }
-    }
-}
-
-struct CreateChannelView: View {
-    let community: Community
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationView {
-            VStack {
-                Text("Create Channel in \(community.name)")
-                    .font(.title)
-                    .padding()
-                
-                Text("Coming soon - channel creation")
-                    .foregroundColor(.secondary)
-                
-                Spacer()
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
             }
-            .navigationTitle("Create Channel")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
-                leading: Button("Cancel") { dismiss() },
-                trailing: Button("Create") { dismiss() }
-            )
         }
     }
 }
 
 #Preview {
     let testCommunity = Community(
-        name: "Elite Day Traders",
-        description: "A premium community for experienced day traders sharing strategies, live market analysis, and trading signals with real-time support.",
+        name: "Elite Traders",
+        description: "A premium community for day traders sharing strategies and real-time market analysis.",
         type: .dayTrading,
         creatorId: "test-user",
-        memberCount: 247,
+        memberCount: 156,
         isPrivate: false
     )
     
-    return NavigationView {
+    NavigationView {
         CommunityDetailView(community: testCommunity)
     }
     .environmentObject(FirebaseAuthService.shared)
