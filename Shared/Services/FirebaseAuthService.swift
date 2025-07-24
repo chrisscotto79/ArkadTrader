@@ -22,196 +22,228 @@ class FirebaseAuthService: ObservableObject {
     }
     
     // MARK: - Auth State Management
-    
-    private func setupAuthListener() {
-        handle = auth.addStateDidChangeListener { [weak self] _, firebaseUser in
-            Task { @MainActor in
-                if let firebaseUser = firebaseUser {
-                    self?.isAuthenticated = true
-                    await self?.loadCurrentUser(firebaseUser.uid)
-                } else {
-                    self?.isAuthenticated = false
-                    self?.currentUser = nil
+            
+        private func setupAuthListener() {
+            handle = auth.addStateDidChangeListener { [weak self] _, firebaseUser in
+                Task { @MainActor in
+                    if let firebaseUser = firebaseUser {
+                        self?.isAuthenticated = true
+                        await self?.loadCurrentUser(firebaseUser.uid)
+                    } else {
+                        self?.isAuthenticated = false
+                        self?.currentUser = nil
+                    }
+                    self?.isLoading = false
                 }
-                self?.isLoading = false
             }
         }
-    }
-    
-    private func loadCurrentUser(_ userId: String) async {
-        do {
-            currentUser = try await FirebaseServices.shared.getUserById(userId: userId)
-        } catch {
-            print("Error loading current user: \(error)")
-            currentUser = nil
-        }
-    }
-    
-    // MARK: - User Refresh Method
-    /// Reloads the current user from Firebase (useful after updates)
-    func refreshCurrentUser() async {
-        guard let userId = currentUser?.id else { return }
         
-        do {
-            let refreshedUser = try await FirebaseServices.shared.getUserById(userId: userId)
-            await MainActor.run {
-                self.currentUser = refreshedUser
+        private func loadCurrentUser(_ userId: String) async {
+            do {
+                currentUser = try await FirebaseServices.shared.getUserById(userId: userId)
+            } catch {
+                print("Error loading current user: \(error)")
+                currentUser = nil
             }
-            print("✅ Current user refreshed successfully")
-        } catch {
-            print("❌ Error refreshing current user: \(error)")
-        }
-    }
-    
-    // MARK: - Authentication Methods
-    
-    func login(email: String, password: String) async throws {
-        let result = try await auth.signIn(withEmail: email, password: password)
-        await loadCurrentUser(result.user.uid)
-    }
-    
-    func signIn(email: String, password: String) async throws {
-        try await login(email: email, password: password)
-    }
-    
-    func register(email: String, password: String, username: String, fullName: String) async throws {
-        // Check if username is available
-        let usernameAvailable = try await isUsernameAvailable(username)
-        guard usernameAvailable else {
-            throw AuthError.usernameTaken
         }
         
-        // Create auth user
-        let result = try await auth.createUser(withEmail: email, password: password)
+        // MARK: - User Refresh Method
+        /// Reloads the current user from Firebase (useful after updates)
+        func refreshCurrentUser() async {
+            guard let userId = currentUser?.id else { return }
+            
+            do {
+                let refreshedUser = try await FirebaseServices.shared.getUserById(userId: userId)
+                await MainActor.run {
+                    self.currentUser = refreshedUser
+                }
+                print("✅ Current user refreshed successfully")
+            } catch {
+                print("❌ Error refreshing current user: \(error)")
+            }
+        }
         
-        // Create user document
-        let newUser = User(
-            id: result.user.uid,
-            email: email,
-            username: username,
-            fullName: fullName
-        )
+        // MARK: - Authentication Methods
         
-        try await FirebaseServices.shared.createUser(newUser)
-        currentUser = newUser
-    }
-    
-    func signUp(email: String, password: String, fullName: String, username: String) async throws {
-        try await register(email: email, password: password, username: username, fullName: fullName)
-    }
-    
-    func logout() async {
-        do {
+        func login(email: String, password: String) async throws {
+            let result = try await auth.signIn(withEmail: email, password: password)
+            await loadCurrentUser(result.user.uid)
+        }
+        
+        func signIn(email: String, password: String) async throws {
+            try await login(email: email, password: password)
+        }
+        
+        // ✅ FIXED: Registration method that works with security rules
+        func register(email: String, password: String, username: String, fullName: String) async throws {
+            print("🔧 Starting registration process...")
+            print("   Email: \(email)")
+            print("   Username: \(username)")
+            
+            // Create auth user FIRST (this gives us authentication)
+            print("🔧 Creating Firebase Auth user...")
+            let result = try await auth.createUser(withEmail: email, password: password)
+            print("✅ Firebase Auth user created with UID: \(result.user.uid)")
+            
+            // Now check username availability (with authentication)
+            print("🔧 Checking username availability...")
+            do {
+                let usernameAvailable = try await isUsernameAvailable(username)
+                guard usernameAvailable else {
+                    print("❌ Username \(username) is already taken")
+                    // Clean up the auth user since username is taken
+                    try await result.user.delete()
+                    throw AuthError.usernameTaken
+                }
+                print("✅ Username is available")
+            } catch {
+                print("❌ Error checking username availability: \(error)")
+                // Clean up the auth user
+                try await result.user.delete()
+                throw error
+            }
+            
+            // Create user document in Firestore
+            print("🔧 Creating user document in Firestore...")
+            let newUser = User(
+                id: result.user.uid,
+                email: email,
+                username: username,
+                fullName: fullName
+            )
+            
+            do {
+                try await FirebaseServices.shared.createUser(newUser)
+                print("✅ User document created successfully")
+                currentUser = newUser
+            } catch {
+                print("❌ Failed to create user document: \(error)")
+                print("❌ Error details: \(error.localizedDescription)")
+                
+                // If Firestore creation fails, clean up the auth user
+                print("🔧 Cleaning up Firebase Auth user due to Firestore error...")
+                try await result.user.delete()
+                print("✅ Auth user cleaned up")
+                
+                throw error
+            }
+        }
+        
+        func signUp(email: String, password: String, fullName: String, username: String) async throws {
+            try await register(email: email, password: password, username: username, fullName: fullName)
+        }
+        
+        func logout() async {
+            do {
+                try auth.signOut()
+                currentUser = nil
+                isAuthenticated = false
+            } catch {
+                print("Error signing out: \(error)")
+            }
+        }
+        
+        func signOut() throws {
             try auth.signOut()
             currentUser = nil
             isAuthenticated = false
-        } catch {
-            print("Error signing out: \(error)")
-        }
-    }
-    
-    func signOut() throws {
-        try auth.signOut()
-        currentUser = nil
-        isAuthenticated = false
-    }
-    
-    func deleteAccount() async throws {
-        guard let user = auth.currentUser else {
-            throw AuthError.notAuthenticated
         }
         
-        // Delete user data from Firestore
-        if let currentUser = currentUser {
-            // Delete user document
-            try await Firestore.firestore().collection("users").document(currentUser.id).delete()
-        }
-        
-        // Delete auth account
-        try await user.delete()
-        
-        self.currentUser = nil
-        isAuthenticated = false
-    }
-    
-    // MARK: - Username Validation
-    
-    func isUsernameAvailable(_ username: String) async throws -> Bool {
-        let snapshot = try await Firestore.firestore()
-            .collection("users")
-            .whereField("username", isEqualTo: username.lowercased())
-            .getDocuments()
-        
-        return snapshot.documents.isEmpty
-    }
-    
-    // MARK: - Password Reset
-    
-    func sendPasswordReset(email: String) async throws {
-        try await auth.sendPasswordReset(withEmail: email)
-    }
-    
-    func resetPassword(email: String) async throws {
-        try await sendPasswordReset(email: email)
-    }
-    
-    // MARK: - Profile Updates
-    
-    func updateProfile(fullName: String? = nil, bio: String? = nil, username: String? = nil) async throws {
-        guard var user = currentUser else {
-            throw AuthError.notAuthenticated
-        }
-        
-        if let fullName = fullName {
-            user.fullName = fullName
-        }
-        
-        if let bio = bio {
-            user.bio = bio
-        }
-        
-        if let username = username, username != user.username {
-            let available = try await isUsernameAvailable(username)
-            guard available else {
-                throw AuthError.usernameTaken
+        func deleteAccount() async throws {
+            guard let user = auth.currentUser else {
+                throw AuthError.notAuthenticated
             }
-            user.username = username
+            
+            // Delete user data from Firestore
+            if let currentUser = currentUser {
+                // Delete user document
+                try await Firestore.firestore().collection("users").document(currentUser.id).delete()
+            }
+            
+            // Delete auth account
+            try await user.delete()
+            
+            self.currentUser = nil
+            isAuthenticated = false
         }
         
-        try await FirebaseServices.shared.updateUser(user)
-        currentUser = user
-    }
-    
-    // MARK: - User Management Wrapper Methods
-    
-    func getUserById(userId: String) async throws -> User? {
-        return try await FirebaseServices.shared.getUserById(userId: userId)
-    }
-    
-    func updateUserStats(userId: String, totalProfitLoss: Double, winRate: Double) async throws {
-        try await FirebaseServices.shared.updateUserStats(userId: userId, totalProfitLoss: totalProfitLoss, winRate: winRate)
-    }
-    
-    func followUser(userId: String, followerId: String) async throws {
-        try await FirebaseServices.shared.followUser(userId: userId, followerId: followerId)
-    }
-    
-    func unfollowUser(userId: String, followerId: String) async throws {
-        try await FirebaseServices.shared.unfollowUser(userId: userId, followerId: followerId)
-    }
-    
-    func getUserFollowing(userId: String) async throws -> Set<String> {
-        return try await FirebaseServices.shared.getUserFollowing(userId: userId)
-    }
-    
-    func getUserFollowers(userId: String) async throws -> Set<String> {
-        return try await FirebaseServices.shared.getUserFollowers(userId: userId)
-    }
-    
-    func isFollowing(userId: String, targetUserId: String) async throws -> Bool {
-        return try await FirebaseServices.shared.isFollowing(userId: userId, targetUserId: targetUserId)
-    }
-    
+        // MARK: - Username Validation
+        
+        func isUsernameAvailable(_ username: String) async throws -> Bool {
+            let snapshot = try await Firestore.firestore()
+                .collection("users")
+                .whereField("username", isEqualTo: username.lowercased())
+                .getDocuments()
+            
+            return snapshot.documents.isEmpty
+        }
+        
+        // MARK: - Password Reset
+        
+        func sendPasswordReset(email: String) async throws {
+            try await auth.sendPasswordReset(withEmail: email)
+        }
+        
+        func resetPassword(email: String) async throws {
+            try await sendPasswordReset(email: email)
+        }
+        
+        // MARK: - Profile Updates
+        
+        func updateProfile(fullName: String? = nil, bio: String? = nil, username: String? = nil) async throws {
+            guard var user = currentUser else {
+                throw AuthError.notAuthenticated
+            }
+            
+            if let fullName = fullName {
+                user.fullName = fullName
+            }
+            
+            if let bio = bio {
+                user.bio = bio
+            }
+            
+            if let username = username, username != user.username {
+                let available = try await isUsernameAvailable(username)
+                guard available else {
+                    throw AuthError.usernameTaken
+                }
+                user.username = username
+            }
+            
+            try await FirebaseServices.shared.updateUser(user)
+            currentUser = user
+        }
+        
+        // MARK: - User Management Wrapper Methods
+        
+        func getUserById(userId: String) async throws -> User? {
+            return try await FirebaseServices.shared.getUserById(userId: userId)
+        }
+        
+        func updateUserStats(userId: String, totalProfitLoss: Double, winRate: Double) async throws {
+            try await FirebaseServices.shared.updateUserStats(userId: userId, totalProfitLoss: totalProfitLoss, winRate: winRate)
+        }
+        
+        func followUser(userId: String, followerId: String) async throws {
+            try await FirebaseServices.shared.followUser(userId: userId, followerId: followerId)
+        }
+        
+        func unfollowUser(userId: String, followerId: String) async throws {
+            try await FirebaseServices.shared.unfollowUser(userId: userId, followerId: followerId)
+        }
+        
+        func getUserFollowing(userId: String) async throws -> Set<String> {
+            return try await FirebaseServices.shared.getUserFollowing(userId: userId)
+        }
+        
+        func getUserFollowers(userId: String) async throws -> Set<String> {
+            return try await FirebaseServices.shared.getUserFollowers(userId: userId)
+        }
+        
+        func isFollowing(userId: String, targetUserId: String) async throws -> Bool {
+            return try await FirebaseServices.shared.isFollowing(userId: userId, targetUserId: targetUserId)
+        }
     // MARK: - Trade Management Wrapper Methods
     
     func addTrade(_ trade: Trade) async throws {
@@ -582,6 +614,10 @@ enum AuthError: LocalizedError {
     case usernameTaken
     case invalidCredentials
     case networkError
+    case unknownError
+    case invalidEmail
+    case weakPassword
+    case emailAlreadyInUse
     
     var errorDescription: String? {
         switch self {
@@ -593,6 +629,14 @@ enum AuthError: LocalizedError {
             return "Invalid email or password"
         case .networkError:
             return "Network connection error"
+        case .unknownError:
+            return "An unknown error occurred"
+        case .invalidEmail:
+            return "Please enter a valid email address"
+        case .weakPassword:
+            return "Password must be at least 6 characters"
+        case .emailAlreadyInUse:
+            return "An account with this email already exists"
         }
     }
 }

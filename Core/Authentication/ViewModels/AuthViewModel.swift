@@ -1,5 +1,5 @@
 // File: Core/Authentication/ViewModels/AuthViewModel.swift
-// Simplified Auth ViewModel
+// Fixed Auth ViewModel
 
 import Foundation
 import SwiftUI
@@ -21,6 +21,11 @@ class AuthViewModel: ObservableObject {
     
     var currentUser: User? {
         authService.currentUser
+    }
+    
+    // ✅ Add the missing isLoading property
+    var isLoading: Bool {
+        authService.isLoading
     }
     
     func login() async {
@@ -46,6 +51,11 @@ class AuthViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             showError = true
         }
+    }
+    
+    // ✅ Add the missing isUsernameAvailable method
+    func isUsernameAvailable(_ username: String) async throws -> Bool {
+        return try await authService.isUsernameAvailable(username)
     }
     
     func logout() {
