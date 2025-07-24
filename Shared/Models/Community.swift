@@ -4,7 +4,7 @@
 import Foundation
 import FirebaseFirestore
 
-struct Community: Identifiable, Codable {
+struct Community: Identifiable, Codable, Hashable {
     var id: String
     var name: String
     var description: String

@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Components/CommunityCard.swift
-// Reusable Community Card Component
+// UPDATED: Fixed NavigationLink compatibility
 
 import SwiftUI
 
@@ -37,10 +37,18 @@ struct CommunityCard: View {
     
     // MARK: - Body
     var body: some View {
-        Button(action: { onTap?() }) {
-            cardContent
+        // 🔧 FIX: Only wrap in Button if onTap is provided
+        Group {
+            if let onTap = onTap {
+                Button(action: onTap) {
+                    cardContent
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                // 🔧 FIX: Just show content without Button wrapper for NavigationLink
+                cardContent
+            }
         }
-        .buttonStyle(PlainButtonStyle())
         .scaleEffect(isPressed ? 0.98 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPressed)
         .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { pressing in
@@ -437,7 +445,7 @@ extension CommunityCard {
         )
     }
     
-    // For user's communities (with owner badge support)
+    // 🔧 FIX: Updated userCommunity to work with NavigationLink (onTap = nil)
     static func userCommunity(
         community: Community,
         isOwner: Bool = false,
@@ -445,7 +453,7 @@ extension CommunityCard {
     ) -> CommunityCard {
         CommunityCard(
             community: community,
-            onTap: onTap,
+            onTap: onTap, // This will be nil for NavigationLink usage
             onJoinTap: nil,
             showJoinButton: false,
             showOwnerBadge: isOwner,
@@ -510,7 +518,7 @@ extension CommunityCard {
                 isPrivate: true
             ),
             isOwner: true,
-            onTap: { print("My community tapped") }
+            onTap: nil // This allows NavigationLink to work
         )
     }
     .padding()
