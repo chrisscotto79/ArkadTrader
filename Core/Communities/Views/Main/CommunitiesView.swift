@@ -2,7 +2,7 @@
 //  CommunitiesView.swift
 //  ArkadTrader
 //
-//  ENHANCED VERSION - Beautiful & Functional
+//  ENHANCED VERSION - Modern, Professional & Arkad Branded
 //
 
 import SwiftUI
@@ -21,28 +21,29 @@ struct CommunitiesView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
+                // Premium background gradient using Arkad colors
                 LinearGradient(
                     colors: [
-                        Color(.systemGroupedBackground),
-                        Color(.systemBackground).opacity(0.3)
+                        Color.arkadGold.opacity(0.03),
+                        Color.backgroundPrimary,
+                        Color.arkadGold.opacity(0.02)
                     ],
-                    startPoint: .top,
-                    endPoint: .bottom
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
                 .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
-                    // Header with hamburger menu
-                    headerSection
+                    // Modern header
+                    modernHeaderSection
                     
                     // Main Content
                     contentSection
                 }
                 
-                // Side Menu Overlay
+                // Enhanced Side Menu
                 if showSideMenu {
-                    sideMenuOverlay
+                    modernSideMenuOverlay
                 }
                 
                 // Hidden NavigationLink
@@ -80,271 +81,383 @@ struct CommunitiesView: View {
     }
 }
 
-// MARK: - Header Section
+// MARK: - Modern Header Section
 extension CommunitiesView {
-    private var headerSection: some View {
-        VStack(spacing: 16) {
-            // Top Navigation Row
-            HStack {
-                // Hamburger Menu Button
-                Button(action: {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                        showSideMenu.toggle()
+    private var modernHeaderSection: some View {
+        VStack(spacing: 0) {
+            // Main header with glassmorphism effect
+            VStack(spacing: 20) {
+                // Top navigation bar
+                HStack {
+                    // Hamburger menu with modern styling
+                    Button(action: {
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                            showSideMenu.toggle()
+                        }
+                    }) {
+                        VStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.arkadGold)
+                                .frame(width: 20, height: 2)
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.arkadGold)
+                                .frame(width: 16, height: 2)
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.arkadGold)
+                                .frame(width: 18, height: 2)
+                        }
+                        .frame(width: 44, height: 44)
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                                )
+                        )
                     }
-                }) {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.title2)
-                        .foregroundColor(.primary)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            Circle()
-                                .fill(Color(.systemBackground))
-                                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-                        )
-                }
-                
-                Spacer()
-                
-                // Current Section Title with icon
-                HStack(spacing: 8) {
-                    Image(systemName: getTabIcon(for: selectedTab))
-                        .font(.title3)
-                        .foregroundColor(.blue)
                     
-                    Text(selectedTab.displayName)
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
+                    Spacer()
+                    
+                    // Modern title with icon
+                    HStack(spacing: 12) {
+                        Image(systemName: getTabIcon(for: selectedTab))
+                            .font(.title2)
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color.arkadGold, Color.arkadGoldLight],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                        
+                        Text(selectedTab.displayName)
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundColor(.textPrimary)
+                    }
+                    
+                    Spacer()
+                    
+                    // Modern create button
+                    Button(action: {
+                        print("➕ Create community button tapped")
+                        showCreateCommunity = true
+                    }) {
+                        Image(systemName: "plus")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.arkadBlack)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .shadow(color: .arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
+                            )
+                    }
+                    .scaleEffect(showCreateCommunity ? 0.95 : 1.0)
+                    .animation(.spring(response: 0.3), value: showCreateCommunity)
                 }
+                .padding(.horizontal, 24)
                 
-                Spacer()
-                
-                // Create Button with animation
-                Button(action: {
-                    print("➕ Create community button tapped")
-                    showCreateCommunity = true
-                }) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            Circle()
-                                .fill(Color(.systemBackground))
-                                .shadow(color: .blue.opacity(0.3), radius: 3, x: 0, y: 2)
-                        )
-                        .scaleEffect(showCreateCommunity ? 0.9 : 1.0)
-                        .animation(.spring(response: 0.3), value: showCreateCommunity)
+                // Enhanced stats row for My Communities
+                if !viewModel.userCommunities.isEmpty && selectedTab == .myCommunities {
+                    modernStatsRow
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .padding(.horizontal, 20)
-            
-            // Stats Row with animations
-            if !viewModel.userCommunities.isEmpty && selectedTab == .myCommunities {
-                HStack(spacing: 16) {
-                    statBox(title: "Joined", value: "\(viewModel.userCommunities.count)", icon: "person.3.fill", color: .blue)
-                    statBox(title: "Active", value: "\(viewModel.activeCommunities)", icon: "chart.line.uptrend.xyaxis", color: .green)
-                    statBox(title: "Created", value: "\(viewModel.userOwnedCommunities.count)", icon: "trophy.fill", color: .orange)
-                }
-                .padding(.horizontal, 20)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            .padding(.vertical, 24)
+            .background(
+                .ultraThinMaterial,
+                in: RoundedRectangle(cornerRadius: 0)
+            )
+            .overlay(
+                Rectangle()
+                    .fill(Color.arkadGold.opacity(0.1))
+                    .frame(height: 1),
+                alignment: .bottom
+            )
         }
-        .padding(.vertical, 16)
-        .background(
-            Color(.systemBackground)
-                .shadow(color: .black.opacity(0.08), radius: 1, x: 0, y: 1)
-        )
     }
     
-    private func statBox(title: String, value: String, icon: String, color: Color) -> some View {
+    private var modernStatsRow: some View {
+        HStack(spacing: 16) {
+            modernStatCard(
+                title: "Joined",
+                value: "\(viewModel.userCommunities.count)",
+                icon: "person.3.fill",
+                gradient: LinearGradient(colors: [.arkadGold, .arkadGoldLight], startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            
+            modernStatCard(
+                title: "Active",
+                value: "\(viewModel.activeCommunities)",
+                icon: "chart.line.uptrend.xyaxis",
+                gradient: LinearGradient(colors: [.marketGreen, .marketGreenLight], startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            
+            modernStatCard(
+                title: "Created",
+                value: "\(viewModel.userOwnedCommunities.count)",
+                icon: "crown.fill",
+                gradient: LinearGradient(colors: [.warning, .arkadGoldLight], startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+        }
+        .padding(.horizontal, 24)
+    }
+    
+    private func modernStatCard(title: String, value: String, icon: String, gradient: LinearGradient) -> some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundColor(color)
+                .foregroundStyle(gradient)
             
             Text(value)
                 .font(.title2)
                 .fontWeight(.bold)
-                .foregroundColor(.primary)
+                .foregroundColor(.textPrimary)
             
             Text(title)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .fontWeight(.medium)
+                .foregroundColor(.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .padding(.vertical, 20)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
-                .shadow(color: color.opacity(0.2), radius: 3, x: 0, y: 2)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(color.opacity(0.2), lineWidth: 1)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(gradient.opacity(0.3), lineWidth: 1)
+                )
         )
     }
 }
 
-// MARK: - Side Menu
+// MARK: - Modern Side Menu
 extension CommunitiesView {
-    private var sideMenuOverlay: some View {
+    private var modernSideMenuOverlay: some View {
         ZStack {
-            // Dark overlay with blur effect
-            Color.black.opacity(0.4)
+            // Enhanced backdrop
+            Color.black.opacity(0.3)
                 .ignoresSafeArea()
+                .background(.ultraThinMaterial)
                 .onTapGesture {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                         showSideMenu = false
                     }
                 }
             
             HStack {
-                // Side Menu Content
-                enhancedSideMenu
+                modernSideMenu
                 Spacer()
             }
         }
     }
     
-    private var enhancedSideMenu: some View {
+    private var modernSideMenu: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Menu Header with gradient
-            menuHeader
+            // Elegant header with Arkad branding
+            modernMenuHeader
             
-            // Menu Items
-            VStack(spacing: 4) {
+            // Navigation items
+            VStack(spacing: 8) {
                 ForEach(CommunityMainTab.allCases, id: \.self) { tab in
-                    enhancedMenuItem(tab)
+                    modernMenuItem(tab)
                 }
             }
-            .padding(.vertical, 16)
+            .padding(.vertical, 24)
             
             Spacer()
             
-            // Create Community Button
-            Button(action: {
-                print("➕ Side menu create community tapped")
-                showCreateCommunity = true
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                    showSideMenu = false
-                }
-            }) {
-                HStack(spacing: 12) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                        .foregroundColor(.white)
-                    
-                    Text("Create Community")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(
-                    LinearGradient(
-                        colors: [.blue, .blue.opacity(0.8)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .cornerRadius(12)
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            // Premium create button
+            modernCreateButton
         }
-        .frame(width: 300)
+        .frame(width: 320)
         .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.2), radius: 20, x: 5, y: 0)
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.1), radius: 20, x: 0, y: 10)
         )
-        .offset(x: showSideMenu ? 0 : -350)
-        .animation(.spring(response: 0.6, dampingFraction: 0.8), value: showSideMenu)
+        .offset(x: showSideMenu ? 0 : -380)
+        .animation(.spring(response: 0.7, dampingFraction: 0.8), value: showSideMenu)
     }
     
-    private var menuHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private var modernMenuHeader: some View {
+        VStack(alignment: .leading, spacing: 20) {
             HStack {
-                Text("Communities")
-                    .font(.title2)
-                    .fontWeight(.bold)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Communities")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.textPrimary)
+                    
+                    Text("Connect & Share")
+                        .font(.subheadline)
+                        .foregroundColor(.arkadGold)
+                        .fontWeight(.medium)
+                }
                 
                 Spacer()
                 
                 Button(action: {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                         showSideMenu = false
                     }
                 }) {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: "xmark")
                         .font(.title3)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(Color.backgroundSecondary)
+                        )
                 }
             }
             
             if let user = authService.currentUser {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Welcome back,")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Text(String(user.fullName.prefix(1)))
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.arkadBlack)
+                        )
                     
-                    Text(user.fullName)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Welcome back,")
+                            .font(.caption)
+                            .foregroundColor(.textSecondary)
+                        
+                        Text(user.fullName)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.textPrimary)
+                            .lineLimit(1)
+                    }
                 }
             }
         }
         .padding(24)
         .background(
             LinearGradient(
-                colors: [Color.blue.opacity(0.15), Color.clear],
+                colors: [Color.arkadGold.opacity(0.08), Color.clear],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         )
     }
     
-    private func enhancedMenuItem(_ tab: CommunityMainTab) -> some View {
+    private func modernMenuItem(_ tab: CommunityMainTab) -> some View {
         Button(action: {
             print("📱 Side menu tab tapped: \(tab.displayName)")
             selectedTab = tab
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 showSideMenu = false
             }
         }) {
             HStack(spacing: 16) {
                 Image(systemName: getTabIcon(for: tab))
                     .font(.title3)
-                    .foregroundColor(selectedTab == tab ? .white : .gray)
+                    .foregroundColor(selectedTab == tab ? .arkadBlack : .textSecondary)
                     .frame(width: 28, height: 28)
                 
                 Text(tab.displayName)
                     .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(selectedTab == tab ? .white : .primary)
+                    .fontWeight(.semibold)
+                    .foregroundColor(selectedTab == tab ? .arkadBlack : .textPrimary)
                 
                 Spacer()
                 
                 if selectedTab == tab {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.subheadline)
-                        .foregroundColor(.white)
+                    Circle()
+                        .fill(Color.arkadGold)
+                        .frame(width: 8, height: 8)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 16)
                     .fill(selectedTab == tab ?
-                          LinearGradient(colors: [.blue, .blue.opacity(0.8)], startPoint: .leading, endPoint: .trailing) :
-                          LinearGradient(colors: [Color.clear], startPoint: .leading, endPoint: .trailing)
+                        AnyShapeStyle(LinearGradient(
+                            colors: [Color.arkadGold.opacity(0.15), Color.arkadGoldLight.opacity(0.1)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )) :
+                        AnyShapeStyle(Color.clear)
                     )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(selectedTab == tab ? Color.arkadGold.opacity(0.3) : Color.clear, lineWidth: 1)
             )
             .padding(.horizontal, 16)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var modernCreateButton: some View {
+        Button(action: {
+            print("➕ Side menu create community tapped")
+            showCreateCommunity = true
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                showSideMenu = false
+            }
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.arkadBlack)
+                
+                Text("Create Community")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.arkadBlack)
+                
+                Spacer()
+                
+                Image(systemName: "arrow.right")
+                    .font(.subheadline)
+                    .foregroundColor(.arkadBlack)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: .arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
+            )
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 24)
     }
 }
 
@@ -352,21 +465,20 @@ extension CommunitiesView {
 extension CommunitiesView {
     private var contentSection: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            LazyVStack(spacing: 24) {
                 switch selectedTab {
                 case .discover:
-                    discoverContent
+                    modernDiscoverContent
                 case .myCommunities:
-                    myCommunitiesContent
+                    modernMyCommunitiesContent
                 case .leaderboard:
-                    comingSoonView(for: "Leaderboard", icon: "trophy.fill")
+                    modernComingSoonView(for: "Leaderboard", icon: "trophy.fill", description: "See top performing traders and communities")
                 case .activity:
-                    comingSoonView(for: "Activity", icon: "clock.fill")
-                case .search:
-                    comingSoonView(for: "Search", icon: "magnifyingglass")
+                    modernComingSoonView(for: "Activity", icon: "clock.fill", description: "Track your community interactions and updates")
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
             .padding(.bottom, 100)
         }
         .refreshable {
@@ -374,108 +486,129 @@ extension CommunitiesView {
         }
     }
     
-    private func comingSoonView(for feature: String, icon: String) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: icon)
-                .font(.system(size: 60))
-                .foregroundColor(.blue.opacity(0.6))
+    private func modernComingSoonView(for feature: String, icon: String, description: String) -> some View {
+        VStack(spacing: 24) {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.arkadGold.opacity(0.2), Color.arkadGoldLight.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 120, height: 120)
+                .overlay(
+                    Image(systemName: icon)
+                        .font(.system(size: 40))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
             
-            VStack(spacing: 8) {
+            VStack(spacing: 12) {
                 Text("\(feature) Coming Soon")
                     .font(.title2)
                     .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
                 
-                Text("We're working hard to bring you this feature!")
+                Text(description)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.textSecondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
             }
         }
-        .padding(.top, 80)
+        .padding(.top, 60)
+        .padding(.bottom, 40)
     }
 }
 
-// MARK: - My Communities Content
+// MARK: - Modern My Communities Content
 extension CommunitiesView {
-    private var myCommunitiesContent: some View {
-        VStack(spacing: 24) {
+    private var modernMyCommunitiesContent: some View {
+        VStack(spacing: 32) {
             if viewModel.userCommunities.isEmpty {
-                emptyMyCommunitiesState
+                modernEmptyMyCommunitiesState
             } else {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 40) {
                     // Communities I Own
                     if !viewModel.userOwnedCommunities.isEmpty {
-                        communitySection(
+                        modernCommunitySection(
                             title: "Communities I Own",
                             icon: "crown.fill",
                             communities: viewModel.userOwnedCommunities,
-                            isOwner: true
+                            isOwner: true,
+                            accentColor: .warning
                         )
                     }
                     
                     // Communities I'm In
                     if !viewModel.userMemberCommunities.isEmpty {
-                        communitySection(
+                        modernCommunitySection(
                             title: "Communities I'm In",
                             icon: "person.3.fill",
                             communities: viewModel.userMemberCommunities,
-                            isOwner: false
+                            isOwner: false,
+                            accentColor: .arkadGold
                         )
                     }
                 }
             }
         }
-        .padding(.top, 20)
-        .onAppear {
-            print("📋 My Communities content appeared")
-            print("   User communities count: \(viewModel.userCommunities.count)")
-            print("   Owned communities count: \(viewModel.userOwnedCommunities.count)")
-        }
+        .padding(.top, 8)
     }
     
-    private func communitySection(title: String, icon: String, communities: [Community], isOwner: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Section Header
-            HStack(spacing: 12) {
+    private func modernCommunitySection(title: String, icon: String, communities: [Community], isOwner: Bool, accentColor: Color) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Enhanced section header
+            HStack(spacing: 16) {
                 Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(.blue)
-                
-                Text(title)
                     .font(.title2)
-                    .fontWeight(.bold)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [accentColor, accentColor.opacity(0.7)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundColor(.textPrimary)
+                    
+                    Text("\(communities.count) \(communities.count == 1 ? "community" : "communities")")
+                        .font(.caption)
+                        .foregroundColor(.textSecondary)
+                }
                 
                 Spacer()
-                
-                Text("\(communities.count)")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.blue)
-                    .cornerRadius(8)
             }
             
-            // Communities Grid
+            // Modern communities grid
             LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible())
-            ], spacing: 16) {
+                GridItem(.flexible(), spacing: 16),
+                GridItem(.flexible(), spacing: 16)
+            ], spacing: 20) {
                 ForEach(communities) { community in
-                    enhancedCommunityCard(community: community, isOwner: isOwner)
+                    modernCommunityCard(community: community, isOwner: isOwner)
                 }
             }
         }
     }
     
-    private func enhancedCommunityCard(community: Community, isOwner: Bool) -> some View {
+    private func modernCommunityCard(community: Community, isOwner: Bool) -> some View {
         Button(action: {
-            print("🏘️ Enhanced community tapped: \(community.name)")
+            print("🏘️ Modern community tapped: \(community.name)")
             navigateToCommunitDetail(community)
         }) {
-            VStack(spacing: 12) {
-                // Community Avatar
+            VStack(spacing: 16) {
+                // Community avatar with modern styling
                 Circle()
                     .fill(
                         LinearGradient(
@@ -484,113 +617,177 @@ extension CommunitiesView {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 50, height: 50)
+                    .frame(width: 56, height: 56)
                     .overlay(
                         Text(getCommunityInitials(from: community.name))
                             .font(.headline)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
                     )
-                    .shadow(color: getCommunityColor(for: community.type).opacity(0.4), radius: 6, x: 0, y: 3)
+                    .shadow(color: getCommunityColor(for: community.type).opacity(0.3), radius: 8, x: 0, y: 4)
                 
-                // Community Info
-                VStack(spacing: 6) {
+                // Community information
+                VStack(spacing: 8) {
                     Text(community.name)
                         .font(.subheadline)
                         .fontWeight(.semibold)
+                        .foregroundColor(.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                     
-                    HStack(spacing: 8) {
+                    HStack(spacing: 12) {
                         HStack(spacing: 4) {
                             Image(systemName: "person.3.fill")
                                 .font(.caption2)
                             Text("\(community.memberCount)")
                                 .font(.caption2)
+                                .fontWeight(.medium)
                         }
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.textSecondary)
                         
                         if isOwner {
                             Text("OWNER")
                                 .font(.caption2)
                                 .fontWeight(.bold)
-                                .foregroundColor(.orange)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.2))
-                                .cornerRadius(4)
+                                .foregroundColor(.arkadBlack)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.arkadGold)
+                                )
                         }
                     }
                     
                     Text(community.type.displayName)
                         .font(.caption2)
-                        .fontWeight(.medium)
+                        .fontWeight(.semibold)
                         .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(getCommunityColor(for: community.type))
-                        .cornerRadius(6)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(getCommunityColor(for: community.type))
+                        )
                 }
             }
-            .padding(16)
+            .padding(20)
             .frame(maxWidth: .infinity)
-            .frame(height: 160)
+            .frame(height: 180)
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(getCommunityColor(for: community.type).opacity(0.2), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(getCommunityColor(for: community.type).opacity(0.2), lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(PlainButtonStyle())
     }
 }
 
-// MARK: - Discover Content
+// MARK: - Modern Discover Content with Integrated Search
 extension CommunitiesView {
-    private var discoverContent: some View {
+    private var modernDiscoverContent: some View {
         VStack(spacing: 32) {
+            // Integrated search bar
+            modernSearchSection
+            
             if viewModel.discoveryCommunities.isEmpty {
-                emptyDiscoverState
+                modernEmptyDiscoverState
             } else {
-                // Featured Communities
-                if !viewModel.featuredCommunities.isEmpty {
-                    featuredCommunitiesSection
+                VStack(spacing: 32) {
+                    // Featured communities
+                    if !viewModel.featuredCommunities.isEmpty {
+                        modernFeaturedSection
+                    }
+                    
+                    // All communities
+                    modernAllCommunitiesSection
                 }
-                
-                // All Communities
-                allCommunitiesSection
             }
         }
-        .padding(.top, 20)
-        .onAppear {
-            print("🔍 Discover content appeared")
-            print("   Discovery communities count: \(viewModel.discoveryCommunities.count)")
-            print("   Featured communities count: \(viewModel.featuredCommunities.count)")
+        .padding(.top, 8)
+    }
+    
+    private var modernSearchSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.title3)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                
+                Text("Discover Communities")
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
+                
+                Spacer()
+            }
+            
+            // Modern search bar
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.subheadline)
+                    .foregroundColor(.textSecondary)
+                
+                TextField("Search communities...", text: .constant(""))
+                    .font(.subheadline)
+                    .disabled(true) // Placeholder for now
+                
+                Button(action: {
+                    // Future: Advanced search/filters
+                }) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.subheadline)
+                        .foregroundColor(.arkadGold)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
+                    )
+            )
         }
     }
     
-    private var featuredCommunitiesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private var modernFeaturedSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Image(systemName: "star.fill")
                     .font(.title3)
-                    .foregroundColor(.yellow)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                 
                 Text("Featured Communities")
-                    .font(.title2)
+                    .font(.title3)
                     .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
                 
                 Spacer()
             }
             
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
+                HStack(spacing: 20) {
                     ForEach(viewModel.featuredCommunities) { community in
-                        featuredCommunityCard(community: community)
+                        modernFeaturedCard(community: community)
                     }
                 }
                 .padding(.horizontal, 4)
@@ -598,16 +795,16 @@ extension CommunitiesView {
         }
     }
     
-    private func featuredCommunityCard(community: Community) -> some View {
+    private func modernFeaturedCard(community: Community) -> some View {
         Button(action: {
             print("⭐ Featured community tapped: \(community.name)")
             navigateToCommunitDetail(community)
         }) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Circle()
                         .fill(getCommunityColor(for: community.type))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
                         .overlay(
                             Text(getCommunityInitials(from: community.name))
                                 .font(.subheadline)
@@ -619,109 +816,134 @@ extension CommunitiesView {
                     
                     Image(systemName: "star.fill")
                         .font(.caption)
-                        .foregroundColor(.yellow)
+                        .foregroundColor(.arkadGold)
+                        .padding(6)
+                        .background(
+                            Circle()
+                                .fill(Color.arkadGold.opacity(0.15))
+                        )
                 }
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(community.name)
                         .font(.headline)
                         .fontWeight(.semibold)
+                        .foregroundColor(.textPrimary)
                         .lineLimit(1)
                     
                     Text(community.description)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.textSecondary)
                         .lineLimit(2)
                     
                     HStack {
                         Text("\(community.memberCount) members")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.textSecondary)
                         
                         Spacer()
                         
                         Text(community.type.displayName)
                             .font(.caption2)
+                            .fontWeight(.medium)
                             .foregroundColor(getCommunityColor(for: community.type))
                     }
                 }
                 
                 Spacer()
             }
-            .padding(16)
-            .frame(width: 200, height: 140)
+            .padding(20)
+            .frame(width: 220, height: 160)
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(PlainButtonStyle())
     }
     
-    private var allCommunitiesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private var modernAllCommunitiesSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Image(systemName: "globe")
                     .font(.title3)
-                    .foregroundColor(.blue)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                 
                 Text("All Communities")
-                    .font(.title2)
+                    .font(.title3)
                     .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
                 
                 Spacer()
             }
             
             LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible())
-            ], spacing: 16) {
+                GridItem(.flexible(), spacing: 16),
+                GridItem(.flexible(), spacing: 16)
+            ], spacing: 20) {
                 ForEach(viewModel.discoveryCommunities) { community in
-                    discoveryCommunityCard(community: community)
+                    modernDiscoveryCard(community: community)
                 }
             }
         }
     }
     
-    private func discoveryCommunityCard(community: Community) -> some View {
+    private func modernDiscoveryCard(community: Community) -> some View {
         Button(action: {
             print("🌍 Discovery community tapped: \(community.name)")
             navigateToCommunitDetail(community)
         }) {
-            VStack(spacing: 12) {
-                // Community Avatar
+            VStack(spacing: 16) {
+                // Community avatar
                 Circle()
                     .fill(getCommunityColor(for: community.type))
-                    .frame(width: 50, height: 50)
+                    .frame(width: 56, height: 56)
                     .overlay(
                         Text(getCommunityInitials(from: community.name))
                             .font(.headline)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
                     )
+                    .shadow(color: getCommunityColor(for: community.type).opacity(0.3), radius: 6, x: 0, y: 3)
                 
-                // Community Info
-                VStack(spacing: 6) {
+                // Community info
+                VStack(spacing: 8) {
                     Text(community.name)
                         .font(.subheadline)
                         .fontWeight(.semibold)
+                        .foregroundColor(.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                     
                     Text("\(community.memberCount) members")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.textSecondary)
                     
                     if viewModel.isUserMember(of: community) {
                         Text("MEMBER")
                             .font(.caption2)
                             .fontWeight(.bold)
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.2))
-                            .cornerRadius(6)
+                            .foregroundColor(.arkadBlack)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(Color.marketGreen.opacity(0.2))
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(Color.marketGreen, lineWidth: 1)
+                                    )
+                            )
                     } else {
                         Button(action: {
                             print("➕ Join button tapped for: \(community.name)")
@@ -730,44 +952,73 @@ extension CommunitiesView {
                             Text("JOIN")
                                 .font(.caption2)
                                 .fontWeight(.bold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 4)
-                                .background(getCommunityColor(for: community.type))
-                                .cornerRadius(8)
+                                .foregroundColor(.arkadBlack)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                                startPoint: .leading,
+                                                endPoint: .trailing
+                                            )
+                                        )
+                                )
                         }
                     }
                 }
             }
-            .padding(16)
+            .padding(20)
             .frame(maxWidth: .infinity)
-            .frame(height: 160)
+            .frame(height: 180)
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 3)
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(getCommunityColor(for: community.type).opacity(0.2), lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(PlainButtonStyle())
     }
 }
 
-// MARK: - Empty States
+// MARK: - Modern Empty States
 extension CommunitiesView {
-    private var emptyMyCommunitiesState: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "person.3.circle")
-                .font(.system(size: 80))
-                .foregroundColor(.blue.opacity(0.6))
+    private var modernEmptyMyCommunitiesState: some View {
+        VStack(spacing: 32) {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.arkadGold.opacity(0.2), Color.arkadGoldLight.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 120, height: 120)
+                .overlay(
+                    Image(systemName: "person.3.circle")
+                        .font(.system(size: 50))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
             
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 Text("No Communities Yet")
                     .font(.title2)
                     .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
                 
                 Text("Join communities to connect with other traders and share insights.")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             }
@@ -777,32 +1028,57 @@ extension CommunitiesView {
                 selectedTab = .discover
             }
             .font(.headline)
-            .foregroundColor(.white)
+            .foregroundColor(.arkadBlack)
             .padding(.horizontal, 32)
             .padding(.vertical, 16)
             .background(
-                LinearGradient(colors: [.blue, .blue.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: .arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
             )
-            .cornerRadius(16)
-            .shadow(color: .blue.opacity(0.3), radius: 8, x: 0, y: 4)
         }
-        .padding(.top, 80)
+        .padding(.top, 60)
+        .padding(.bottom, 40)
     }
     
-    private var emptyDiscoverState: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "magnifyingglass.circle")
-                .font(.system(size: 80))
-                .foregroundColor(.blue.opacity(0.6))
+    private var modernEmptyDiscoverState: some View {
+        VStack(spacing: 32) {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.arkadGold.opacity(0.2), Color.arkadGoldLight.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 120, height: 120)
+                .overlay(
+                    Image(systemName: "magnifyingglass.circle")
+                        .font(.system(size: 50))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
             
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 Text("No Communities Available")
                     .font(.title2)
                     .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
                 
-                Text("Be the first to create a community!")
+                Text("Be the first to create a community and start connecting with fellow traders!")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             }
@@ -812,16 +1088,23 @@ extension CommunitiesView {
                 showCreateCommunity = true
             }
             .font(.headline)
-            .foregroundColor(.white)
+            .foregroundColor(.arkadBlack)
             .padding(.horizontal, 32)
             .padding(.vertical, 16)
             .background(
-                LinearGradient(colors: [.blue, .blue.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: .arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
             )
-            .cornerRadius(16)
-            .shadow(color: .blue.opacity(0.3), radius: 8, x: 0, y: 4)
         }
-        .padding(.top, 80)
+        .padding(.top, 60)
+        .padding(.bottom, 40)
     }
 }
 
@@ -833,18 +1116,17 @@ extension CommunitiesView {
         case .myCommunities: return "person.3.fill"
         case .leaderboard: return "trophy.fill"
         case .activity: return "clock.fill"
-        case .search: return "magnifyingglass"
         }
     }
     
     private func getCommunityColor(for type: CommunityType) -> Color {
         switch type {
-        case .dayTrading: return .red
-        case .swingTrading: return .orange
-        case .options: return .purple
-        case .crypto: return .yellow
-        case .stocks: return .green
-        case .general: return .blue
+        case .dayTrading: return .marketRed
+        case .swingTrading: return .warning
+        case .options: return .optionColor
+        case .crypto: return .cryptoColor
+        case .stocks: return .stockColor
+        case .general: return .arkadGold
         }
     }
     
@@ -860,13 +1142,12 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Supporting Types
+// MARK: - Supporting Types (Updated - Removed Search Tab)
 enum CommunityMainTab: CaseIterable {
     case discover
     case myCommunities
     case leaderboard
     case activity
-    case search
     
     var displayName: String {
         switch self {
@@ -874,7 +1155,6 @@ enum CommunityMainTab: CaseIterable {
         case .myCommunities: return "My Communities"
         case .leaderboard: return "Leaderboard"
         case .activity: return "Activity"
-        case .search: return "Search"
         }
     }
 }
