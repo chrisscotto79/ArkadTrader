@@ -6,6 +6,8 @@ import Firebase
 import FirebaseAuth
 import FirebaseFirestore
 
+// MARK: - Main Service Class
+
 class FirebaseServices {
     static let shared = FirebaseServices()
     private let db = Firestore.firestore()
@@ -15,7 +17,12 @@ class FirebaseServices {
         configureFirestore()
     }
     
+    deinit {
+        removeAllListeners()
+    }
+    
     // MARK: - Configuration
+    
     private func configureFirestore() {
         let settings = FirestoreSettings()
         settings.isPersistenceEnabled = true
@@ -23,7 +30,7 @@ class FirebaseServices {
         db.settings = settings
     }
     
-    // MARK: - User Management Methods
+    // MARK: - User Management
     
     func createUser(_ user: User) async throws {
         try await db.collection("users").document(user.id).setData(user.toFirestore())
@@ -39,11 +46,58 @@ class FirebaseServices {
         return try User.fromFirestore(data: data, id: userId)
     }
     
+    func getUserByUsername(_ username: String) async throws -> User? {
+        let snapshot = try await db.collection("users")
+            .whereField("username", isEqualTo: username.lowercased())
+            .limit(to: 1)
+            .getDocuments()
+        
+        guard let document = snapshot.documents.first else { return nil }
+        return try User.fromFirestore(data: document.data(), id: document.documentID)
+    }
+    
+    func isUsernameAvailable(_ username: String) async throws -> Bool {
+        let user = try await getUserByUsername(username)
+        return user == nil
+    }
+    
     func searchUsers(query: String) async throws -> [User] {
         let snapshot = try await db.collection("users")
             .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
             .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
             .limit(to: 20)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func searchUsersAdvanced(
+        query: String,
+        minFollowers: Int? = nil,
+        isVerified: Bool? = nil,
+        subscriptionTier: SubscriptionTier? = nil,
+        limit: Int = 20
+    ) async throws -> [User] {
+        var queryBuilder = db.collection("users")
+            .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
+            .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
+        
+        if let minFollowers = minFollowers {
+            queryBuilder = queryBuilder.whereField("followersCount", isGreaterThanOrEqualTo: minFollowers)
+        }
+        
+        if let isVerified = isVerified {
+            queryBuilder = queryBuilder.whereField("isVerified", isEqualTo: isVerified)
+        }
+        
+        if let subscriptionTier = subscriptionTier {
+            queryBuilder = queryBuilder.whereField("subscriptionTier", isEqualTo: subscriptionTier.rawValue)
+        }
+        
+        let snapshot = try await queryBuilder
+            .limit(to: limit)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
@@ -66,7 +120,6 @@ class FirebaseServices {
         ])
     }
     
-    // MARK: - New Starting Capital Method
     func updateUserStartingCapital(userId: String, startingCapital: Double) async throws {
         try await db.collection("users").document(userId).updateData([
             "startingCapital": startingCapital,
@@ -74,90 +127,328 @@ class FirebaseServices {
         ])
     }
     
-    // MARK: - Following Methods
-    func getFollowingPosts(userId: String, limit: Int = 20) async throws -> [Post] {
-        // Get user's following list
-        let followingSnapshot = try await db.collection("users")
-            .document(userId)
-            .collection("following")
-            .getDocuments()
+    func getUserStats(userId: String) async throws -> UserStats {
+        let user = try await getUserById(userId: userId)
         
-        guard !followingSnapshot.documents.isEmpty else { return [] }
+        let followersSnapshot = try await db.collection("users").document(userId)
+            .collection("followers").getDocuments()
         
-        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        let followingSnapshot = try await db.collection("users").document(userId)
+            .collection("following").getDocuments()
         
-        // Query posts from followed users
         let postsSnapshot = try await db.collection("posts")
-            .whereField("authorId", in: followingIds)
-            .order(by: "createdAt", descending: true)
-            .limit(to: limit)
+            .whereField("authorId", isEqualTo: userId)
             .getDocuments()
         
-        return postsSnapshot.documents.compactMap { document in
-            try? Post.fromFirestore(data: document.data(), id: document.documentID)
-        }
-    }
-    
-
-    func getFollowingTrades(userId: String, limit: Int = 20) async throws -> [Trade] {
-        // Get user's following list
-        let followingSnapshot = try await db.collection("users")
-            .document(userId)
-            .collection("following")
-            .getDocuments()
-        
-        guard !followingSnapshot.documents.isEmpty else { return [] }
-        
-        let followingIds = followingSnapshot.documents.map { $0.documentID }
-        
-        // Query public trades from followed users
         let tradesSnapshot = try await db.collection("trades")
-            .whereField("userId", in: followingIds)
-            .whereField("isPublic", isEqualTo: true)
-            .order(by: "entryDate", descending: true)
-            .limit(to: limit)
+            .whereField("userId", isEqualTo: userId)
             .getDocuments()
         
-        return tradesSnapshot.documents.compactMap { document in
-            try? Trade.fromFirestore(data: document.data(), id: document.documentID)
+        return UserStats(
+            followersCount: followersSnapshot.count,
+            followingCount: followingSnapshot.count,
+            postsCount: postsSnapshot.count,
+            tradesCount: tradesSnapshot.count,
+            joinDate: user?.createdAt ?? Date()  // or whatever the actual property name is
+        )
+    }
+    // Reaction to a message
+    func addMessageReaction(messageId: String, channelId: String, communityId: String, emoji: String, userId: String, username: String) async throws {
+            print("🎭 Adding reaction \(emoji) to message \(messageId)")
+            
+            let reactionRef = db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages").document(messageId)
+                .collection("reactions").document("\(userId)_\(emoji)")
+            
+            let reaction = MessageReaction(emoji: emoji, userId: userId, username: username)
+            
+            try await reactionRef.setData(reaction.toFirestore())
+            
+            print("✅ Successfully added reaction \(emoji) to Firebase")
         }
-    }
-    func createActivity(_ activity: ActivityItem) async throws {
-        try await db.collection("activity").document(activity.id).setData(activity.toFirestore())
-    }
-
-    func getComments(postId: String) async throws -> [Comment] {
-        let snapshot = try await db.collection("comments")
-            .whereField("postId", isEqualTo: postId)
-            .order(by: "createdAt", descending: false)
+        
+        /// Remove a reaction from a message
+        func removeMessageReaction(messageId: String, channelId: String, communityId: String, emoji: String, userId: String) async throws {
+            print("🗑️ Removing reaction \(emoji) from message \(messageId)")
+            
+            let reactionRef = db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages").document(messageId)
+                .collection("reactions").document("\(userId)_\(emoji)")
+            
+            try await reactionRef.delete()
+            
+            print("✅ Successfully removed reaction \(emoji) from Firebase")
+        }
+        
+        /// Get all reactions for a specific message
+        func getMessageReactions(messageId: String, channelId: String, communityId: String) async throws -> [MessageReaction] {
+            let snapshot = try await db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages").document(messageId)
+                .collection("reactions")
+                .getDocuments()
+            
+            let reactions = snapshot.documents.compactMap { document in
+                try? MessageReaction.fromFirestore(data: document.data())
+            }
+            
+            print("📊 Loaded \(reactions.count) reactions for message \(messageId)")
+            return reactions
+        }
+        
+        /// Listen to real-time reactions for all messages in a channel
+        func listenToChannelReactions(communityId: String, channelId: String, completion: @escaping ([String: [MessageReaction]]) -> Void) {
+            print("👂 Setting up real-time reactions listener for channel \(channelId)")
+            
+            // Listen to all messages in the channel
+            db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages")
+                .addSnapshotListener { [weak self] messagesSnapshot, error in
+                    guard let messagesSnapshot = messagesSnapshot else {
+                        print("❌ Error fetching messages for reactions: \(error?.localizedDescription ?? "unknown")")
+                        completion([:])
+                        return
+                    }
+                    
+                    print("🔄 Messages snapshot changed, updating reactions...")
+                    
+                    Task {
+                        var allReactions: [String: [MessageReaction]] = [:]
+                        
+                        // For each message, get its reactions
+                        for messageDoc in messagesSnapshot.documents {
+                            let messageId = messageDoc.documentID
+                            
+                            do {
+                                let reactions = try await self?.getMessageReactions(
+                                    messageId: messageId,
+                                    channelId: channelId,
+                                    communityId: communityId
+                                ) ?? []
+                                
+                                if !reactions.isEmpty {
+                                    allReactions[messageId] = reactions
+                                }
+                            } catch {
+                                print("❌ Error loading reactions for message \(messageId): \(error)")
+                            }
+                        }
+                        
+                        await MainActor.run {
+                            print("✅ Updated reactions for \(allReactions.count) messages")
+                            completion(allReactions)
+                        }
+                    }
+                }
+        }
+        
+        /// Get popular emojis used in a channel (for emoji picker suggestions)
+        func getPopularChannelEmojis(communityId: String, channelId: String, limit: Int = 8) async throws -> [String] {
+            print("📊 Getting popular emojis for channel \(channelId)")
+            
+            let messagesSnapshot = try await db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages")
+                .limit(to: 50) // Look at recent 50 messages
+                .getDocuments()
+            
+            var emojiCount: [String: Int] = [:]
+            
+            // Count emoji usage across recent messages
+            for messageDoc in messagesSnapshot.documents {
+                let messageId = messageDoc.documentID
+                
+                let reactions = try await getMessageReactions(
+                    messageId: messageId,
+                    channelId: channelId,
+                    communityId: communityId
+                )
+                
+                for reaction in reactions {
+                    emojiCount[reaction.emoji, default: 0] += 1
+                }
+            }
+            
+            // Return most popular emojis
+            let popularEmojis = emojiCount
+                .sorted { $0.value > $1.value }
+                .prefix(limit)
+                .map { $0.key }
+            
+            print("✅ Found \(popularEmojis.count) popular emojis: \(popularEmojis)")
+            return Array(popularEmojis)
+        }
+        
+        /// Toggle reaction (add if not exists, remove if exists) - Alternative method
+        func toggleMessageReaction(messageId: String, channelId: String, communityId: String, emoji: String, userId: String, username: String) async throws -> Bool {
+            let reactionRef = db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages").document(messageId)
+                .collection("reactions").document("\(userId)_\(emoji)")
+            
+            let reactionDoc = try await reactionRef.getDocument()
+            
+            if reactionDoc.exists {
+                // Remove reaction
+                try await reactionRef.delete()
+                print("✅ Toggled OFF reaction \(emoji) for user \(userId)")
+                return false // Reaction removed
+            } else {
+                // Add reaction
+                let reaction = MessageReaction(emoji: emoji, userId: userId, username: username)
+                try await reactionRef.setData(reaction.toFirestore())
+                print("✅ Toggled ON reaction \(emoji) for user \(userId)")
+                return true // Reaction added
+            }
+        }
+        
+        /// Get reaction stats for a message (count by emoji)
+        func getMessageReactionStats(messageId: String, channelId: String, communityId: String) async throws -> [String: Int] {
+            let reactions = try await getMessageReactions(messageId: messageId, channelId: channelId, communityId: communityId)
+            
+            var stats: [String: Int] = [:]
+            for reaction in reactions {
+                stats[reaction.emoji, default: 0] += 1
+            }
+            
+            return stats
+        }
+        
+        /// Check if a specific user has reacted to a message with a specific emoji
+        func hasUserReacted(messageId: String, channelId: String, communityId: String, emoji: String, userId: String) async throws -> Bool {
+            let reactionRef = db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages").document(messageId)
+                .collection("reactions").document("\(userId)_\(emoji)")
+            
+            let reactionDoc = try await reactionRef.getDocument()
+            return reactionDoc.exists
+        }
+        
+        /// Get all users who reacted to a message with a specific emoji
+        func getUsersWhoReacted(messageId: String, channelId: String, communityId: String, emoji: String) async throws -> [String] {
+            let snapshot = try await db.collection("communities").document(communityId)
+                .collection("channels").document(channelId)
+                .collection("messages").document(messageId)
+                .collection("reactions")
+                .whereField("emoji", isEqualTo: emoji)
+                .getDocuments()
+            
+            return snapshot.documents.compactMap { document in
+                document.data()["username"] as? String
+            }
+        }
+    
+    // MARK: - User Discovery
+    
+    func getPopularUsers(limit: Int = 20) async throws -> [User] {
+        let snapshot = try await db.collection("users")
+            .order(by: "followersCount", descending: true)
+            .limit(to: limit)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
-            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
-
-    func getFollowingActivity(userId: String, limit: Int = 50) async throws -> [ActivityItem] {
-        let followingSnapshot = try await db.collection("users")
-            .document(userId)
-            .collection("following")
-            .getDocuments()
-        
-        guard !followingSnapshot.documents.isEmpty else { return [] }
-        
-        let followingIds = followingSnapshot.documents.map { $0.documentID }
-        
-        // Get recent activity from followed users
-        let activitySnapshot = try await db.collection("activity")
-            .whereField("userId", in: followingIds)
+    
+    func getRecentUsers(limit: Int = 20) async throws -> [User] {
+        let snapshot = try await db.collection("users")
             .order(by: "createdAt", descending: true)
             .limit(to: limit)
             .getDocuments()
         
-        return activitySnapshot.documents.compactMap { document in
-            try? ActivityItem.fromFirestore(data: document.data(), id: document.documentID)
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
+    
+    func getTopTraders(limit: Int = 20) async throws -> [User] {
+        let snapshot = try await db.collection("users")
+            .whereField("totalProfitLoss", isGreaterThan: 0)
+            .order(by: "totalProfitLoss", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getHighWinRateTraders(limit: Int = 20) async throws -> [User] {
+        let snapshot = try await db.collection("users")
+            .whereField("winRate", isGreaterThan: 60.0)
+            .order(by: "winRate", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getVerifiedUsers(limit: Int = 20) async throws -> [User] {
+        let snapshot = try await db.collection("users")
+            .whereField("isVerified", isEqualTo: true)
+            .order(by: "followersCount", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getSuggestedUsers(for userId: String, limit: Int = 20) async throws -> [User] {
+        // Get users that the current user's followers also follow
+        let followingSnapshot = try await db.collection("users").document(userId)
+            .collection("following").limit(to: 10).getDocuments()
+        
+        var suggestedUserIds: Set<String> = []
+        
+        // For each user the current user follows, get who they follow
+        for followingDoc in followingSnapshot.documents {
+            let theirFollowingSnapshot = try await db.collection("users")
+                .document(followingDoc.documentID)
+                .collection("following")
+                .limit(to: 5)
+                .getDocuments()
+            
+            for theirFollowing in theirFollowingSnapshot.documents {
+                if theirFollowing.documentID != userId {
+                    suggestedUserIds.insert(theirFollowing.documentID)
+                }
+            }
+        }
+        
+        // If we don't have enough suggestions, add popular users
+        if suggestedUserIds.count < limit {
+            let popularUsers = try await getPopularUsers(limit: limit - suggestedUserIds.count)
+            for user in popularUsers {
+                if user.id != userId {
+                    suggestedUserIds.insert(user.id)
+                }
+            }
+        }
+        
+        // Fetch the actual user objects
+        let userIds = Array(suggestedUserIds.prefix(limit))
+        guard !userIds.isEmpty else { return [] }
+        
+        let usersSnapshot = try await db.collection("users")
+            .whereField(FieldPath.documentID(), in: userIds)
+            .getDocuments()
+        
+        return usersSnapshot.documents.compactMap { document in
+            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    // MARK: - Following/Followers
+    
     func followUser(userId: String, followerId: String) async throws {
         let batch = db.batch()
         
@@ -221,7 +512,71 @@ class FirebaseServices {
         return document.exists
     }
     
-    // MARK: - Trade Management Methods
+    func getFollowingPosts(userId: String, limit: Int = 20) async throws -> [Post] {
+        let followingSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("following")
+            .getDocuments()
+        
+        guard !followingSnapshot.documents.isEmpty else { return [] }
+        
+        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        
+        let postsSnapshot = try await db.collection("posts")
+            .whereField("authorId", in: followingIds)
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return postsSnapshot.documents.compactMap { document in
+            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getFollowingTrades(userId: String, limit: Int = 20) async throws -> [Trade] {
+        let followingSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("following")
+            .getDocuments()
+        
+        guard !followingSnapshot.documents.isEmpty else { return [] }
+        
+        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        
+        let tradesSnapshot = try await db.collection("trades")
+            .whereField("userId", in: followingIds)
+            .whereField("isPublic", isEqualTo: true)
+            .order(by: "entryDate", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return tradesSnapshot.documents.compactMap { document in
+            try? Trade.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getFollowingActivity(userId: String, limit: Int = 50) async throws -> [ActivityItem] {
+        let followingSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("following")
+            .getDocuments()
+        
+        guard !followingSnapshot.documents.isEmpty else { return [] }
+        
+        let followingIds = followingSnapshot.documents.map { $0.documentID }
+        
+        let activitySnapshot = try await db.collection("activity")
+            .whereField("userId", in: followingIds)
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
+        
+        return activitySnapshot.documents.compactMap { document in
+            try? ActivityItem.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    // MARK: - Trade Management
     
     func addTrade(_ trade: Trade) async throws {
         try await db.collection("trades").document(trade.id).setData(trade.toFirestore())
@@ -234,7 +589,6 @@ class FirebaseServices {
     func deleteTrade(tradeId: String) async throws {
         try await db.collection("trades").document(tradeId).delete()
     }
-    
     
     func getUserTrades(userId: String) async throws -> [Trade] {
         let snapshot = try await db.collection("trades")
@@ -278,7 +632,6 @@ class FirebaseServices {
             throw FirestoreError.documentNotFound
         }
         
-        // Create a new trade based on the original, but for the new user
         var copiedTrade = Trade(
             ticker: originalTrade.ticker,
             tradeType: originalTrade.tradeType,
@@ -287,7 +640,6 @@ class FirebaseServices {
             userId: userId
         )
         
-        // Copy additional properties
         copiedTrade.notes = originalTrade.notes
         copiedTrade.strategy = originalTrade.strategy
         
@@ -310,7 +662,7 @@ class FirebaseServices {
         }
     }
     
-    // MARK: - Post Management Methods
+    // MARK: - Post Management
     
     func createPost(_ post: Post) async throws {
         try await db.collection("posts").document(post.id).setData(post.toFirestore())
@@ -321,7 +673,6 @@ class FirebaseServices {
     }
     
     func deletePost(postId: String) async throws {
-        // Delete post and all associated data
         let batch = db.batch()
         
         // Delete the post
@@ -366,21 +717,6 @@ class FirebaseServices {
         }
     }
     
-    func getFollowingPosts(userId: String) async throws -> [Post] {
-        let following = try await getUserFollowing(userId: userId)
-        guard !following.isEmpty else { return [] }
-        
-        let snapshot = try await db.collection("posts")
-            .whereField("authorId", in: Array(following))
-            .order(by: "createdAt", descending: true)
-            .limit(to: 100)
-            .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Post.fromFirestore(data: document.data(), id: document.documentID)
-        }
-    }
-    
     func searchPosts(query: String) async throws -> [Post] {
         let snapshot = try await db.collection("posts")
             .order(by: "createdAt", descending: true)
@@ -396,129 +732,154 @@ class FirebaseServices {
             post.authorUsername.lowercased().contains(query.lowercased())
         }
     }
-    private func createDefaultChannels(for communityId: String) async throws {
+    
+    // MARK: - Like/Unlike Methods
+    
+    func likePost(postId: String, userId: String) async throws {
+        print("💾 === LIKING POST (ROBUST VERSION) ===")
+        print("📝 Post ID: \(postId)")
+        print("👤 User ID: \(userId)")
+        
+        // Check if user has already liked this post
+        let isAlreadyLiked = try await checkIfUserLikedPost(postId: postId, userId: userId)
+        if isAlreadyLiked {
+            print("⚠️ User has already liked this post - skipping")
+            return
+        }
+        
         let batch = db.batch()
         
-        // Create #general channel
-        let generalChannel = Channel(
-            name: "general",
-            type: .text,
-            communityId: communityId,
-            isDefault: true,
-            adminOnly: false
-        )
+        // 1. Add like document in POST's likes subcollection
+        let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+        batch.setData([
+            "userId": userId,
+            "likedAt": Timestamp(date: Date())
+        ], forDocument: postLikeRef)
+        print("✅ Will write to: posts/\(postId)/likes/\(userId)")
         
-        let generalRef = db.collection("communities").document(communityId)
-            .collection("channels").document(generalChannel.id)
-        batch.setData(generalChannel.toFirestore(), forDocument: generalRef)
+        // 2. Add like document in USER's likedPosts subcollection
+        let userLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
+        batch.setData([
+            "postId": postId,
+            "likedAt": Timestamp(date: Date())
+        ], forDocument: userLikeRef)
+        print("✅ Will write to: users/\(userId)/likedPosts/\(postId)")
         
-        // Create #callouts channel
-        let calloutsChannel = Channel(
-            name: "callouts",
-            type: .callouts,
-            communityId: communityId,
-            isDefault: true,
-            adminOnly: true
-        )
-        
-        let calloutsRef = db.collection("communities").document(communityId)
-            .collection("channels").document(calloutsChannel.id)
-        batch.setData(calloutsChannel.toFirestore(), forDocument: calloutsRef)
+        // 3. Update post's like count
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData(["likesCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+        print("✅ Will increment likesCount on post")
         
         try await batch.commit()
+        print("✅ Like batch committed successfully!")
     }
-
-    /// Get all channels for a community
-    func getCommunityChannels(communityId: String) async throws -> [Channel] {
-        let snapshot = try await db.collection("communities").document(communityId)
-            .collection("channels")
-            .order(by: "createdAt", descending: false)
-            .getDocuments()
+    
+    func unlikePost(postId: String, userId: String) async throws {
+        print("🗑️ === UNLIKING POST (ROBUST VERSION) ===")
+        print("📝 Post ID: \(postId)")
+        print("👤 User ID: \(userId)")
         
-        return snapshot.documents.compactMap { document in
-            try? Channel.fromFirestore(data: document.data(), id: document.documentID)
-        }
-    }
-
-    /// Create a new channel in a community
-    func createChannel(_ channel: Channel) async throws {
-        let channelRef = db.collection("communities").document(channel.communityId)
-            .collection("channels").document(channel.id)
+        // Check what like documents actually exist before deleting
+        let likeLocations = try await checkLikeLocations(postId: postId, userId: userId)
         
-        try await channelRef.setData(channel.toFirestore())
-    }
-
-    /// Delete a channel (only if not default)
-    func deleteChannel(channelId: String, communityId: String) async throws {
-        // First check if it's a default channel
-        let channelSnapshot = try await db.collection("communities").document(communityId)
-            .collection("channels").document(channelId).getDocument()
-        
-        if let data = channelSnapshot.data(),
-           let isDefault = data["isDefault"] as? Bool,
-           isDefault {
-            throw NSError(domain: "CommunityError", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Cannot delete default channels"])
+        if likeLocations.isEmpty {
+            print("⚠️ No like documents found - user hasn't liked this post")
+            return
         }
         
-        // Delete the channel
-        try await db.collection("communities").document(communityId)
-            .collection("channels").document(channelId).delete()
-    }
-
-    // MARK: - Community Message Methods
-
-    /// Send a message to a channel
-    func sendCommunityMessage(_ message: CommunityMessage) async throws {
-        let messageRef = db.collection("communities").document(message.communityId)
-            .collection("channels").document(message.channelId)
-            .collection("messages").document(message.id)
+        print("📍 Found likes in locations: \(likeLocations)")
         
-        try await messageRef.setData(message.toFirestore())
-    }
-
-    /// Get messages for a channel
-    func getChannelMessages(communityId: String, channelId: String, limit: Int = 50) async throws -> [CommunityMessage] {
-        let snapshot = try await db.collection("communities").document(communityId)
-            .collection("channels").document(channelId)
-            .collection("messages")
-            .order(by: "createdAt", descending: true)
-            .limit(to: limit)
-            .getDocuments()
+        let batch = db.batch()
+        var shouldDecrementCount = false
         
-        let messages = snapshot.documents.compactMap { document in
-            try? CommunityMessage.fromFirestore(data: document.data(), id: document.documentID)
+        // Remove from POST's likes collection if it exists there
+        if likeLocations.contains("post") {
+            let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
+            batch.deleteDocument(postLikeRef)
+            shouldDecrementCount = true
+            print("✅ Will delete: posts/\(postId)/likes/\(userId)")
         }
         
-        return messages.reversed() // Return in chronological order
-    }
-
-    /// Listen to real-time messages in a channel
-    func listenToChannelMessages(communityId: String, channelId: String, completion: @escaping ([CommunityMessage]) -> Void) {
-        db.collection("communities").document(communityId)
-            .collection("channels").document(channelId)
-            .collection("messages")
-            .order(by: "createdAt", descending: false)
-            .addSnapshotListener { snapshot, error in
-                guard let documents = snapshot?.documents else {
-                    print("Error fetching channel messages: \(error?.localizedDescription ?? "Unknown error")")
-                    return
-                }
-                
-                let messages = documents.compactMap { document -> CommunityMessage? in
-                    try? CommunityMessage.fromFirestore(data: document.data(), id: document.documentID)
-                }
-                
-                completion(messages)
+        // Remove from USER's new likes collection if it exists there
+        if likeLocations.contains("userNew") {
+            let userNewLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
+            batch.deleteDocument(userNewLikeRef)
+            if !shouldDecrementCount {
+                shouldDecrementCount = true
             }
+            print("✅ Will delete: users/\(userId)/likedPosts/\(postId)")
+        }
+        
+        // Remove from USER's old likes collection if it exists there (cleanup)
+        if likeLocations.contains("userOld") {
+            let userOldLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
+            batch.deleteDocument(userOldLikeRef)
+            if !shouldDecrementCount {
+                shouldDecrementCount = true
+            }
+            print("✅ Will delete OLD: users/\(userId)/likes/\(postId)")
+        }
+        
+        // Only decrement count once, regardless of how many locations had the like
+        if shouldDecrementCount {
+            let postRef = db.collection("posts").document(postId)
+            batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
+            print("✅ Will decrement likesCount on post")
+        }
+        
+        try await batch.commit()
+        print("✅ Unlike completed successfully!")
     }
-
-    /// Delete a message from a channel
-    func deleteCommunityMessage(messageId: String, communityId: String, channelId: String) async throws {
-        try await db.collection("communities").document(communityId)
-            .collection("channels").document(channelId)
-            .collection("messages").document(messageId)
-            .delete()
+    
+    func getUserLikedPosts(userId: String) async throws -> Set<String> {
+        print("🔍 === LOADING USER LIKED POSTS (ROBUST VERSION) ===")
+        print("👤 User ID: \(userId)")
+        
+        var allLikedPosts: Set<String> = []
+        
+        // Load from NEW location (likedPosts)
+        do {
+            print("🔄 Checking NEW location: users/\(userId)/likedPosts")
+            let newLikesSnapshot = try await db.collection("users").document(userId)
+                .collection("likedPosts").getDocuments()
+            
+            let newLikes = Set(newLikesSnapshot.documents.map { $0.documentID })
+            allLikedPosts.formUnion(newLikes)
+            print("✅ Found \(newLikes.count) likes in NEW location")
+        } catch {
+            print("⚠️ Could not read from likedPosts: \(error)")
+        }
+        
+        // Load from OLD location (likes) - but don't duplicate
+        do {
+            print("🔄 Checking OLD location: users/\(userId)/likes")
+            let oldLikesSnapshot = try await db.collection("users").document(userId)
+                .collection("likes").getDocuments()
+            
+            let oldLikes = Set(oldLikesSnapshot.documents.map { $0.documentID })
+            
+            // Only add old likes that aren't already in new location
+            let newOldLikes = oldLikes.subtracting(allLikedPosts)
+            allLikedPosts.formUnion(newOldLikes)
+            
+            print("✅ Found \(oldLikes.count) total in OLD location, \(newOldLikes.count) new ones")
+            
+            // Auto-migrate old likes if found
+            if !newOldLikes.isEmpty {
+                print("🔄 Auto-migrating \(newOldLikes.count) old likes")
+                Task {
+                    await migrateSpecificLikes(userId: userId, postIds: newOldLikes)
+                }
+            }
+        } catch {
+            print("⚠️ Could not read from likes: \(error)")
+        }
+        
+        print("✅ Total unique liked posts: \(allLikedPosts.count)")
+        return allLikedPosts
     }
+    
+    // MARK: - Like Helper Methods
     
     private func checkIfUserLikedPost(postId: String, userId: String) async throws -> Bool {
         // Check both locations
@@ -533,6 +894,7 @@ class FirebaseServices {
         
         return postLikeDoc.exists || userNewLikeDoc.exists || userOldLikeDoc.exists
     }
+    
     private func checkLikeLocations(postId: String, userId: String) async throws -> Set<String> {
         var locations: Set<String> = []
         
@@ -571,109 +933,7 @@ class FirebaseServices {
         
         return locations
     }
-    // MARK: - Like/Unlike Methods
     
-    func likePost(postId: String, userId: String) async throws {
-        print("💾 === LIKING POST (ROBUST VERSION) ===")
-        print("📝 Post ID: \(postId)")
-        print("👤 User ID: \(userId)")
-        
-        // ✅ First check if user has already liked this post (prevent double-liking)
-        let isAlreadyLiked = try await checkIfUserLikedPost(postId: postId, userId: userId)
-        if isAlreadyLiked {
-            print("⚠️ User has already liked this post - skipping")
-            return
-        }
-        
-        let batch = db.batch()
-        
-        // ✅ 1. Add like document in POST's likes subcollection
-        let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
-        batch.setData([
-            "userId": userId,
-            "likedAt": Timestamp(date: Date())
-        ], forDocument: postLikeRef)
-        print("✅ Will write to: posts/\(postId)/likes/\(userId)")
-        
-        // ✅ 2. Add like document in USER's likedPosts subcollection
-        let userLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
-        batch.setData([
-            "postId": postId,
-            "likedAt": Timestamp(date: Date())
-        ], forDocument: userLikeRef)
-        print("✅ Will write to: users/\(userId)/likedPosts/\(postId)")
-        
-        // ✅ 3. Update post's like count
-        let postRef = db.collection("posts").document(postId)
-        batch.updateData(["likesCount": FieldValue.increment(Int64(1))], forDocument: postRef)
-        print("✅ Will increment likesCount on post")
-        
-        try await batch.commit()
-        print("✅ Like batch committed successfully!")
-    }
-
-    func unlikePost(postId: String, userId: String) async throws {
-        print("🗑️ === UNLIKING POST (ROBUST VERSION) ===")
-        print("📝 Post ID: \(postId)")
-        print("👤 User ID: \(userId)")
-        
-        // ✅ Check what like documents actually exist before deleting
-        let likeLocations = try await checkLikeLocations(postId: postId, userId: userId)
-        
-        if likeLocations.isEmpty {
-            print("⚠️ No like documents found - user hasn't liked this post")
-            return
-        }
-        
-        print("📍 Found likes in locations: \(likeLocations)")
-        
-        let batch = db.batch()
-        var shouldDecrementCount = false
-        
-        // ✅ Remove from POST's likes collection if it exists there
-        if likeLocations.contains("post") {
-            let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
-            batch.deleteDocument(postLikeRef)
-            shouldDecrementCount = true
-            print("✅ Will delete: posts/\(postId)/likes/\(userId)")
-        }
-        
-        // ✅ Remove from USER's new likes collection if it exists there
-        if likeLocations.contains("userNew") {
-            let userNewLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
-            batch.deleteDocument(userNewLikeRef)
-            if !shouldDecrementCount {
-                shouldDecrementCount = true
-            }
-            print("✅ Will delete: users/\(userId)/likedPosts/\(postId)")
-        }
-        
-        // ✅ Remove from USER's old likes collection if it exists there (cleanup)
-        if likeLocations.contains("userOld") {
-            let userOldLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
-            batch.deleteDocument(userOldLikeRef)
-            if !shouldDecrementCount {
-                shouldDecrementCount = true
-            }
-            print("✅ Will delete OLD: users/\(userId)/likes/\(postId)")
-        }
-        
-        // ✅ Only decrement count once, regardless of how many locations had the like
-        if shouldDecrementCount {
-            let postRef = db.collection("posts").document(postId)
-            batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
-            print("✅ Will decrement likesCount on post")
-        }
-        
-        try await batch.commit()
-        print("✅ Unlike completed successfully!")
-    }
-
-   
-    
-    
-    
-    // ✅ NEW helper method to ensure a specific like is migrated
     func ensureLikeMigration(postId: String, userId: String) async {
         print("🔄 Ensuring migration for post: \(postId), user: \(userId)")
         
@@ -719,53 +979,7 @@ class FirebaseServices {
             print("⚠️ Error during single like migration: \(error)")
         }
     }
-    func getUserLikedPosts(userId: String) async throws -> Set<String> {
-        print("🔍 === LOADING USER LIKED POSTS (ROBUST VERSION) ===")
-        print("👤 User ID: \(userId)")
-        
-        var allLikedPosts: Set<String> = []
-        
-        // ✅ Load from NEW location (likedPosts)
-        do {
-            print("🔄 Checking NEW location: users/\(userId)/likedPosts")
-            let newLikesSnapshot = try await db.collection("users").document(userId)
-                .collection("likedPosts").getDocuments()
-            
-            let newLikes = Set(newLikesSnapshot.documents.map { $0.documentID })
-            allLikedPosts.formUnion(newLikes)
-            print("✅ Found \(newLikes.count) likes in NEW location")
-        } catch {
-            print("⚠️ Could not read from likedPosts: \(error)")
-        }
-        
-        // ✅ Load from OLD location (likes) - but don't duplicate
-        do {
-            print("🔄 Checking OLD location: users/\(userId)/likes")
-            let oldLikesSnapshot = try await db.collection("users").document(userId)
-                .collection("likes").getDocuments()
-            
-            let oldLikes = Set(oldLikesSnapshot.documents.map { $0.documentID })
-            
-            // Only add old likes that aren't already in new location
-            let newOldLikes = oldLikes.subtracting(allLikedPosts)
-            allLikedPosts.formUnion(newOldLikes)
-            
-            print("✅ Found \(oldLikes.count) total in OLD location, \(newOldLikes.count) new ones")
-            
-            // ✅ Auto-migrate old likes if found
-            if !newOldLikes.isEmpty {
-                print("🔄 Auto-migrating \(newOldLikes.count) old likes")
-                Task {
-                    await migrateSpecificLikes(userId: userId, postIds: newOldLikes)
-                }
-            }
-        } catch {
-            print("⚠️ Could not read from likes: \(error)")
-        }
-        
-        print("✅ Total unique liked posts: \(allLikedPosts.count)")
-        return allLikedPosts
-    }
+    
     private func migrateSpecificLikes(userId: String, postIds: Set<String>) async {
         print("🔄 Migrating \(postIds.count) specific likes for user \(userId)")
         
@@ -815,6 +1029,7 @@ class FirebaseServices {
             }
         }
     }
+    
     func migrateOldLikes(userId: String, oldLikes: Set<String>) async throws {
         print("🔄 === MIGRATING OLD LIKES ===")
         
@@ -869,7 +1084,6 @@ class FirebaseServices {
             }
         }
     }
-    // ✅ Updated unlike method to be more defensive
     
     // MARK: - Bookmark Methods
     
@@ -890,7 +1104,107 @@ class FirebaseServices {
         return Set(snapshot.documents.map { $0.documentID })
     }
     
-    // MARK: - Community Management Methods
+    // MARK: - Comment Methods
+    
+    func addComment(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) async throws {
+        let batch = db.batch()
+        
+        let comment = Comment(
+            postId: postId,
+            content: content,
+            authorId: authorId,
+            authorUsername: authorUsername,
+            parentCommentId: parentCommentId
+        )
+        
+        // Add comment
+        let commentRef = db.collection("posts").document(postId)
+            .collection("comments").document(comment.id)
+        batch.setData(comment.toFirestore(), forDocument: commentRef)
+        
+        // Update comment count (only increment for top-level comments)
+        if parentCommentId == nil {
+            let postRef = db.collection("posts").document(postId)
+            batch.updateData(["commentsCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+        }
+        
+        try await batch.commit()
+    }
+    
+    func getComments(postId: String) async throws -> [Comment] {
+        let snapshot = try await db.collection("comments")
+            .whereField("postId", isEqualTo: postId)
+            .order(by: "createdAt", descending: false)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func getCommentsForPost(postId: String) async throws -> [Comment] {
+        let snapshot = try await db.collection("posts").document(postId)
+            .collection("comments")
+            .getDocuments()
+        
+        let comments = snapshot.documents.compactMap { document in
+            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        // Sort in memory instead
+        return comments.sorted { $0.createdAt < $1.createdAt }
+    }
+    
+    func deleteComment(commentId: String, postId: String) async throws {
+        let batch = db.batch()
+        
+        // Delete comment
+        let commentRef = db.collection("posts").document(postId)
+            .collection("comments").document(commentId)
+        batch.deleteDocument(commentRef)
+        
+        // Update comment count
+        let postRef = db.collection("posts").document(postId)
+        batch.updateData(["commentsCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
+        
+        try await batch.commit()
+    }
+    
+    // MARK: - Comment Like Methods
+    
+    func likeComment(commentId: String, userId: String) async throws {
+        print("💾 Saving comment like to Firebase...")
+        
+        let likeRef = db.collection("users").document(userId)
+            .collection("commentLikes").document(commentId)
+        
+        try await likeRef.setData([
+            "commentId": commentId,
+            "likedAt": Timestamp(date: Date())
+        ])
+        
+        print("✅ Comment like saved to Firebase")
+    }
+    
+    func unlikeComment(commentId: String, userId: String) async throws {
+        print("🗑️ Removing comment like from Firebase...")
+        
+        let likeRef = db.collection("users").document(userId)
+            .collection("commentLikes").document(commentId)
+        
+        try await likeRef.delete()
+        
+        print("✅ Comment unlike saved to Firebase")
+    }
+    
+    func getUserLikedComments(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("users").document(userId)
+            .collection("commentLikes").getDocuments()
+        
+        return Set(snapshot.documents.map { $0.documentID })
+    }
+    
+    // MARK: - Community Management
     
     func createCommunity(_ community: Community) async throws {
         let batch = db.batch()
@@ -1057,96 +1371,219 @@ class FirebaseServices {
             .updateData(["role": role])
     }
     
-    // MARK: - Comment Methods
+    // MARK: - Channel Management
     
-    func addComment(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) async throws {
+    private func createDefaultChannels(for communityId: String) async throws {
         let batch = db.batch()
         
-        let comment = Comment(
-            postId: postId,
-            content: content,
-            authorId: authorId,
-            authorUsername: authorUsername,
-            parentCommentId: parentCommentId  // ✅ Add this
+        // Create #general channel
+        let generalChannel = Channel(
+            name: "general",
+            type: .text,
+            communityId: communityId,
+            isDefault: true,
+            adminOnly: false
         )
         
-        // Add comment
-        let commentRef = db.collection("posts").document(postId)
-            .collection("comments").document(comment.id)
-        batch.setData(comment.toFirestore(), forDocument: commentRef)
+        let generalRef = db.collection("communities").document(communityId)
+            .collection("channels").document(generalChannel.id)
+        batch.setData(generalChannel.toFirestore(), forDocument: generalRef)
         
-        // Update comment count (only increment for top-level comments)
-        if parentCommentId == nil {  // ✅ Add this condition
-            let postRef = db.collection("posts").document(postId)
-            batch.updateData(["commentsCount": FieldValue.increment(Int64(1))], forDocument: postRef)
-        }
+        // Create #callouts channel
+        let calloutsChannel = Channel(
+            name: "callouts",
+            type: .callouts,
+            communityId: communityId,
+            isDefault: true,
+            adminOnly: true
+        )
+        
+        let calloutsRef = db.collection("communities").document(communityId)
+            .collection("channels").document(calloutsChannel.id)
+        batch.setData(calloutsChannel.toFirestore(), forDocument: calloutsRef)
         
         try await batch.commit()
     }
     
-    func getCommentsForPost(postId: String) async throws -> [Comment] {
-        let snapshot = try await db.collection("posts").document(postId)
-            .collection("comments")
-            // .order(by: "createdAt", descending: false)  // ❌ Remove this line temporarily
+    func getCommunityChannels(communityId: String) async throws -> [Channel] {
+        let snapshot = try await db.collection("communities").document(communityId)
+            .collection("channels")
+            .order(by: "createdAt", descending: false)
             .getDocuments()
         
-        let comments = snapshot.documents.compactMap { document in
-            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+        return snapshot.documents.compactMap { document in
+            try? Channel.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    
+    func createChannel(_ channel: Channel) async throws {
+        let channelRef = db.collection("communities").document(channel.communityId)
+            .collection("channels").document(channel.id)
+        
+        try await channelRef.setData(channel.toFirestore())
+    }
+    
+    func deleteChannel(channelId: String, communityId: String) async throws {
+        // First check if it's a default channel
+        let channelSnapshot = try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId).getDocument()
+        
+        if let data = channelSnapshot.data(),
+           let isDefault = data["isDefault"] as? Bool,
+           isDefault {
+            throw NSError(domain: "CommunityError", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Cannot delete default channels"])
         }
         
-        // ✅ Sort in memory instead
-        return comments.sorted { $0.createdAt < $1.createdAt }
+        // Delete the channel
+        try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId).delete()
     }
     
+    // MARK: - Community Message Methods
     
-    // MARK: - Comment Like Methods
-
-    // MARK: - Comment Like Methods (add to FirebaseServices.swift)
-
-    func likeComment(commentId: String, userId: String) async throws {
-        print("💾 Saving comment like to Firebase...")
+    func sendCommunityMessage(_ message: CommunityMessage) async throws {
+        let messageRef = db.collection("communities").document(message.communityId)
+            .collection("channels").document(message.channelId)
+            .collection("messages").document(message.id)
         
-        let likeRef = db.collection("users").document(userId)
-            .collection("commentLikes").document(commentId)
+        try await messageRef.setData(message.toFirestore())
+    }
+    
+    func getChannelMessages(communityId: String, channelId: String, limit: Int = 50) async throws -> [CommunityMessage] {
+        let snapshot = try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages")
+            .order(by: "createdAt", descending: true)
+            .limit(to: limit)
+            .getDocuments()
         
-        try await likeRef.setData([
-            "commentId": commentId,
-            "likedAt": Timestamp(date: Date())
+        let messages = snapshot.documents.compactMap { document in
+            try? CommunityMessage.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        return messages.reversed() // Return in chronological order
+    }
+    
+    func listenToChannelMessages(communityId: String, channelId: String, completion: @escaping ([CommunityMessage]) -> Void) {
+        db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages")
+            .order(by: "createdAt", descending: false)
+            .addSnapshotListener { snapshot, error in
+                guard let documents = snapshot?.documents else {
+                    print("Error fetching channel messages: \(error?.localizedDescription ?? "Unknown error")")
+                    return
+                }
+                
+                let messages = documents.compactMap { document -> CommunityMessage? in
+                    try? CommunityMessage.fromFirestore(data: document.data(), id: document.documentID)
+                }
+                
+                completion(messages)
+            }
+    }
+    
+    func deleteCommunityMessage(messageId: String, communityId: String, channelId: String) async throws {
+        try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages").document(messageId)
+            .delete()
+    }
+    
+    func editCommunityMessage(messageId: String, channelId: String, communityId: String, newContent: String) async throws {
+        let messageRef = db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages").document(messageId)
+        
+        try await messageRef.updateData([
+            "content": newContent,
+            "editedAt": Timestamp(date: Date()),
+            "isEdited": true
         ])
-        
-        print("✅ Comment like saved to Firebase")
     }
-
-    func unlikeComment(commentId: String, userId: String) async throws {
-        print("🗑️ Removing comment like from Firebase...")
+    
+    func canUserModifyMessage(messageId: String, channelId: String, communityId: String, userId: String) async throws -> (canEdit: Bool, canDelete: Bool) {
+        // Get the message
+        let messageRef = db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages").document(messageId)
         
-        let likeRef = db.collection("users").document(userId)
-            .collection("commentLikes").document(commentId)
+        let messageSnapshot = try await messageRef.getDocument()
         
-        try await likeRef.delete()
+        guard let messageData = messageSnapshot.data(),
+              let authorId = messageData["authorId"] as? String,
+              let createdAtTimestamp = messageData["createdAt"] as? Timestamp else {
+            return (false, false)
+        }
         
-        print("✅ Comment unlike saved to Firebase")
+        let isOwner = authorId == userId
+        let createdAt = createdAtTimestamp.dateValue()
+        let timeSinceCreated = Date().timeIntervalSince(createdAt)
+        let editTimeLimit: TimeInterval = 5 * 60 // 5 minutes
+        
+        // Check if user is admin/owner of community
+        let communityRef = db.collection("communities").document(communityId)
+        let communitySnapshot = try await communityRef.getDocument()
+        let isAdmin = communitySnapshot.data()?["createdBy"] as? String == userId
+        
+        let canEdit = isOwner && timeSinceCreated <= editTimeLimit
+        let canDelete = isOwner || isAdmin
+        
+        return (canEdit, canDelete)
     }
-    // Add this method to FirebaseServices.swift
-    func getUserLikedComments(userId: String) async throws -> Set<String> {
-        let snapshot = try await db.collection("users").document(userId)
-            .collection("commentLikes").getDocuments()
+    
+    // MARK: - Typing Indicators
+    
+    func setUserTyping(userId: String, username: String, channelId: String, communityId: String, isTyping: Bool) async throws {
+        let typingRef = db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("typing").document(userId)
         
-        return Set(snapshot.documents.map { $0.documentID })
+        if isTyping {
+            try await typingRef.setData([
+                "userId": userId,
+                "username": username,
+                "isTyping": true,
+                "lastSeen": Timestamp(date: Date())
+            ])
+        } else {
+            try await typingRef.delete()
+        }
     }
-    func deleteComment(commentId: String, postId: String) async throws {
-        let batch = db.batch()
-        
-        // Delete comment
-        let commentRef = db.collection("posts").document(postId)
-            .collection("comments").document(commentId)
-        batch.deleteDocument(commentRef)
-        
-        // Update comment count
-        let postRef = db.collection("posts").document(postId)
-        batch.updateData(["commentsCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
-        
-        try await batch.commit()
+    
+    func listenToTypingIndicators(communityId: String, channelId: String, completion: @escaping ([TypingUser]) -> Void) {
+        db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("typing")
+            .addSnapshotListener { snapshot, error in
+                guard let documents = snapshot?.documents else {
+                    print("Error fetching typing indicators: \(error?.localizedDescription ?? "unknown")")
+                    completion([])
+                    return
+                }
+                
+                let typingUsers = documents.compactMap { document -> TypingUser? in
+                    guard let userId = document.data()["userId"] as? String,
+                          let username = document.data()["username"] as? String,
+                          let isTyping = document.data()["isTyping"] as? Bool,
+                          let lastSeenTimestamp = document.data()["lastSeen"] as? Timestamp,
+                          isTyping else {
+                        return nil
+                    }
+                    
+                    var user = TypingUser(userId: userId, username: username)
+                    // Update lastSeen to the actual timestamp from Firebase
+                    return user
+                }
+                
+                completion(typingUsers)
+            }
+    }
+    
+    // MARK: - Activity Methods
+    
+    func createActivity(_ activity: ActivityItem) async throws {
+        try await db.collection("activity").document(activity.id).setData(activity.toFirestore())
     }
     
     // MARK: - Messaging Methods
@@ -1289,7 +1726,7 @@ class FirebaseServices {
         let reportRef = db.collection("reports").document()
         batch.setData(report, forDocument: reportRef)
         
-        // ✅ Track user's reported posts
+        // Track user's reported posts
         let userReportRef = db.collection("users").document(reportedBy)
             .collection("reportedPosts").document(postId)
         batch.setData([
@@ -1297,16 +1734,16 @@ class FirebaseServices {
             "reportedAt": Timestamp(date: Date())
         ], forDocument: userReportRef)
         
-        // ✅ Increment report count on the post
+        // Increment report count on the post
         let postRef = db.collection("posts").document(postId)
         batch.updateData(["reportCount": FieldValue.increment(Int64(1))], forDocument: postRef)
         
         try await batch.commit()
         
-        // ✅ Check if post should be auto-hidden (3+ reports)
+        // Check if post should be auto-hidden (3+ reports)
         try await checkPostReportCount(postId: postId)
     }
-
+    
     private func checkPostReportCount(postId: String) async throws {
         let postDoc = try await db.collection("posts").document(postId).getDocument()
         let reportCount = postDoc.data()?["reportCount"] as? Int ?? 0
@@ -1423,6 +1860,45 @@ class FirebaseServices {
         }
     }
     
+    func getMarketNewsAnalytics() async throws -> NewsAnalytics {
+        let oneWeekAgo = Calendar.current.date(byAdding: .weekOfYear, value: -1, to: Date()) ?? Date()
+        
+        let snapshot = try await db.collection("marketNews")
+            .whereField("cachedAt", isGreaterThan: Timestamp(date: oneWeekAgo))
+            .getDocuments()
+        
+        let articles = snapshot.documents.compactMap { document in
+            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
+        }
+        
+        // Analyze keywords
+        var keywordCounts: [String: Int] = [:]
+        for article in articles {
+            for keyword in article.keywords {
+                keywordCounts[keyword, default: 0] += 1
+            }
+        }
+        
+        let topKeywords = keywordCounts.sorted { $0.value > $1.value }
+            .prefix(10)
+            .map { $0.key }
+        
+        // Analyze sources
+        var sourceCounts: [String: Int] = [:]
+        for article in articles {
+            if let source = article.source {
+                sourceCounts[source, default: 0] += 1
+            }
+        }
+        
+        return NewsAnalytics(
+            totalArticles: articles.count,
+            topKeywords: topKeywords,
+            sourceCounts: sourceCounts,
+            lastUpdated: Date()
+        )
+    }
+    
     // MARK: - Notification Methods
     
     func sendNotification(to userId: String, type: String, title: String, body: String, data: [String: Any] = [:]) async throws {
@@ -1467,45 +1943,6 @@ class FirebaseServices {
     
     // MARK: - Analytics Methods
     
-    func getMarketNewsAnalytics() async throws -> NewsAnalytics {
-        let oneWeekAgo = Calendar.current.date(byAdding: .weekOfYear, value: -1, to: Date()) ?? Date()
-        
-        let snapshot = try await db.collection("marketNews")
-            .whereField("cachedAt", isGreaterThan: Timestamp(date: oneWeekAgo))
-            .getDocuments()
-        
-        let articles = snapshot.documents.compactMap { document in
-            try? MarketNewsArticle.fromFirestore(data: document.data(), id: document.documentID)
-        }
-        
-        // Analyze keywords
-        var keywordCounts: [String: Int] = [:]
-        for article in articles {
-            for keyword in article.keywords {
-                keywordCounts[keyword, default: 0] += 1
-            }
-        }
-        
-        let topKeywords = keywordCounts.sorted { $0.value > $1.value }
-            .prefix(10)
-            .map { $0.key }
-        
-        // Analyze sources
-        var sourceCounts: [String: Int] = [:]
-        for article in articles {
-            if let source = article.source {
-                sourceCounts[source, default: 0] += 1
-            }
-        }
-        
-        return NewsAnalytics(
-            totalArticles: articles.count,
-            topKeywords: topKeywords,
-            sourceCounts: sourceCounts,
-            lastUpdated: Date()
-        )
-    }
-    
     func trackUserActivity(userId: String, action: String, details: [String: Any] = [:]) async throws {
         let activity: [String: Any] = [
             "userId": userId,
@@ -1516,7 +1953,6 @@ class FirebaseServices {
         
         try await db.collection("userActivity").document().setData(activity)
     }
-    
     
     // MARK: - Helper Methods
     
@@ -1533,323 +1969,9 @@ class FirebaseServices {
         }
         listeners.removeAll()
     }
-    func getPopularUsers(limit: Int = 20) async throws -> [User] {
-            let snapshot = try await db.collection("users")
-                .order(by: "followersCount", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            
-            return snapshot.documents.compactMap { document in
-                try? User.fromFirestore(data: document.data(), id: document.documentID)
-            }
-        }
-        
-        /// Get recently joined users
-        func getRecentUsers(limit: Int = 20) async throws -> [User] {
-            let snapshot = try await db.collection("users")
-                .order(by: "createdAt", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            
-            return snapshot.documents.compactMap { document in
-                try? User.fromFirestore(data: document.data(), id: document.documentID)
-            }
-        }
-        
-        /// Get top performing traders based on profit/loss
-        func getTopTraders(limit: Int = 20) async throws -> [User] {
-            let snapshot = try await db.collection("users")
-                .whereField("totalProfitLoss", isGreaterThan: 0)
-                .order(by: "totalProfitLoss", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            
-            return snapshot.documents.compactMap { document in
-                try? User.fromFirestore(data: document.data(), id: document.documentID)
-            }
-        }
-        
-        /// Get users with high win rates
-        func getHighWinRateTraders(limit: Int = 20) async throws -> [User] {
-            let snapshot = try await db.collection("users")
-                .whereField("winRate", isGreaterThan: 60.0)
-                .order(by: "winRate", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            
-            return snapshot.documents.compactMap { document in
-                try? User.fromFirestore(data: document.data(), id: document.documentID)
-            }
-        }
-        
-        /// Get verified users
-        func getVerifiedUsers(limit: Int = 20) async throws -> [User] {
-            let snapshot = try await db.collection("users")
-                .whereField("isVerified", isEqualTo: true)
-                .order(by: "followersCount", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            
-            return snapshot.documents.compactMap { document in
-                try? User.fromFirestore(data: document.data(), id: document.documentID)
-            }
-        }
-        
-        /// Search users with enhanced filtering
-        func searchUsersAdvanced(
-            query: String,
-            minFollowers: Int? = nil,
-            isVerified: Bool? = nil,
-            subscriptionTier: SubscriptionTier? = nil,
-            limit: Int = 20
-        ) async throws -> [User] {
-            var queryBuilder = db.collection("users")
-                .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
-                .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
-            
-            if let minFollowers = minFollowers {
-                queryBuilder = queryBuilder.whereField("followersCount", isGreaterThanOrEqualTo: minFollowers)
-            }
-            
-            if let isVerified = isVerified {
-                queryBuilder = queryBuilder.whereField("isVerified", isEqualTo: isVerified)
-            }
-            
-            if let subscriptionTier = subscriptionTier {
-                queryBuilder = queryBuilder.whereField("subscriptionTier", isEqualTo: subscriptionTier.rawValue)
-            }
-            
-            let snapshot = try await queryBuilder
-                .limit(to: limit)
-                .getDocuments()
-            
-            return snapshot.documents.compactMap { document in
-                try? User.fromFirestore(data: document.data(), id: document.documentID)
-            }
-        }
-        
-        /// Get suggested users for a specific user (based on mutual follows, similar interests)
-        func getSuggestedUsers(for userId: String, limit: Int = 20) async throws -> [User] {
-            // Get users that the current user's followers also follow
-            let followingSnapshot = try await db.collection("users").document(userId)
-                .collection("following").limit(to: 10).getDocuments()
-            
-            var suggestedUserIds: Set<String> = []
-            
-            // For each user the current user follows, get who they follow
-            for followingDoc in followingSnapshot.documents {
-                let theirFollowingSnapshot = try await db.collection("users")
-                    .document(followingDoc.documentID)
-                    .collection("following")
-                    .limit(to: 5)
-                    .getDocuments()
-                
-                for theirFollowing in theirFollowingSnapshot.documents {
-                    if theirFollowing.documentID != userId { // Don't suggest the user themselves
-                        suggestedUserIds.insert(theirFollowing.documentID)
-                    }
-                }
-            }
-            
-            // If we don't have enough suggestions, add popular users
-            if suggestedUserIds.count < limit {
-                let popularUsers = try await getPopularUsers(limit: limit - suggestedUserIds.count)
-                for user in popularUsers {
-                    if user.id != userId {
-                        suggestedUserIds.insert(user.id)
-                    }
-                }
-            }
-            
-            // Convert IDs to User objects
-            let userIds = Array(suggestedUserIds.prefix(limit))
-            var users: [User] = []
-            
-            for userId in userIds {
-                if let user = try await getUserById(userId: userId) {
-                    users.append(user)
-                }
-            }
-            
-            return users.sorted { $0.followersCount > $1.followersCount }
-        }
-    
-    
-    deinit {
-        removeAllListeners()
-    }
 }
 
-// MARK: - Supporting Types
-
-enum FirestoreError: LocalizedError {
-    case invalidData
-    case documentNotFound
-    case unauthorized
-    case networkError
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidData:
-            return "Invalid data format"
-        case .documentNotFound:
-            return "Document not found"
-        case .unauthorized:
-            return "You don't have permission to perform this action"
-        case .networkError:
-            return "Network error. Please check your connection"
-        }
-    }
-}
-
-struct NewsAnalytics {
-    let totalArticles: Int
-    let topKeywords: [String]
-    let sourceCounts: [String: Int]
-    let lastUpdated: Date
-}
-
-// MARK: - Comment Model
-struct Comment: Identifiable, Codable {
-    let id: String
-    let postId: String
-    let content: String
-    let authorId: String
-    let authorUsername: String
-    let createdAt: Date
-    let likesCount: Int
-    let parentCommentId: String?  // ✅ Add this for replies
-
-
-    // Initializer for creating a new comment
-    init(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) {
-        self.id = UUID().uuidString
-        self.postId = postId
-        self.content = content
-        self.authorId = authorId
-        self.authorUsername = authorUsername
-        self.createdAt = Date()
-        self.likesCount = 0
-        self.parentCommentId = parentCommentId  // ✅ Add this
-
-    }
-
-    // Initializer for loading from Firestore
-    init(id: String, postId: String, content: String, authorId: String, authorUsername: String, createdAt: Date, likesCount: Int, parentCommentId: String? = nil) {
-        self.id = id
-        self.postId = postId
-        self.content = content
-        self.authorId = authorId
-        self.authorUsername = authorUsername
-        self.createdAt = createdAt
-        self.likesCount = likesCount
-        self.parentCommentId = parentCommentId  // ✅ Add this
-
-    }
-
-    func toFirestore() -> [String: Any] {
-        var data: [String: Any] = [
-            "postId": postId,
-            "content": content,
-            "authorId": authorId,
-            "authorUsername": authorUsername,
-            "createdAt": Timestamp(date: createdAt),
-            "likesCount": likesCount
-        ]
-        
-        // ✅ Only add parentCommentId if it exists
-        if let parentCommentId = parentCommentId {
-            data["parentCommentId"] = parentCommentId
-        }
-        
-        return data
-    }
-
-    static func fromFirestore(data: [String: Any], id: String) throws -> Comment {
-        guard let postId = data["postId"] as? String,
-              let content = data["content"] as? String,
-              let authorId = data["authorId"] as? String,
-              let authorUsername = data["authorUsername"] as? String,
-              let createdAtTimestamp = data["createdAt"] as? Timestamp,
-              let likesCount = data["likesCount"] as? Int else {
-            throw FirestoreError.invalidData
-        }
-
-        return Comment(
-            id: id,
-            postId: postId,
-            content: content,
-            authorId: authorId,
-            authorUsername: authorUsername,
-            createdAt: createdAtTimestamp.dateValue(),
-            likesCount: likesCount,
-            parentCommentId: data["parentCommentId"] as? String  // ✅ Add this - it's optional
-        )
-    }
-}
-
-// MARK: - Conversation Model
-struct Conversation: Identifiable, Codable {
-    let id: String
-    let participants: [String]
-    let lastMessage: String
-    let lastMessageTimestamp: Date
-    let lastMessageSenderId: String
-    let updatedAt: Date
-    
-    static func fromFirestore(data: [String: Any], id: String) throws -> Conversation {
-        guard let participants = data["participants"] as? [String],
-              let lastMessage = data["lastMessage"] as? String,
-              let lastMessageTimestamp = (data["lastMessageTimestamp"] as? Timestamp)?.dateValue(),
-              let lastMessageSenderId = data["lastMessageSenderId"] as? String,
-              let updatedAt = (data["updatedAt"] as? Timestamp)?.dateValue() else {
-            throw FirestoreError.invalidData
-        }
-        
-        return Conversation(
-            id: id,
-            participants: participants,
-            lastMessage: lastMessage,
-            lastMessageTimestamp: lastMessageTimestamp,
-            lastMessageSenderId: lastMessageSenderId,
-            updatedAt: updatedAt
-        )
-    }
-}
-
-// MARK: - User Notification Model
-struct UserNotification: Identifiable {
-    let id: String
-    let userId: String
-    let type: String
-    let title: String
-    let body: String
-    let data: [String: Any]
-    let isRead: Bool
-    let createdAt: Date
-    
-    static func fromFirestore(data: [String: Any], id: String) throws -> UserNotification {
-        guard let userId = data["userId"] as? String,
-              let type = data["type"] as? String,
-              let title = data["title"] as? String,
-              let body = data["body"] as? String,
-              let isRead = data["isRead"] as? Bool,
-              let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() else {
-            throw FirestoreError.invalidData
-        }
-        
-        return UserNotification(
-            id: id,
-            userId: userId,
-            type: type,
-            title: title,
-            body: body,
-            data: data["data"] as? [String: Any] ?? [:],
-            isRead: isRead,
-            createdAt: createdAt
-        )
-    }
-}
+// MARK: - FirebaseAuthService Extension
 
 extension FirebaseAuthService {
     
@@ -1893,5 +2015,226 @@ extension FirebaseAuthService {
     
     func getSuggestedUsers(for userId: String, limit: Int = 20) async throws -> [User] {
         return try await FirebaseServices.shared.getSuggestedUsers(for: userId, limit: limit)
+    }
+}
+
+// MARK: - Supporting Types
+
+enum FirestoreError: LocalizedError {
+    case invalidData
+    case documentNotFound
+    case unauthorized
+    case networkError
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidData:
+            return "Invalid data format"
+        case .documentNotFound:
+            return "Document not found"
+        case .unauthorized:
+            return "You don't have permission to perform this action"
+        case .networkError:
+            return "Network error. Please check your connection"
+        }
+    }
+}
+
+struct NewsAnalytics {
+    let totalArticles: Int
+    let topKeywords: [String]
+    let sourceCounts: [String: Int]
+    let lastUpdated: Date
+}
+
+struct UserStats {
+    let followersCount: Int
+    let followingCount: Int
+    let postsCount: Int
+    let tradesCount: Int
+    let joinDate: Date
+}
+
+// MARK: - Comment Model
+
+struct Comment: Identifiable, Codable {
+    let id: String
+    let postId: String
+    let content: String
+    let authorId: String
+    let authorUsername: String
+    let createdAt: Date
+    let likesCount: Int
+    let parentCommentId: String?
+    
+    // Initializer for creating a new comment
+    init(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) {
+        self.id = UUID().uuidString
+        self.postId = postId
+        self.content = content
+        self.authorId = authorId
+        self.authorUsername = authorUsername
+        self.createdAt = Date()
+        self.likesCount = 0
+        self.parentCommentId = parentCommentId
+    }
+    
+    // Initializer for loading from Firestore
+    init(id: String, postId: String, content: String, authorId: String, authorUsername: String, createdAt: Date, likesCount: Int, parentCommentId: String? = nil) {
+        self.id = id
+        self.postId = postId
+        self.content = content
+        self.authorId = authorId
+        self.authorUsername = authorUsername
+        self.createdAt = createdAt
+        self.likesCount = likesCount
+        self.parentCommentId = parentCommentId
+    }
+    
+    func toFirestore() -> [String: Any] {
+        var data: [String: Any] = [
+            "postId": postId,
+            "content": content,
+            "authorId": authorId,
+            "authorUsername": authorUsername,
+            "createdAt": Timestamp(date: createdAt),
+            "likesCount": likesCount
+        ]
+        
+        // Only add parentCommentId if it exists
+        if let parentCommentId = parentCommentId {
+            data["parentCommentId"] = parentCommentId
+        }
+        
+        return data
+    }
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> Comment {
+        guard let postId = data["postId"] as? String,
+              let content = data["content"] as? String,
+              let authorId = data["authorId"] as? String,
+              let authorUsername = data["authorUsername"] as? String,
+              let createdAtTimestamp = data["createdAt"] as? Timestamp,
+              let likesCount = data["likesCount"] as? Int else {
+            throw FirestoreError.invalidData
+        }
+        
+        return Comment(
+            id: id,
+            postId: postId,
+            content: content,
+            authorId: authorId,
+            authorUsername: authorUsername,
+            createdAt: createdAtTimestamp.dateValue(),
+            likesCount: likesCount,
+            parentCommentId: data["parentCommentId"] as? String
+        )
+    }
+}
+
+// MARK: - Conversation Model
+
+struct Conversation: Identifiable, Codable {
+    let id: String
+    let participants: [String]
+    let lastMessage: String
+    let lastMessageTimestamp: Date
+    let lastMessageSenderId: String
+    let updatedAt: Date
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> Conversation {
+        guard let participants = data["participants"] as? [String],
+              let lastMessage = data["lastMessage"] as? String,
+              let lastMessageTimestamp = (data["lastMessageTimestamp"] as? Timestamp)?.dateValue(),
+              let lastMessageSenderId = data["lastMessageSenderId"] as? String,
+              let updatedAt = (data["updatedAt"] as? Timestamp)?.dateValue() else {
+            throw FirestoreError.invalidData
+        }
+        
+        return Conversation(
+            id: id,
+            participants: participants,
+            lastMessage: lastMessage,
+            lastMessageTimestamp: lastMessageTimestamp,
+            lastMessageSenderId: lastMessageSenderId,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+// MARK: - User Notification Model
+
+struct UserNotification: Identifiable {
+    let id: String
+    let userId: String
+    let type: String
+    let title: String
+    let body: String
+    let data: [String: Any]
+    let isRead: Bool
+    let createdAt: Date
+    
+    static func fromFirestore(data: [String: Any], id: String) throws -> UserNotification {
+        guard let userId = data["userId"] as? String,
+              let type = data["type"] as? String,
+              let title = data["title"] as? String,
+              let body = data["body"] as? String,
+              let isRead = data["isRead"] as? Bool,
+              let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() else {
+            throw FirestoreError.invalidData
+        }
+        
+        return UserNotification(
+            id: id,
+            userId: userId,
+            type: type,
+            title: title,
+            body: body,
+            data: data["data"] as? [String: Any] ?? [:],
+            isRead: isRead,
+            createdAt: createdAt
+        )
+    }
+}
+
+// MARK: - CommunityMessage Extension
+
+extension CommunityMessage {
+    
+    /// Updated toFirestore method with edit support
+    func toFirestoreWithEditSupport() -> [String: Any] {
+        var data = toFirestore()
+        data["isEdited"] = false
+        return data
+    }
+    
+    /// Updated fromFirestore method with edit support
+    static func fromFirestoreWithEditSupport(data: [String: Any], id: String) throws -> CommunityMessage {
+        guard let content = data["content"] as? String,
+              let authorId = data["authorId"] as? String,
+              let authorUsername = data["authorUsername"] as? String,
+              let channelId = data["channelId"] as? String,
+              let communityId = data["communityId"] as? String,
+              let createdAtTimestamp = data["createdAt"] as? Timestamp else {
+            throw FirestoreError.invalidData
+        }
+        
+        var message = CommunityMessage(
+            content: content,
+            authorId: authorId,
+            authorUsername: authorUsername,
+            channelId: channelId,
+            communityId: communityId
+        )
+        
+        message.id = id
+        message.createdAt = createdAtTimestamp.dateValue()
+        
+        // Handle edited messages
+        if let isEdited = data["isEdited"] as? Bool, isEdited {
+            message.content = content + " (edited)"
+        }
+        
+        return message
     }
 }

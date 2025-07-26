@@ -1,5 +1,5 @@
 // File: Core/Communities/ViewModels/ChannelChatViewModel.swift
-// ViewModel for Channel Chat with Real-time Messaging
+// FIREBASE INTEGRATED VERSION - Persistent Reactions
 
 import Foundation
 import Combine
@@ -13,6 +13,10 @@ class ChannelChatViewModel: ObservableObject {
     @Published var canUserPost = true
     @Published var canUserManageChannel = false
     
+    // Firebase-backed Message Reactions
+    @Published var messageReactions: [String: [MessageReaction]] = [:] // messageId -> reactions
+    @Published var userReactions: [String: Set<String>] = [:] // messageId -> user's reaction emojis
+    
     // MARK: - Private Properties
     private var community: Community?
     private var channel: Channel?
@@ -20,10 +24,15 @@ class ChannelChatViewModel: ObservableObject {
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
     private var messagesListener: (() -> Void)?
+    private var reactionsListener: (() -> Void)?
     
     // MARK: - Computed Properties
     var currentUserId: String? {
         return authService.currentUser?.id
+    }
+    
+    var currentUsername: String? {
+        return authService.currentUser?.username
     }
     
     // MARK: - Initialization
@@ -44,7 +53,9 @@ class ChannelChatViewModel: ObservableObject {
         // Load initial messages and start real-time listening
         Task {
             await loadInitialMessages()
+            await loadAllMessageReactions()
             startListeningForMessages()
+            startListeningForReactions()
         }
     }
     
@@ -86,23 +97,154 @@ class ChannelChatViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Firebase-Backed Message Reactions
+    
+    /// Add or remove reaction to a message (toggle behavior)
+    func addReaction(to messageId: String, emoji: String) {
+        guard let currentUser = authService.currentUser,
+              let community = community,
+              let channel = channel else {
+            print("❌ Cannot add reaction: Missing requirements")
+            return
+        }
+        
+        Task {
+            do {
+                // Check if user already reacted with this emoji
+                let userReactionsForMessage = userReactions[messageId] ?? Set<String>()
+                
+                if userReactionsForMessage.contains(emoji) {
+                    // User already reacted with this emoji, remove it
+                    try await firebaseService.removeMessageReaction(
+                        messageId: messageId,
+                        channelId: channel.id,
+                        communityId: community.id,
+                        emoji: emoji,
+                        userId: currentUser.id
+                    )
+                    
+                    // Update local state optimistically
+                    removeLocalReaction(messageId: messageId, emoji: emoji, userId: currentUser.id)
+                    
+                    print("✅ Removed reaction \(emoji) from message \(messageId)")
+                    
+                } else {
+                    // Add new reaction
+                    try await firebaseService.addMessageReaction(
+                        messageId: messageId,
+                        channelId: channel.id,
+                        communityId: community.id,
+                        emoji: emoji,
+                        userId: currentUser.id,
+                        username: currentUser.username
+                    )
+                    
+                    // Update local state optimistically
+                    addLocalReaction(messageId: messageId, emoji: emoji, userId: currentUser.id, username: currentUser.username)
+                    
+                    print("✅ Added reaction \(emoji) to message \(messageId)")
+                }
+                
+            } catch {
+                await handleError(error, context: "toggling reaction")
+            }
+        }
+    }
+    
+    /// Get reactions for a specific message (for UI display)
+    func getReactionsFor(_ messageId: String) -> [String] {
+        let reactions = messageReactions[messageId] ?? []
+        // Return unique emojis for simple display
+        return Array(Set(reactions.map { $0.emoji }))
+    }
+    
+    /// Get grouped reactions for display with counts
+    func getGroupedReactions(for messageId: String) -> [EmojiReactionGroup] {
+        let reactions = messageReactions[messageId] ?? []
+        let grouped = Dictionary(grouping: reactions) { $0.emoji }
+        
+        return grouped.map { emoji, reactionList in
+            let usernames = reactionList.map { $0.username }
+            let hasUserReacted = reactionList.contains { $0.userId == currentUserId }
+            
+            return EmojiReactionGroup(
+                emoji: emoji,
+                count: reactionList.count,
+                usernames: usernames,
+                hasUserReacted: hasUserReacted
+            )
+        }.sorted { $0.count > $1.count } // Sort by popularity
+    }
+    
+    /// Check if current user has reacted with specific emoji
+    func hasUserReacted(to messageId: String, with emoji: String) -> Bool {
+        return userReactions[messageId]?.contains(emoji) ?? false
+    }
+    
+    /// Get reaction count for specific emoji on message
+    func getReactionCount(for messageId: String, emoji: String) -> Int {
+        let reactions = messageReactions[messageId] ?? []
+        return reactions.filter { $0.emoji == emoji }.count
+    }
+    
+    // MARK: - Message Management (Previous functionality)
+    
+    /// Check if user can edit message
+    func canEditMessage(_ message: CommunityMessage) -> Bool {
+        guard let currentUserId = currentUserId else { return false }
+        guard message.authorId == currentUserId else { return false }
+        
+        let editTimeLimit: TimeInterval = 5 * 60 // 5 minutes
+        let timeSinceCreated = Date().timeIntervalSince(message.createdAt)
+        return timeSinceCreated <= editTimeLimit
+    }
+    
+    /// Check if user can delete message
+    func canDeleteMessage(_ message: CommunityMessage) -> Bool {
+        guard let currentUserId = currentUserId else { return false }
+        return (message.authorId == currentUserId) || canUserManageChannel
+    }
+    
     /// Cleanup when view disappears
     func cleanup() {
         print("🧹 ChannelChatViewModel: Cleaning up listeners")
         messagesListener?()
+        reactionsListener?()
         messagesListener = nil
-        cancellables.removeAll()
+        reactionsListener = nil
     }
     
     // MARK: - Private Methods
     
-    /// Load initial messages for the channel
+    /// Check user permissions for the channel
+    private func checkUserPermissions() {
+        guard let channel = channel,
+              let community = community,
+              let currentUserId = currentUserId else {
+            canUserPost = false
+            canUserManageChannel = false
+            return
+        }
+        
+        // Check if user can post (not admin-only or user is admin)
+        canUserPost = !channel.adminOnly || isUserAdmin()
+        
+        // Check if user can manage channel (owner or admin)
+        canUserManageChannel = isUserAdmin() || community.createdBy == currentUserId
+    }
+    
+    /// Check if current user is admin
+    private func isUserAdmin() -> Bool {
+        guard let community = community,
+              let currentUserId = currentUserId else { return false }
+        
+        return community.createdBy == currentUserId
+    }
+    
+    /// Load initial messages
     private func loadInitialMessages() async {
         guard let community = community,
               let channel = channel else { return }
-        
-        isLoading = true
-        errorMessage = ""
         
         do {
             let loadedMessages = try await firebaseService.getChannelMessages(
@@ -112,66 +254,155 @@ class ChannelChatViewModel: ObservableObject {
             )
             
             messages = loadedMessages
-            print("✅ Loaded \(messages.count) initial messages for #\(channel.name)")
+            print("✅ Loaded \(messages.count) messages for #\(channel.name)")
             
         } catch {
-            await handleError(error, context: "loading initial messages")
+            await handleError(error, context: "loading messages")
         }
-        
-        isLoading = false
     }
     
-    /// Start listening for real-time message updates
+    /// Load reactions for all current messages
+    private func loadAllMessageReactions() async {
+        guard let community = community,
+              let channel = channel else { return }
+        
+        do {
+            // Load reactions for all current messages
+            for message in messages {
+                let reactions = try await firebaseService.getMessageReactions(
+                    messageId: message.id,
+                    channelId: channel.id,
+                    communityId: community.id
+                )
+                
+                messageReactions[message.id] = reactions
+                
+                // Update user reactions tracking
+                if let currentUserId = currentUserId {
+                    let userReactedEmojis = reactions
+                        .filter { $0.userId == currentUserId }
+                        .map { $0.emoji }
+                    userReactions[message.id] = Set(userReactedEmojis)
+                }
+            }
+            
+            print("✅ Loaded reactions for \(messages.count) messages")
+            
+        } catch {
+            await handleError(error, context: "loading reactions")
+        }
+    }
+    
+    /// Start listening for real-time messages
     private func startListeningForMessages() {
         guard let community = community,
               let channel = channel else { return }
         
-        print("👂 Starting real-time listener for #\(channel.name)")
-        
         firebaseService.listenToChannelMessages(
             communityId: community.id,
             channelId: channel.id
-        ) { [weak self] updatedMessages in
+        ) { [weak self] newMessages in
             Task { @MainActor in
-                self?.messages = updatedMessages
-                print("🔄 Received \(updatedMessages.count) messages via real-time listener")
+                self?.messages = newMessages
+                
+                // Load reactions for any new messages
+                await self?.loadReactionsForNewMessages(newMessages)
             }
-        }
-        
-        // Store the cleanup function
-        messagesListener = { [weak self] in
-            // Firebase listeners are automatically cleaned up when the reference is released
-            // But we can add custom cleanup here if needed
-            print("🔇 Stopped listening to messages")
         }
     }
     
-    /// Check user permissions for posting and managing
-    private func checkUserPermissions() {
+    /// Start listening for real-time reactions
+    private func startListeningForReactions() {
         guard let community = community,
-              let channel = channel,
-              let userId = currentUserId else {
-            canUserPost = false
-            canUserManageChannel = false
-            return
+              let channel = channel else { return }
+        
+        print("🎭 Starting real-time reactions listener for #\(channel.name)")
+        
+        firebaseService.listenToChannelReactions(
+            communityId: community.id,
+            channelId: channel.id
+        ) { [weak self] reactions in
+            Task { @MainActor in
+                await self?.updateReactionsFromListener(reactions)
+            }
+        }
+    }
+    
+    /// Load reactions for new messages that came from real-time listener
+    private func loadReactionsForNewMessages(_ newMessages: [CommunityMessage]) async {
+        guard let community = community,
+              let channel = channel else { return }
+        
+        for message in newMessages {
+            // Only load if we don't already have reactions for this message
+            if messageReactions[message.id] == nil {
+                do {
+                    let reactions = try await firebaseService.getMessageReactions(
+                        messageId: message.id,
+                        channelId: channel.id,
+                        communityId: community.id
+                    )
+                    
+                    messageReactions[message.id] = reactions
+                    
+                    // Update user reactions tracking
+                    if let currentUserId = currentUserId {
+                        let userReactedEmojis = reactions
+                            .filter { $0.userId == currentUserId }
+                            .map { $0.emoji }
+                        userReactions[message.id] = Set(userReactedEmojis)
+                    }
+                } catch {
+                    print("Error loading reactions for new message: \(error)")
+                }
+            }
+        }
+    }
+    
+    /// Update reactions from real-time listener
+    private func updateReactionsFromListener(_ reactions: [String: [MessageReaction]]) async {
+        messageReactions = reactions
+        
+        // Update user reactions tracking
+        if let currentUserId = currentUserId {
+            for (messageId, messageReactionList) in reactions {
+                let userReactedEmojis = messageReactionList
+                    .filter { $0.userId == currentUserId }
+                    .map { $0.emoji }
+                userReactions[messageId] = Set(userReactedEmojis)
+            }
         }
         
-        // Check if user can post messages
-        if channel.adminOnly {
-            // Only admins and community creator can post in admin-only channels
-            canUserPost = (community.createdBy == userId)
-            // TODO: Add proper role checking when role system is implemented
-        } else {
-            // Regular channels - all members can post
-            canUserPost = true
-        }
+        print("🎭 Updated reactions from Firebase listener")
+    }
+    
+    /// Add reaction to local state optimistically (for immediate UI feedback)
+    private func addLocalReaction(messageId: String, emoji: String, userId: String, username: String) {
+        var reactions = messageReactions[messageId] ?? []
+        let newReaction = MessageReaction(
+            emoji: emoji,
+            userId: userId,
+            username: username
+        )
+        reactions.append(newReaction)
+        messageReactions[messageId] = reactions
         
-        // Check if user can manage channel (admin/owner permissions)
-        canUserManageChannel = (community.createdBy == userId)
+        // Update user reactions
+        var userReactionsForMessage = userReactions[messageId] ?? Set<String>()
+        userReactionsForMessage.insert(emoji)
+        userReactions[messageId] = userReactionsForMessage
+    }
+    
+    /// Remove reaction from local state optimistically
+    private func removeLocalReaction(messageId: String, emoji: String, userId: String) {
+        var reactions = messageReactions[messageId] ?? []
+        reactions.removeAll { $0.userId == userId && $0.emoji == emoji }
+        messageReactions[messageId] = reactions
         
-        print("🔐 User permissions for #\(channel.name):")
-        print("   Can post: \(canUserPost)")
-        print("   Can manage: \(canUserManageChannel)")
+        // Update user reactions
+        var userReactionsForMessage = userReactions[messageId] ?? Set<String>()
+        userReactionsForMessage.remove(emoji)
+        userReactions[messageId] = userReactionsForMessage
     }
     
     /// Handle errors with user-friendly messages
@@ -194,88 +425,77 @@ class ChannelChatViewModel: ObservableObject {
             return "Check your internet connection"
         } else if error.localizedDescription.contains("permission") {
             return "You don't have permission for this action"
-        } else if error.localizedDescription.contains("rate") {
-            return "You're sending messages too quickly"
+        } else if error.localizedDescription.contains("not found") {
+            return "Message or channel not found"
         } else {
             return "Something went wrong. Please try again."
         }
     }
     
-    // MARK: - Message Management
+    // MARK: - Helper Methods
     
-    /// Delete a message (if user has permission)
-    func deleteMessage(_ message: CommunityMessage) {
-        guard let currentUserId = currentUserId else { return }
-        
-        // Users can delete their own messages, admins can delete any message
-        let canDelete = (message.authorId == currentUserId) || canUserManageChannel
-        
-        guard canDelete else {
-            errorMessage = "You don't have permission to delete this message"
-            return
-        }
-        
-        Task {
-            do {
-                // TODO: Implement message deletion in FirebaseServices
-                // try await firebaseService.deleteCommunityMessage(messageId: message.id, communityId: message.communityId, channelId: message.channelId)
-                print("🗑️ Would delete message: \(message.content)")
-                
-            } catch {
-                await handleError(error, context: "deleting message")
-            }
-        }
+    /// Clear error message
+    func clearError() {
+        errorMessage = ""
+    }
+}
+
+// MARK: - Supporting Types
+
+/// Message reaction model for Firebase
+struct MessageReaction: Identifiable, Codable {
+    let id = UUID()
+    let emoji: String
+    let userId: String
+    let username: String
+    let createdAt: Date
+    
+    init(emoji: String, userId: String, username: String) {
+        self.emoji = emoji
+        self.userId = userId
+        self.username = username
+        self.createdAt = Date()
     }
     
-    /// Edit a message (if user owns it and within time limit)
-    func editMessage(_ message: CommunityMessage, newContent: String) {
-        guard let currentUserId = currentUserId,
-              message.authorId == currentUserId else {
-            errorMessage = "You can only edit your own messages"
-            return
+    func toFirestore() -> [String: Any] {
+        return [
+            "emoji": emoji,
+            "userId": userId,
+            "username": username,
+            "createdAt": Timestamp(date: createdAt)
+        ]
+    }
+    
+    static func fromFirestore(data: [String: Any]) throws -> MessageReaction {
+        guard let emoji = data["emoji"] as? String,
+              let userId = data["userId"] as? String,
+              let username = data["username"] as? String,
+              let createdAtTimestamp = data["createdAt"] as? Timestamp else {
+            throw FirestoreError.invalidData
         }
         
-        // Check if message is still editable (within 5 minutes)
-        let editTimeLimit: TimeInterval = 5 * 60 // 5 minutes
-        let timeSinceCreated = Date().timeIntervalSince(message.createdAt)
-        
-        guard timeSinceCreated <= editTimeLimit else {
-            errorMessage = "Messages can only be edited within 5 minutes"
-            return
+        var reaction = MessageReaction(emoji: emoji, userId: userId, username: username)
+        return reaction
+    }
+}
+
+/// Grouped emoji reactions for display
+struct EmojiReactionGroup: Identifiable {
+    let id = UUID()
+    let emoji: String
+    let count: Int
+    let usernames: [String]
+    let hasUserReacted: Bool
+    
+    var displayText: String {
+        if count == 1 {
+            return usernames.first ?? ""
+        } else if count == 2 {
+            return "\(usernames[0]) and \(usernames[1])"
+        } else if count == 3 {
+            return "\(usernames[0]), \(usernames[1]) and \(usernames[2])"
+        } else {
+            return "\(usernames[0]), \(usernames[1]) and \(count - 2) others"
         }
-        
-        Task {
-            do {
-                // TODO: Implement message editing in FirebaseServices
-                // try await firebaseService.editCommunityMessage(messageId: message.id, newContent: newContent)
-                print("✏️ Would edit message to: \(newContent)")
-                
-            } catch {
-                await handleError(error, context: "editing message")
-            }
-        }
-    }
-    
-    // MARK: - Channel Stats
-    
-    /// Get message count for the channel
-    var messageCount: Int {
-        return messages.count
-    }
-    
-    /// Get unique users who have posted in this channel
-    var activeUserCount: Int {
-        let uniqueUserIds = Set(messages.map { $0.authorId })
-        return uniqueUserIds.count
-    }
-    
-    /// Check if channel has any messages
-    var hasMessages: Bool {
-        return !messages.isEmpty
-    }
-    
-    /// Get the most recent message
-    var lastMessage: CommunityMessage? {
-        return messages.last
     }
 }
