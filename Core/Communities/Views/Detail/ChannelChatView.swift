@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Detail/ChannelChatView.swift
-// FIREBASE INTEGRATED VERSION - Real-time Persistent Reactions
+// ENHANCED VERSION - Message Reactions & Emoji Picker
 
 import SwiftUI
 
@@ -18,6 +18,7 @@ struct ChannelChatView: View {
     @State private var showDeleteConfirmation = false
     @State private var messageToDelete: CommunityMessage?
     @State private var showEmojiPicker = false
+    @State private var emojiPickerForMessage: CommunityMessage?
     @FocusState private var isMessageFieldFocused: Bool
     
     var body: some View {
@@ -39,13 +40,13 @@ struct ChannelChatView: View {
                     editBanner
                 }
                 
-                // Message Input
-                messageInputSection
+                // Message Input with Emoji Support
+                enhancedMessageInput
             }
             
-            // Firebase-powered Emoji Picker
+            // Emoji Picker Overlay
             if showEmojiPicker {
-                firebaseEmojiPicker
+                emojiPickerOverlay
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -169,7 +170,7 @@ extension ChannelChatView {
     }
 }
 
-// MARK: - Messages Scroll View with Firebase Reactions
+// MARK: - Messages Scroll View
 extension ChannelChatView {
     private var messagesScrollView: some View {
         ScrollViewReader { proxy in
@@ -179,13 +180,13 @@ extension ChannelChatView {
                         emptyChannelState
                     } else {
                         ForEach(viewModel.messages) { message in
-                            FirebaseMessageRowWithReactions(
+                            MessageRowWithReactions(
                                 message: message,
                                 showUsername: shouldShowUsername(message),
                                 isUserMessage: message.authorId == viewModel.currentUserId,
-                                canEdit: canEditMessage(message),
-                                canDelete: canDeleteMessage(message),
-                                reactionGroups: viewModel.getGroupedReactions(for: message.id),
+                                canEdit: viewModel.canEditMessage(message),
+                                canDelete: viewModel.canDeleteMessage(message),
+                                reactions: viewModel.getGroupedReactions(for: message.id),
                                 onReply: { replyingTo = message },
                                 onEdit: { startEditingMessage(message) },
                                 onDelete: { requestDeleteMessage(message) },
@@ -193,7 +194,7 @@ extension ChannelChatView {
                                     viewModel.addReaction(to: message.id, emoji: emoji)
                                 },
                                 onShowEmojiPicker: {
-                                    selectedMessage = message
+                                    emojiPickerForMessage = message
                                     showEmojiPicker = true
                                 }
                             )
@@ -216,7 +217,7 @@ extension ChannelChatView {
                 // Dismiss emoji picker when tapping outside
                 if showEmojiPicker {
                     showEmojiPicker = false
-                    selectedMessage = nil
+                    emojiPickerForMessage = nil
                 }
                 isMessageFieldFocused = false
             }
@@ -266,173 +267,9 @@ extension ChannelChatView {
     }
 }
 
-// MARK: - Firebase-Powered Emoji Picker
+// MARK: - Enhanced Message Input with Emoji
 extension ChannelChatView {
-    private var firebaseEmojiPicker: some View {
-        ZStack {
-            // Dark overlay
-            Color.black.opacity(0.3)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    showEmojiPicker = false
-                    selectedMessage = nil
-                }
-            
-            VStack {
-                Spacer()
-                
-                // Enhanced Emoji Picker Card
-                VStack(spacing: 0) {
-                    // Handle bar
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(Color.secondary.opacity(0.5))
-                        .frame(width: 36, height: 5)
-                        .padding(.top, 8)
-                    
-                    // Header
-                    HStack {
-                        Text(selectedMessage != nil ? "React to message" : "Add emoji")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Spacer()
-                        
-                        Button("Done") {
-                            showEmojiPicker = false
-                            selectedMessage = nil
-                        }
-                        .fontWeight(.semibold)
-                        .foregroundColor(.blue)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    
-                    Divider()
-                    
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            // Trading Emojis Section
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Text("📈 Trading")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 20)
-                                
-                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 16) {
-                                    ForEach(tradingEmojis, id: \.self) { emoji in
-                                        emojiButton(emoji)
-                                    }
-                                }
-                                .padding(.horizontal, 20)
-                            }
-                            
-                            // Popular Reactions Section
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Text("😊 Popular")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 20)
-                                
-                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 16) {
-                                    ForEach(popularEmojis, id: \.self) { emoji in
-                                        emojiButton(emoji)
-                                    }
-                                }
-                                .padding(.horizontal, 20)
-                            }
-                            
-                            // All Emojis Section
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Text("🎉 All Reactions")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 20)
-                                
-                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
-                                    ForEach(allEmojis, id: \.self) { emoji in
-                                        emojiButton(emoji, size: 36)
-                                    }
-                                }
-                                .padding(.horizontal, 20)
-                                .padding(.bottom, 20)
-                            }
-                        }
-                    }
-                    .frame(height: 400)
-                }
-                .background(Color(.systemBackground))
-                .cornerRadius(16, corners: [.topLeft, .topRight])
-                .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: -5)
-            }
-        }
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showEmojiPicker)
-    }
-    
-    private func emojiButton(_ emoji: String, size: CGFloat = 44) -> some View {
-        Button(action: {
-            handleEmojiSelection(emoji)
-        }) {
-            Text(emoji)
-                .font(.title2)
-                .frame(width: size, height: size)
-                .background(Color(.systemGray6))
-                .cornerRadius(size/2)
-                .scaleEffect(1.0)
-        }
-        .buttonStyle(EmojiButtonStyle())
-    }
-    
-    // Emoji categories
-    private var tradingEmojis: [String] {
-        return ["📈", "📉", "🚀", "💎", "🐂", "🐻", "💰", "🤑", "💯", "🔥", "⭐", "🎯"]
-    }
-    
-    private var popularEmojis: [String] {
-        return ["👍", "❤️", "😂", "😮", "😢", "😡", "👎", "🎉", "👏", "🙌", "💪", "🤔"]
-    }
-    
-    private var allEmojis: [String] {
-        return ["😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "🙃", "😉", "😊",
-                "😇", "🥰", "😍", "🤩", "😘", "😗", "😚", "😙", "😋", "😛", "😜", "🤪",
-                "😝", "🤑", "🤗", "🤭", "🤫", "🤔", "🤐", "🤨", "😐", "😑", "😶", "😏",
-                "😒", "🙄", "😬", "🤥", "😔", "😪", "🤤", "😴", "😷", "🤒", "🤕", "🤢"]
-    }
-    
-    private func handleEmojiSelection(_ emoji: String) {
-        if let message = selectedMessage {
-            // Add reaction to specific message using Firebase
-            viewModel.addReaction(to: message.id, emoji: emoji)
-        } else {
-            // Add emoji to message input
-            if editingMessage != nil {
-                editedContent += emoji
-            } else {
-                messageText += emoji
-            }
-        }
-        
-        // Close emoji picker
-        showEmojiPicker = false
-        selectedMessage = nil
-    }
-}
-
-// MARK: - Message Input
-extension ChannelChatView {
-    private var messageInputSection: some View {
+    private var enhancedMessageInput: some View {
         VStack(spacing: 0) {
             Divider()
             
@@ -463,7 +300,7 @@ extension ChannelChatView {
                     
                     // Emoji Button for Input
                     Button(action: {
-                        selectedMessage = nil
+                        emojiPickerForMessage = nil // For general input, not specific message
                         showEmojiPicker.toggle()
                         isMessageFieldFocused = false
                     }) {
@@ -536,14 +373,112 @@ extension ChannelChatView {
     }
 }
 
-// MARK: - Firebase Message Row with Real-time Reactions
-struct FirebaseMessageRowWithReactions: View {
+// MARK: - Emoji Picker Overlay
+extension ChannelChatView {
+    private var emojiPickerOverlay: some View {
+        ZStack {
+            // Dark overlay
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    showEmojiPicker = false
+                    emojiPickerForMessage = nil
+                }
+            
+            VStack {
+                Spacer()
+                
+                // Emoji Picker Card
+                VStack(spacing: 0) {
+                    // Handle bar
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 36, height: 5)
+                        .padding(.top, 8)
+                    
+                    // Header
+                    HStack {
+                        Text(emojiPickerForMessage != nil ? "React to message" : "Add emoji")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        
+                        Spacer()
+                        
+                        Button("Done") {
+                            showEmojiPicker = false
+                            emojiPickerForMessage = nil
+                        }
+                        .fontWeight(.semibold)
+                        .foregroundColor(.blue)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    
+                    Divider()
+                    
+                    // Emoji Grid
+                    emojiGrid
+                }
+                .background(Color(.systemBackground))
+                .cornerRadius(16, corners: [.topLeft, .topRight])
+                .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: -5)
+            }
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showEmojiPicker)
+    }
+    
+    private var emojiGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 16) {
+                ForEach(EmojiData.popularEmojis, id: \.self) { emoji in
+                    Button(action: {
+                        handleEmojiSelection(emoji)
+                    }) {
+                        Text(emoji)
+                            .font(.title2)
+                            .frame(width: 44, height: 44)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(22)
+                            .scaleEffect(1.0)
+                            .animation(.spring(response: 0.3), value: emoji)
+                    }
+                    .buttonStyle(EmojiButtonStyle())
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .frame(height: 300)
+    }
+    
+    private func handleEmojiSelection(_ emoji: String) {
+        if let message = emojiPickerForMessage {
+            // Add reaction to specific message
+            viewModel.addReaction(to: message.id, emoji: emoji)
+        } else {
+            // Add emoji to message input
+            if editingMessage != nil {
+                editedContent += emoji
+            } else {
+                messageText += emoji
+            }
+        }
+        
+        // Close emoji picker
+        showEmojiPicker = false
+        emojiPickerForMessage = nil
+    }
+}
+
+// MARK: - Message Row with Reactions
+struct MessageRowWithReactions: View {
     let message: CommunityMessage
     let showUsername: Bool
     let isUserMessage: Bool
     let canEdit: Bool
     let canDelete: Bool
-    let reactionGroups: [EmojiReactionGroup]
+    let reactions: [EmojiReactionGroup]
     let onReply: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -557,21 +492,14 @@ struct FirebaseMessageRowWithReactions: View {
             // User Avatar
             if showUsername {
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [userColor, userColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(userColor.opacity(0.2))
                     .frame(width: 40, height: 40)
                     .overlay(
                         Text(userInitials)
                             .font(.subheadline)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
+                            .fontWeight(.semibold)
+                            .foregroundColor(userColor)
                     )
-                    .shadow(color: userColor.opacity(0.3), radius: 4, x: 0, y: 2)
             } else {
                 Text(formatTime(message.createdAt))
                     .font(.caption2)
@@ -609,101 +537,18 @@ struct FirebaseMessageRowWithReactions: View {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(isUserMessage ? Color.blue.opacity(0.1) : Color(.systemGray6))
                         )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(isUserMessage ? Color.blue.opacity(0.3) : Color.clear, lineWidth: 1)
-                        )
                     
                     Spacer()
                 }
                 
-                // Firebase Real-time Reactions Display
-                if !reactionGroups.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(reactionGroups) { reactionGroup in
-                            Button(action: {
-                                onReact(reactionGroup.emoji)
-                            }) {
-                                HStack(spacing: 4) {
-                                    Text(reactionGroup.emoji)
-                                        .font(.subheadline)
-                                    
-                                    if reactionGroup.count > 1 {
-                                        Text("\(reactionGroup.count)")
-                                            .font(.caption)
-                                            .fontWeight(.medium)
-                                    }
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(reactionGroup.hasUserReacted ? Color.blue.opacity(0.2) : Color(.systemGray6))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(reactionGroup.hasUserReacted ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1)
-                                )
-                                .scaleEffect(reactionGroup.hasUserReacted ? 1.05 : 1.0)
-                                .animation(.spring(response: 0.3), value: reactionGroup.hasUserReacted)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .contextMenu {
-                                Text(reactionGroup.displayText)
-                            }
-                        }
-                        
-                        // Add reaction button
-                        Button(action: onShowEmojiPicker) {
-                            Image(systemName: "plus.circle")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color(.systemGray6))
-                                )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                    .padding(.leading, 12)
+                // Reactions Display
+                if !reactions.isEmpty {
+                    reactionsView
                 }
                 
                 // Message actions
                 if showingActions {
-                    HStack(spacing: 16) {
-                        Button("Reply", action: onReply)
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                        
-                        if canEdit {
-                            Button("Edit", action: onEdit)
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        }
-                        
-                        if canDelete {
-                            Button("Delete", action: onDelete)
-                                .font(.caption)
-                                .foregroundColor(.red)
-                        }
-                        
-                        Button(action: onShowEmojiPicker) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "face.smiling")
-                                    .font(.caption)
-                                Text("React")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(.blue)
-                        }
-                        
-                        Spacer()
-                    }
-                    .padding(.top, 4)
-                    .padding(.leading, 12)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    messageActionsView
                 }
             }
             
@@ -716,6 +561,93 @@ struct FirebaseMessageRowWithReactions: View {
                 showingActions.toggle()
             }
         }
+    }
+    
+    private var reactionsView: some View {
+        HStack(spacing: 6) {
+            ForEach(reactions) { reactionGroup in
+                Button(action: {
+                    onReact(reactionGroup.emoji)
+                }) {
+                    HStack(spacing: 4) {
+                        Text(reactionGroup.emoji)
+                            .font(.subheadline)
+                        
+                        if reactionGroup.count > 1 {
+                            Text("\(reactionGroup.count)")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(reactionGroup.hasUserReacted ? Color.blue.opacity(0.2) : Color(.systemGray6))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(reactionGroup.hasUserReacted ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1)
+                    )
+                    .scaleEffect(reactionGroup.hasUserReacted ? 1.05 : 1.0)
+                    .animation(.spring(response: 0.3), value: reactionGroup.hasUserReacted)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .contextMenu {
+                    Text(reactionGroup.displayText)
+                }
+            }
+            
+            // Add reaction button
+            Button(action: onShowEmojiPicker) {
+                Image(systemName: "plus.circle")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.systemGray6))
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.leading, 12)
+    }
+    
+    private var messageActionsView: some View {
+        HStack(spacing: 16) {
+            Button("Reply", action: onReply)
+                .font(.caption)
+                .foregroundColor(.blue)
+            
+            if canEdit {
+                Button("Edit", action: onEdit)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+            
+            if canDelete {
+                Button("Delete", action: onDelete)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            
+            Button(action: onShowEmojiPicker) {
+                HStack(spacing: 4) {
+                    Image(systemName: "face.smiling")
+                        .font(.caption)
+                    Text("React")
+                        .font(.caption)
+                }
+                .foregroundColor(.blue)
+            }
+            
+            Spacer()
+        }
+        .padding(.top, 4)
+        .padding(.leading, 12)
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
     
     private var userColor: Color {
@@ -842,22 +774,8 @@ extension ChannelChatView {
 
 // MARK: - Message Management
 extension ChannelChatView {
-    private func canEditMessage(_ message: CommunityMessage) -> Bool {
-        guard let currentUserId = viewModel.currentUserId else { return false }
-        guard message.authorId == currentUserId else { return false }
-        
-        let editTimeLimit: TimeInterval = 5 * 60 // 5 minutes
-        let timeSinceCreated = Date().timeIntervalSince(message.createdAt)
-        return timeSinceCreated <= editTimeLimit
-    }
-    
-    private func canDeleteMessage(_ message: CommunityMessage) -> Bool {
-        guard let currentUserId = viewModel.currentUserId else { return false }
-        return (message.authorId == currentUserId) || viewModel.canUserManageChannel
-    }
-    
     private func startEditingMessage(_ message: CommunityMessage) {
-        guard canEditMessage(message) else { return }
+        guard viewModel.canEditMessage(message) else { return }
         editingMessage = message
         editedContent = message.content
     }
@@ -866,4 +784,207 @@ extension ChannelChatView {
         guard let editingMessage = editingMessage else { return }
         
         let trimmedContent = editedContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedContent.isEmpty else {
+        guard !trimmedContent.isEmpty else { return }
+        
+        // Update locally (you can add Firebase integration later)
+        if let index = viewModel.messages.firstIndex(where: { $0.id == editingMessage.id }) {
+            viewModel.messages[index].content = trimmedContent + " (edited)"
+        }
+        
+        cancelEditing()
+    }
+    
+    private func cancelEditing() {
+        editingMessage = nil
+        editedContent = ""
+    }
+    
+    private func requestDeleteMessage(_ message: CommunityMessage) {
+        guard viewModel.canDeleteMessage(message) else { return }
+        messageToDelete = message
+        showDeleteConfirmation = true
+    }
+    
+    private func confirmDeleteMessage() {
+        guard let messageToDelete = messageToDelete else { return }
+        
+        // Remove from local array (you can add Firebase integration later)
+        viewModel.messages.removeAll { $0.id == messageToDelete.id }
+        
+        self.messageToDelete = nil
+        showDeleteConfirmation = false
+    }
+    
+    private func cancelDeleteMessage() {
+        messageToDelete = nil
+        showDeleteConfirmation = false
+    }
+}
+
+// MARK: - Helper Methods
+extension ChannelChatView {
+    private func shouldShowUsername(_ message: CommunityMessage) -> Bool {
+        guard let messageIndex = viewModel.messages.firstIndex(where: { $0.id == message.id }) else {
+            return true
+        }
+        
+        if messageIndex == 0 {
+            return true
+        }
+        
+        let previousMessage = viewModel.messages[messageIndex - 1]
+        let timeDifference = message.createdAt.timeIntervalSince(previousMessage.createdAt)
+        
+        return previousMessage.authorId != message.authorId || timeDifference > 300
+    }
+}
+
+// MARK: - Supporting Components
+
+struct EmojiButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
+            .animation(.spring(response: 0.3), value: configuration.isPressed)
+    }
+}
+
+// Emoji Data
+struct EmojiData {
+    static let popularEmojis = [
+        "👍", "❤️", "😂", "😮", "😢", "😡", "👎", "🎉",
+        "🔥", "💯", "⭐", "✅", "❌", "🚀", "💎", "📈",
+        "📉", "💰", "🤑", "🎯", "⚡", "💪", "🙌", "👏",
+        "🤔", "😎", "🤩", "😍", "🥳", "🤯", "😴", "🤪",
+        "🙄", "😤", "🤬", "😱", "🥺", "😭", "🤝", "👋",
+        "✋", "👌", "🤞", "🤟", "🤘", "👊", "✊", "👆",
+        "🐂", "🐻", "📊", "📋", "💼", "💻", "📱", "⌚",
+        "🎲", "🎰", "🏆", "🥇", "🥈", "🥉", "🎖️", "🏅"
+    ]
+}
+
+// Helper for rounded corners
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(path.cgPath)
+    }
+}
+
+// MARK: - Channel Info Sheet (Simplified)
+struct ChannelInfoSheet: View {
+    let community: Community
+    let channel: Channel
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(channelColor.opacity(0.15))
+                                .frame(width: 50, height: 50)
+                            
+                            Image(systemName: channelIcon)
+                                .font(.title2)
+                                .foregroundColor(channelColor)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("#\(channel.name)")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                            
+                            Text(channel.type.displayName)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Section("About") {
+                    Text(channelDescription)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("Channel Info")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+    
+    private var channelColor: Color {
+        switch channel.type {
+        case .text: return .blue
+        case .callouts: return .orange
+        case .voice: return .green
+        }
+    }
+    
+    private var channelIcon: String {
+        switch channel.type {
+        case .text: return "number"
+        case .callouts: return "megaphone.fill"
+        case .voice: return "speaker.wave.2.fill"
+        }
+    }
+    
+    private var channelDescription: String {
+        switch channel.type {
+        case .text:
+            return "A text channel for general discussions and conversations between community members."
+        case .callouts:
+            return "An admin-only channel for posting trading callouts, market signals, and important announcements."
+        case .voice:
+            return "A voice channel for real-time audio conversations and live discussions."
+        }
+    }
+}
+
+#Preview {
+    let testCommunity = Community(
+        name: "Elite Traders",
+        description: "Premium trading community",
+        type: .dayTrading,
+        creatorId: "test-user",
+        memberCount: 156,
+        isPrivate: false
+    )
+    
+    let testChannel = Channel(
+        name: "general",
+        type: .text,
+        communityId: testCommunity.id,
+        isDefault: true,
+        adminOnly: false
+    )
+    
+    NavigationView {
+        ChannelChatView(community: testCommunity, channel: testChannel)
+    }
+    .environmentObject(FirebaseAuthService.shared)
+}

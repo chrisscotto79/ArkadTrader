@@ -57,61 +57,8 @@ struct Channel: Identifiable, Codable {
         return channel
     }
 }
-struct MessageReaction: Identifiable, Codable {
-    let id = UUID()
-    let emoji: String
-    let userId: String
-    let username: String
-    let createdAt: Date
-    
-    init(emoji: String, userId: String, username: String) {
-        self.emoji = emoji
-        self.userId = userId
-        self.username = username
-        self.createdAt = Date()
-    }
-    
-    func toFirestore() -> [String: Any] {
-        return [
-            "emoji": emoji,
-            "userId": userId,
-            "username": username,
-            "createdAt": Timestamp(date: createdAt)
-        ]
-    }
-    
-    static func fromFirestore(data: [String: Any]) throws -> MessageReaction {
-        guard let emoji = data["emoji"] as? String,
-              let userId = data["userId"] as? String,
-              let username = data["username"] as? String,
-              let createdAtTimestamp = data["createdAt"] as? Timestamp else {
-            throw FirestoreError.invalidData
-        }
-        
-        var reaction = MessageReaction(emoji: emoji, userId: userId, username: username)
-        return reaction
-    }
-}
 
-struct EmojiReactionGroup: Identifiable {
-    let id = UUID()
-    let emoji: String
-    let count: Int
-    let usernames: [String]
-    let hasUserReacted: Bool
-    
-    var displayText: String {
-        if count == 1 {
-            return usernames.first ?? ""
-        } else if count == 2 {
-            return "\(usernames[0]) and \(usernames[1])"
-        } else if count == 3 {
-            return "\(usernames[0]), \(usernames[1]) and \(usernames[2])"
-        } else {
-            return "\(usernames[0]), \(usernames[1]) and \(count - 2) others"
-        }
-    }
-}
+
 
 // MARK: - Channel Type Enum
 enum ChannelType: String, CaseIterable, Codable {

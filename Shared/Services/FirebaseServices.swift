@@ -1551,34 +1551,7 @@ class FirebaseServices {
         }
     }
     
-    func listenToTypingIndicators(communityId: String, channelId: String, completion: @escaping ([TypingUser]) -> Void) {
-        db.collection("communities").document(communityId)
-            .collection("channels").document(channelId)
-            .collection("typing")
-            .addSnapshotListener { snapshot, error in
-                guard let documents = snapshot?.documents else {
-                    print("Error fetching typing indicators: \(error?.localizedDescription ?? "unknown")")
-                    completion([])
-                    return
-                }
-                
-                let typingUsers = documents.compactMap { document -> TypingUser? in
-                    guard let userId = document.data()["userId"] as? String,
-                          let username = document.data()["username"] as? String,
-                          let isTyping = document.data()["isTyping"] as? Bool,
-                          let lastSeenTimestamp = document.data()["lastSeen"] as? Timestamp,
-                          isTyping else {
-                        return nil
-                    }
-                    
-                    var user = TypingUser(userId: userId, username: username)
-                    // Update lastSeen to the actual timestamp from Firebase
-                    return user
-                }
-                
-                completion(typingUsers)
-            }
-    }
+    
     
     // MARK: - Activity Methods
     

@@ -3,6 +3,7 @@
 
 import Foundation
 import Combine
+import FirebaseCore
 
 @MainActor
 class ChannelChatViewModel: ObservableObject {
