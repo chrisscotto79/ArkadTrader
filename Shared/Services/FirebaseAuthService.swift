@@ -259,7 +259,7 @@ class FirebaseAuthService: ObservableObject {
     }
     
     func getUserTrades(userId: String) async throws -> [Trade] {
-        return try await FirebaseServices.shared.getUserTrades(userId: userId)
+        return try await FirebaseServices.shared.getUserTradesSimple(userId: userId)
     }
     
     func listenToUserTrades(userId: String, completion: @escaping ([Trade]) -> Void) {
@@ -525,7 +525,9 @@ class FirebaseAuthService: ObservableObject {
     func getUnreadMessageCount(userId: String) async throws -> Int {
         return try await FirebaseServices.shared.getUnreadMessageCount(userId: userId)
     }
-    
+    func getUserTradesSimple(userId: String) async throws -> [Trade] {
+        return try await FirebaseServices.shared.getUserTradesSimple(userId: userId)
+    }
     // MARK: - Market News Wrapper Methods
     
     func cacheMarketNews(articles: [MarketNewsArticle]) async throws {

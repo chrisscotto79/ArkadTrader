@@ -1,7 +1,8 @@
 // File: Core/Leaderboard/Views/LeaderboardView.swift
-// Simplified Leaderboard View
+// Fixed LeaderboardView - Uses original LeaderboardEntry
 
 import SwiftUI
+import Foundation
 
 struct LeaderboardView: View {
     @StateObject private var viewModel = LeaderboardViewModel()
@@ -20,7 +21,7 @@ struct LeaderboardView: View {
                 
                 // Leaderboard List
                 if viewModel.isLoading {
-                    LoadingView()
+                    ProgressView("Loading...")
                         .padding(.top, 50)
                 } else if viewModel.leaderboard.isEmpty {
                     Text("No data available")
@@ -45,7 +46,7 @@ struct LeaderboardView: View {
 }
 
 struct LeaderboardRowView: View {
-    let entry: LeaderboardEntry
+    let entry: CommunityLeaderboardEntry
     
     var body: some View {
         HStack {
@@ -62,12 +63,7 @@ struct LeaderboardRowView: View {
                     Text(entry.username)
                         .font(.headline)
                         .fontWeight(.semibold)
-                    
-                    if entry.isVerified {
-                        Image(systemName: "checkmark.seal.fill")
-                            .foregroundColor(.blue)
-                            .font(.caption)
-                    }
+            
                 }
                 
                 Text("Win Rate: \(entry.winRate, specifier: "%.1f")%")
@@ -79,10 +75,7 @@ struct LeaderboardRowView: View {
             
             // P&L
             VStack(alignment: .trailing) {
-                Text("+$\(entry.profitLoss, specifier: "%.0f")")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.green)
+                
                 
                 Text("Total P&L")
                     .font(.caption)
@@ -90,7 +83,7 @@ struct LeaderboardRowView: View {
             }
         }
         .padding()
-        .background(Color.white)
+        .background(Color(.systemBackground))
         .cornerRadius(8)
         .shadow(color: .gray.opacity(0.2), radius: 2)
     }

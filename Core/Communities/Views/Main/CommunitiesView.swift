@@ -18,6 +18,9 @@ struct CommunitiesView: View {
     @State private var selectedCommunity: Community?
     @State private var navigateToCommunity = false
     
+    @State private var selectedLeaderboardCommunity: Community?
+    @State private var navigateToLeaderboard = false
+    
     var body: some View {
         NavigationView {
             ZStack {
@@ -47,6 +50,22 @@ struct CommunitiesView: View {
                 }
                 
                 // Hidden NavigationLink
+                // Hidden NavigationLink for Leaderboard
+                NavigationLink(
+                    destination: Group {
+                        if let community = selectedLeaderboardCommunity {
+                            SimpleConsistencyLeaderboardView(community: community)
+                        } else {
+                            EmptyView()
+                        }
+                    },
+                    isActive: $navigateToLeaderboard
+                ) {
+                    EmptyView()
+                }
+                .hidden()
+
+                // Hidden NavigationLink for Community Detail
                 NavigationLink(
                     destination: Group {
                         if let community = selectedCommunity {
@@ -60,6 +79,7 @@ struct CommunitiesView: View {
                     EmptyView()
                 }
                 .hidden()
+                
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showCreateCommunity) {
@@ -78,6 +98,160 @@ struct CommunitiesView: View {
         print("🚀 Navigating to: \(community.name)")
         selectedCommunity = community
         navigateToCommunity = true
+    }
+    private func navigateToLeaderboard(_ community: Community) {
+        print("🏆 Navigating to leaderboard for: \(community.name)")
+        selectedLeaderboardCommunity = community
+        navigateToLeaderboard = true
+    }
+    private var modernEmptyLeaderboardState: some View {
+        VStack(spacing: 32) {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.arkadGold.opacity(0.2), Color.arkadGoldLight.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 120, height: 120)
+                .overlay(
+                    Image(systemName: "trophy.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+            
+            VStack(spacing: 16) {
+                Text("Join Communities First")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
+                
+                Text("Join trading communities to see leaderboards and compete with other traders.")
+                    .font(.subheadline)
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+            
+            Button("Explore Communities") {
+                selectedTab = .discover
+            }
+            .font(.headline)
+            .foregroundColor(.arkadBlack)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: .arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
+            )
+        }
+        .padding(.top, 60)
+        .padding(.bottom, 40)
+    }
+
+    private var modernLeaderboardContent: some View {
+        VStack(spacing: 24) {
+            // Header
+            HStack {
+                Image(systemName: "trophy.fill")
+                    .font(.title2)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGoldLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                
+                Text("Community Leaderboards")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
+                
+                Spacer()
+            }
+            
+            // Communities with leaderboards
+            LazyVStack(spacing: 16) {
+                ForEach(viewModel.userCommunities) { community in
+                    modernCommunityLeaderboardCard(community: community)
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    // Replace your modernCommunityLeaderboardCard function with this:
+
+    private func modernCommunityLeaderboardCard(community: Community) -> some View {
+        Button(action: {
+            print("🏆 Tapped leaderboard for: \(community.name)")
+            navigateToLeaderboard(community)
+        }) {
+            HStack(spacing: 16) {
+                // Community avatar
+                Circle()
+                    .fill(getCommunityColor(for: community.type))
+                    .frame(width: 50, height: 50)
+                    .overlay(
+                        Text(getCommunityInitials(from: community.name))
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                    )
+                
+                // Community info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(community.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                    
+                    Text("\(community.memberCount) members")
+                        .font(.caption)
+                        .foregroundColor(.textSecondary)
+                }
+                
+                Spacer()
+                
+                // Leaderboard preview
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("View Rankings")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.arkadGold)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.arkadGold)
+                }
+            }
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(getCommunityColor(for: community.type).opacity(0.2), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -461,6 +635,7 @@ extension CommunitiesView {
     }
 }
 
+
 // MARK: - Content Section
 extension CommunitiesView {
     private var contentSection: some View {
@@ -472,7 +647,11 @@ extension CommunitiesView {
                 case .myCommunities:
                     modernMyCommunitiesContent
                 case .leaderboard:
-                    modernComingSoonView(for: "Leaderboard", icon: "trophy.fill", description: "See top performing traders and communities")
+                    if viewModel.userCommunities.isEmpty {
+                        modernEmptyLeaderboardState
+                    } else {
+                        modernLeaderboardContent
+                    }
                 case .activity:
                     modernComingSoonView(for: "Activity", icon: "clock.fill", description: "Track your community interactions and updates")
                 }

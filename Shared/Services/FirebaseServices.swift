@@ -590,15 +590,26 @@ class FirebaseServices {
         try await db.collection("trades").document(tradeId).delete()
     }
     
-    func getUserTrades(userId: String) async throws -> [Trade] {
+    // Add this method to your FirebaseServices.swift file
+    // This goes in the "Trade Management" section
+
+    func getUserTradesSimple(userId: String) async throws -> [Trade] {
+        print("🔍 FirebaseServices: Getting trades for user \(userId) with simple query")
+        
         let snapshot = try await db.collection("trades")
             .whereField("userId", isEqualTo: userId)
-            .order(by: "entryDate", descending: true)
+            // Remove the .order(by:) to avoid index requirement
             .getDocuments()
         
-        return snapshot.documents.compactMap { document in
+        let trades = snapshot.documents.compactMap { document in
             try? Trade.fromFirestore(data: document.data(), id: document.documentID)
         }
+        
+        // Sort in memory instead of in the query
+        let sortedTrades = trades.sorted { $0.entryDate > $1.entryDate }
+        
+        print("✅ FirebaseServices: Found \(sortedTrades.count) trades for user")
+        return sortedTrades
     }
     
     func listenToUserTrades(userId: String, completion: @escaping ([Trade]) -> Void) {
@@ -1949,6 +1960,7 @@ class FirebaseServices {
 extension FirebaseAuthService {
     
     // MARK: - User Discovery Wrapper Methods
+    
     
     func getPopularUsers(limit: Int = 20) async throws -> [User] {
         return try await FirebaseServices.shared.getPopularUsers(limit: limit)
