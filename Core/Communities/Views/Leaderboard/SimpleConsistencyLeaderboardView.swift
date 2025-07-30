@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Leaderboard/SimpleConsistencyLeaderboardView.swift
-// Enhanced Leaderboard View - Matching Your Vision
+// Enhanced Leaderboard View - Fixed with User Profiles & Working Follow Button
 
 import SwiftUI
 
@@ -8,6 +8,7 @@ struct SimpleConsistencyLeaderboardView: View {
     
     @StateObject private var viewModel = CommunityLeaderboardViewModel()
     @State private var debugInfo = "Starting..."
+    @EnvironmentObject var authService: FirebaseAuthService
     
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +65,7 @@ struct SimpleConsistencyLeaderboardView: View {
                     LazyVStack(spacing: 16) {
                         ForEach(viewModel.leaderboardEntries) { entry in
                             EnhancedLeaderboardCard(entry: entry)
+                                .environmentObject(authService)
                         }
                     }
                     .padding(.horizontal)
@@ -119,15 +121,18 @@ struct SimpleConsistencyLeaderboardView: View {
 // MARK: - Enhanced Leaderboard Card
 struct EnhancedLeaderboardCard: View {
     let entry: CommunityLeaderboardEntry
+    @EnvironmentObject var authService: FirebaseAuthService
+    @State private var showOtherUserProfile = false
+    @State private var profileUser: User?
+    @State private var isLoadingUser = false
     
     private var isCurrentUser: Bool {
-        // You can check if this is the current user
-        return false // For now, we'll enhance this later
+        authService.currentUser?.id == entry.userId
     }
     
     var body: some View {
         VStack(spacing: 16) {
-            // Header with rank and basic info
+            // Header with rank, avatar, and basic info
             HStack {
                 // Rank Badge
                 ZStack {
@@ -147,11 +152,59 @@ struct EnhancedLeaderboardCard: View {
                     }
                 }
                 
+                // User Avatar
+                Button(action: {
+                    if !isCurrentUser {
+                        handleProfileTap()
+                    }
+                }) {
+                    AsyncImage(url: URL(string: "https://avatar.iran.liara.run/username?username=\(entry.username)")) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Circle()
+                            .fill(Color.arkadGold)
+                            .overlay(
+                                Text(userInitials)
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                            )
+                    }
+                    .frame(width: 40, height: 40)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(Color.arkadGold.opacity(0.3), lineWidth: 2)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isCurrentUser)
+                
+                // User Info
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.username)
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
+                    Button(action: {
+                        if !isCurrentUser {
+                            handleProfileTap()
+                        }
+                    }) {
+                        HStack {
+                            Text(entry.username)
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                            
+                            if isCurrentUser {
+                                Text("(You)")
+                                    .font(.caption)
+                                    .foregroundColor(.arkadGold)
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isCurrentUser)
                     
                     Text("\(String(format: "%.1f", entry.winRate))% win rate")
                         .font(.subheadline)
@@ -160,16 +213,22 @@ struct EnhancedLeaderboardCard: View {
                 
                 Spacer()
                 
-                // Top stock placeholder (we'll enhance this)
+                // Performance indicator
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("Top Stock")
+                    Text("Performance")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
-                    Text("AAPL") // We'll make this dynamic later
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.blue)
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(entry.totalProfitLoss >= 0 ? .green : .red)
+                            .frame(width: 8, height: 8)
+                        
+                        Text(entry.totalProfitLoss >= 0 ? "Profitable" : "Learning")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(entry.totalProfitLoss >= 0 ? .green : .red)
+                    }
                 }
             }
             
@@ -192,65 +251,76 @@ struct EnhancedLeaderboardCard: View {
             // Trade Information Row
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Biggest Win")
+                    Text("Consistency")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("$24.00") // We'll make this dynamic
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
+                    
+                    HStack(spacing: 4) {
+                        ForEach(0..<5) { index in
+                            Circle()
+                                .fill(index < Int(entry.winRate / 20) ? Color.arkadGold : Color.gray.opacity(0.3))
+                                .frame(width: 6, height: 6)
+                        }
+                    }
                 }
                 
                 Spacer()
                 
                 VStack(alignment: .center, spacing: 4) {
-                    Text("Trader Type")
+                    Text("Trader Level")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("🐂 BULL") // We'll determine this based on performance
+                    
+                    Text(getTraderLevel())
                         .font(.subheadline)
                         .fontWeight(.semibold)
+                        .foregroundColor(.arkadGold)
                 }
                 
                 Spacer()
                 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("Biggest Loss")
+                    Text("Activity")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("$0.00") // We'll make this dynamic
-                        .font(.subheadline)
+                    
+                    Text("\(entry.totalTrades) trades")
+                        .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundColor(.red)
+                        .foregroundColor(.blue)
                 }
             }
             .padding(.horizontal)
             
-            // Follow Button (placeholder for now)
-            Button(action: {
-                print("Follow \(entry.username) tapped")
-            }) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text("Follow Trader")
-                }
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color.blue)
-                .cornerRadius(8)
+            // Follow Button - Only show for other users
+            if !isCurrentUser {
+                SimpleFollowButton(
+                    targetUserId: entry.userId,
+                    targetUsername: entry.username
+                )
+                .padding(.horizontal)
             }
-            .padding(.horizontal)
         }
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
+                .overlay(
+                    // Highlight current user card
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(isCurrentUser ? Color.arkadGold.opacity(0.5) : Color.clear, lineWidth: 2)
+                )
         )
+        .sheet(isPresented: $showOtherUserProfile) {
+            if let profileUser = profileUser {
+                OtherUserProfileView(user: profileUser)
+                    .environmentObject(authService)
+            }
+        }
     }
+    
+    // MARK: - Helper Methods
     
     private func statItem(title: String, value: String, icon: String) -> some View {
         VStack(spacing: 8) {
@@ -295,6 +365,97 @@ struct EnhancedLeaderboardCard: View {
             return "-$\(String(format: "%.0f", abs(amount)))"
         }
     }
+    
+    private var userInitials: String {
+        let names = entry.username.split(separator: " ")
+        if names.count > 1 {
+            let firstInitial = names.first?.first ?? Character("U")
+            let lastInitial = names.last?.first ?? Character("U")
+            return String(firstInitial) + String(lastInitial)
+        } else {
+            let username = entry.username
+            let firstChar = username.first ?? Character("U")
+            let secondChar = username.count > 1 ? username[username.index(username.startIndex, offsetBy: 1)] : Character("U")
+            return String(firstChar) + String(secondChar)
+        }
+    }
+    
+    private func getTraderLevel() -> String {
+        if entry.totalTrades < 5 {
+            return "🌱 Beginner"
+        } else if entry.totalTrades < 20 {
+            return "📈 Growing"
+        } else if entry.totalTrades < 50 {
+            return "💪 Active"
+        } else if entry.winRate > 70 {
+            return "🏆 Expert"
+        } else {
+            return "⭐ Veteran"
+        }
+    }
+    
+    // MARK: - Profile Navigation
+    
+    private func handleProfileTap() {
+        Task {
+            await loadUserProfile()
+        }
+    }
+    
+    private func loadUserProfile() async {
+        guard profileUser == nil else {
+            await MainActor.run {
+                showOtherUserProfile = true
+            }
+            return
+        }
+        
+        await MainActor.run {
+            isLoadingUser = true
+        }
+        
+        do {
+            if let user = try await authService.getUserById(userId: entry.userId) {
+                await MainActor.run {
+                    profileUser = user
+                    isLoadingUser = false
+                    showOtherUserProfile = true
+                }
+            } else {
+                // Fallback: create a minimal user
+                await MainActor.run {
+                    profileUser = createMinimalUser()
+                    isLoadingUser = false
+                    showOtherUserProfile = true
+                }
+            }
+        } catch {
+            print("❌ Error loading user profile: \(error)")
+            
+            await MainActor.run {
+                profileUser = createMinimalUser()
+                isLoadingUser = false
+                showOtherUserProfile = true
+            }
+        }
+    }
+    
+    private func createMinimalUser() -> User {
+        var user = User(
+            id: entry.userId,
+            email: "\(entry.username)@example.com",
+            username: entry.username,
+            fullName: entry.username.capitalized
+        )
+        
+        user.bio = "Trader on ArkadTrader"
+        user.followersCount = 0
+        user.followingCount = 0
+        user.totalProfitLoss = entry.totalProfitLoss
+        user.winRate = entry.winRate
+        
+        return user
+    }
 }
 
 #Preview {
@@ -306,4 +467,5 @@ struct EnhancedLeaderboardCard: View {
             createdBy: "test"
         )
     )
+    .environmentObject(FirebaseAuthService.shared)
 }

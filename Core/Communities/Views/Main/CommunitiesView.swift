@@ -2,7 +2,7 @@
 //  CommunitiesView.swift
 //  ArkadTrader
 //
-//  ENHANCED VERSION - Modern, Professional & Arkad Branded
+//  ENHANCED VERSION - Modern, Professional & Arkad Branded - FIXED
 //
 
 import SwiftUI
@@ -20,6 +20,10 @@ struct CommunitiesView: View {
     
     @State private var selectedLeaderboardCommunity: Community?
     @State private var navigateToLeaderboard = false
+    
+    // ✅ FIXED: Enhanced leaderboard state
+    @State private var selectedLeaderboardMode: LeaderboardMode = .communities
+    @StateObject private var globalLeaderboardViewModel = GlobalLeaderboardViewModel()
     
     var body: some View {
         NavigationView {
@@ -49,12 +53,12 @@ struct CommunitiesView: View {
                     modernSideMenuOverlay
                 }
                 
-                // Hidden NavigationLink
                 // Hidden NavigationLink for Leaderboard
                 NavigationLink(
                     destination: Group {
                         if let community = selectedLeaderboardCommunity {
                             SimpleConsistencyLeaderboardView(community: community)
+                                .environmentObject(authService)
                         } else {
                             EmptyView()
                         }
@@ -99,11 +103,13 @@ struct CommunitiesView: View {
         selectedCommunity = community
         navigateToCommunity = true
     }
+    
     private func navigateToLeaderboard(_ community: Community) {
         print("🏆 Navigating to leaderboard for: \(community.name)")
         selectedLeaderboardCommunity = community
         navigateToLeaderboard = true
     }
+    
     private var modernEmptyLeaderboardState: some View {
         VStack(spacing: 32) {
             Circle()
@@ -163,40 +169,6 @@ struct CommunitiesView: View {
         .padding(.bottom, 40)
     }
 
-    private var modernLeaderboardContent: some View {
-        VStack(spacing: 24) {
-            // Header
-            HStack {
-                Image(systemName: "trophy.fill")
-                    .font(.title2)
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGoldLight],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                
-                Text("Community Leaderboards")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.textPrimary)
-                
-                Spacer()
-            }
-            
-            // Communities with leaderboards
-            LazyVStack(spacing: 16) {
-                ForEach(viewModel.userCommunities) { community in
-                    modernCommunityLeaderboardCard(community: community)
-                }
-            }
-        }
-        .padding(.top, 8)
-    }
-
-    // Replace your modernCommunityLeaderboardCard function with this:
-
     private func modernCommunityLeaderboardCard(community: Community) -> some View {
         Button(action: {
             print("🏆 Tapped leaderboard for: \(community.name)")
@@ -252,6 +224,496 @@ struct CommunitiesView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Enhanced Leaderboard Content (FIXED - Single Definition)
+extension CommunitiesView {
+    
+    private var modernLeaderboardContent: some View {
+        VStack(spacing: 24) {
+            // Header with segmented control
+            VStack(spacing: 20) {
+                // Title and icon
+                HStack {
+                    Image(systemName: "trophy.fill")
+                        .font(.title2)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.arkadGold, Color.arkadGoldLight],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    
+                    Text("Leaderboards")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.textPrimary)
+                    
+                    Spacer()
+                }
+                
+                // Segmented Control (matching your home tab style)
+                HStack(spacing: 4) {
+                    ForEach(LeaderboardMode.allCases, id: \.self) { mode in
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                selectedLeaderboardMode = mode
+                            }
+                            
+                            // Load data when switching to global
+                            if mode == .globalTraders {
+                                Task {
+                                    await globalLeaderboardViewModel.loadGlobalLeaderboard()
+                                }
+                            }
+                        }) {
+                            Text(mode.displayName)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(selectedLeaderboardMode == mode ? .arkadBlack : .textSecondary)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .fill(selectedLeaderboardMode == mode ? Color.arkadGold : Color.clear)
+                                )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                    
+                    Spacer()
+                }
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(.regularMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24)
+                                .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
+                        )
+                )
+            }
+            
+            // Content based on selected mode
+            Group {
+                switch selectedLeaderboardMode {
+                case .communities:
+                    communityLeaderboardsContent
+                case .globalTraders:
+                    globalTradersContent
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: selectedLeaderboardMode)
+        }
+        .padding(.top, 8)
+    }
+    
+    // MARK: - Community Leaderboards Content
+    private var communityLeaderboardsContent: some View {
+        VStack(spacing: 16) {
+            // Communities with leaderboards
+            LazyVStack(spacing: 16) {
+                ForEach(viewModel.userCommunities) { community in
+                    modernCommunityLeaderboardCard(community: community)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Global Traders Content (FIXED - Single Definition)
+    private var globalTradersContent: some View {
+        VStack(spacing: 20) {
+            // Header with category selector
+            VStack(spacing: 16) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Top Traders Worldwide")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.textPrimary)
+                        
+                        Text("Based on \(globalLeaderboardViewModel.selectedCategory.description.lowercased())")
+                            .font(.caption)
+                            .foregroundColor(.textSecondary)
+                    }
+                    
+                    Spacer()
+                    
+                    // Refresh button
+                    Button(action: {
+                        Task {
+                            await globalLeaderboardViewModel.refresh()
+                        }
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.arkadGold)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(Color.arkadGold.opacity(0.1))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                    }
+                }
+                
+                // Category selector
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(LeaderboardCategory.allCases, id: \.self) { category in
+                            Button(action: {
+                                Task {
+                                    await globalLeaderboardViewModel.changeCategory(category)
+                                }
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: category.icon)
+                                        .font(.caption)
+                                    
+                                    Text(category.displayName)
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+                                .foregroundColor(globalLeaderboardViewModel.selectedCategory == category ? .arkadBlack : .arkadGold)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(globalLeaderboardViewModel.selectedCategory == category ?
+                                              Color.arkadGold : Color.arkadGold.opacity(0.1))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+            }
+            
+            // Global traders list
+            if globalLeaderboardViewModel.isLoading {
+                globalTradersLoadingView
+            } else if !globalLeaderboardViewModel.errorMessage.isEmpty {
+                globalTradersErrorView
+            } else if globalLeaderboardViewModel.globalTraders.isEmpty {
+                globalTradersEmptyView
+            } else {
+                LazyVStack(spacing: 12) {
+                    ForEach(globalLeaderboardViewModel.globalTraders) { trader in
+                        globalTraderCard(trader: trader)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            // Load data when view appears if not already loaded
+            if globalLeaderboardViewModel.globalTraders.isEmpty && !globalLeaderboardViewModel.isLoading {
+                Task {
+                    await globalLeaderboardViewModel.loadGlobalLeaderboard()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Global Trader Card
+    private func globalTraderCard(trader: GlobalTrader) -> some View {
+        Button(action: {
+            // Navigate to user profile
+            print("🌍 Tapped global trader: \(trader.username)")
+        }) {
+            HStack(spacing: 16) {
+                // Rank badge
+                ZStack {
+                    Circle()
+                        .fill(getRankColor(for: trader.rank))
+                        .frame(width: 36, height: 36)
+                    
+                    if trader.rank <= 3 {
+                        Image(systemName: getRankIcon(for: trader.rank))
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                    } else {
+                        Text("#\(trader.rank)")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                    }
+                }
+                
+                // User avatar
+                AsyncImage(url: URL(string: "https://avatar.iran.liara.run/username?username=\(trader.username)")) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Circle()
+                        .fill(Color.arkadGold)
+                        .overlay(
+                            Text(getInitials(from: trader.username))
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                        )
+                }
+                .frame(width: 36, height: 36)
+                .clipShape(Circle())
+                
+                // User info
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(trader.username)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.textPrimary)
+                        
+                        if trader.isVerified {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.caption2)
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    
+                    // Communities with nice styling
+                    if !trader.communities.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(Array(trader.communities.prefix(3)), id: \.self) { community in
+                                    Text(community)
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.arkadGold)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.arkadGold.opacity(0.1))
+                                                .overlay(
+                                                    Capsule()
+                                                        .stroke(Color.arkadGold.opacity(0.3), lineWidth: 0.5)
+                                                )
+                                        )
+                                }
+                                
+                                if trader.communities.count > 3 {
+                                    Text("+\(trader.communities.count - 3)")
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.textSecondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.gray.opacity(0.1))
+                                        )
+                                }
+                            }
+                        }
+                    } else {
+                        Text("No communities")
+                            .font(.caption2)
+                            .foregroundColor(.textSecondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // Performance stats
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(formatProfitLoss(trader.totalProfitLoss))
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundColor(trader.totalProfitLoss >= 0 ? .marketGreen : .marketRed)
+                    
+                    HStack(spacing: 8) {
+                        Text("\(String(format: "%.1f", trader.winRate))%")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.textSecondary)
+                        
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundColor(.textSecondary)
+                        
+                        Text("\(trader.totalTrades) trades")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.textSecondary)
+                    }
+                }
+                
+                // Follow button (smaller version)
+                SimpleFollowButton(
+                    targetUserId: trader.userId,
+                    targetUsername: trader.username
+                )
+                .scaleEffect(0.8)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.arkadGold.opacity(0.1), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    // MARK: - Loading and Empty States
+    private var globalTradersLoadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.2)
+                .foregroundColor(.arkadGold)
+            
+            Text("Loading global traders...")
+                .font(.subheadline)
+                .foregroundColor(.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 120)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var globalTradersEmptyView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "globe")
+                .font(.system(size: 40))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.arkadGold, Color.arkadGoldLight],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            
+            VStack(spacing: 8) {
+                Text("No Global Data Yet")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.textPrimary)
+                
+                Text("Global leaderboards will appear as more traders join communities and complete trades.")
+                    .font(.subheadline)
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // Add error view
+    private var globalTradersErrorView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.orange)
+            
+            VStack(spacing: 8) {
+                Text("Unable to Load Data")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.textPrimary)
+                
+                Text(globalLeaderboardViewModel.errorMessage)
+                    .font(.subheadline)
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+            
+            Button("Try Again") {
+                Task {
+                    await globalLeaderboardViewModel.refresh()
+                }
+            }
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundColor(.arkadBlack)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.arkadGold)
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.orange.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Helper Methods
+    private func getRankColor(for rank: Int) -> Color {
+        switch rank {
+        case 1: return .yellow
+        case 2: return .gray
+        case 3: return .orange
+        default: return .blue
+        }
+    }
+    
+    private func getRankIcon(for rank: Int) -> String {
+        switch rank {
+        case 1: return "crown.fill"
+        case 2: return "medal.fill"
+        case 3: return "medal"
+        default: return ""
+        }
+    }
+    
+    private func getInitials(from name: String) -> String {
+        let components = name.components(separatedBy: " ")
+        if components.count >= 2 {
+            let first = String(components[0].prefix(1))
+            let last = String(components[1].prefix(1))
+            return (first + last).uppercased()
+        } else {
+            return String(name.prefix(2)).uppercased()
+        }
+    }
+    
+    private func formatProfitLoss(_ amount: Double) -> String {
+        if amount >= 0 {
+            return "+$\(String(format: "%.0f", amount))"
+        } else {
+            return "-$\(String(format: "%.0f", abs(amount)))"
+        }
     }
 }
 
@@ -415,11 +877,10 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Modern Side Menu
+// MARK: - Modern Side Menu (Keeping existing code)
 extension CommunitiesView {
     private var modernSideMenuOverlay: some View {
         ZStack {
-            // Enhanced backdrop
             Color.black.opacity(0.3)
                 .ignoresSafeArea()
                 .background(.ultraThinMaterial)
@@ -438,10 +899,8 @@ extension CommunitiesView {
     
     private var modernSideMenu: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Elegant header with Arkad branding
             modernMenuHeader
             
-            // Navigation items
             VStack(spacing: 8) {
                 ForEach(CommunityMainTab.allCases, id: \.self) { tab in
                     modernMenuItem(tab)
@@ -451,7 +910,6 @@ extension CommunitiesView {
             
             Spacer()
             
-            // Premium create button
             modernCreateButton
         }
         .frame(width: 320)
@@ -635,8 +1093,7 @@ extension CommunitiesView {
     }
 }
 
-
-// MARK: - Content Section
+// MARK: - Content Section (Keeping existing code)
 extension CommunitiesView {
     private var contentSection: some View {
         ScrollView {
@@ -706,7 +1163,7 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Modern My Communities Content
+// MARK: - Modern My Communities Content (All existing code)
 extension CommunitiesView {
     private var modernMyCommunitiesContent: some View {
         VStack(spacing: 32) {
@@ -714,7 +1171,6 @@ extension CommunitiesView {
                 modernEmptyMyCommunitiesState
             } else {
                 VStack(alignment: .leading, spacing: 40) {
-                    // Communities I Own
                     if !viewModel.userOwnedCommunities.isEmpty {
                         modernCommunitySection(
                             title: "Communities I Own",
@@ -725,7 +1181,6 @@ extension CommunitiesView {
                         )
                     }
                     
-                    // Communities I'm In
                     if !viewModel.userMemberCommunities.isEmpty {
                         modernCommunitySection(
                             title: "Communities I'm In",
@@ -743,7 +1198,6 @@ extension CommunitiesView {
     
     private func modernCommunitySection(title: String, icon: String, communities: [Community], isOwner: Bool, accentColor: Color) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            // Enhanced section header
             HStack(spacing: 16) {
                 Image(systemName: icon)
                     .font(.title2)
@@ -769,7 +1223,6 @@ extension CommunitiesView {
                 Spacer()
             }
             
-            // Modern communities grid
             LazyVGrid(columns: [
                 GridItem(.flexible(), spacing: 16),
                 GridItem(.flexible(), spacing: 16)
@@ -787,7 +1240,6 @@ extension CommunitiesView {
             navigateToCommunitDetail(community)
         }) {
             VStack(spacing: 16) {
-                // Community avatar with modern styling
                 Circle()
                     .fill(
                         LinearGradient(
@@ -805,7 +1257,6 @@ extension CommunitiesView {
                     )
                     .shadow(color: getCommunityColor(for: community.type).opacity(0.3), radius: 8, x: 0, y: 4)
                 
-                // Community information
                 VStack(spacing: 8) {
                     Text(community.name)
                         .font(.subheadline)
@@ -866,23 +1317,20 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Modern Discover Content with Integrated Search
+// MARK: - Modern Discover Content (All existing code)
 extension CommunitiesView {
     private var modernDiscoverContent: some View {
         VStack(spacing: 32) {
-            // Integrated search bar
             modernSearchSection
             
             if viewModel.discoveryCommunities.isEmpty {
                 modernEmptyDiscoverState
             } else {
                 VStack(spacing: 32) {
-                    // Featured communities
                     if !viewModel.featuredCommunities.isEmpty {
                         modernFeaturedSection
                     }
                     
-                    // All communities
                     modernAllCommunitiesSection
                 }
             }
@@ -911,7 +1359,6 @@ extension CommunitiesView {
                 Spacer()
             }
             
-            // Modern search bar
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.subheadline)
@@ -919,11 +1366,9 @@ extension CommunitiesView {
                 
                 TextField("Search communities...", text: .constant(""))
                     .font(.subheadline)
-                    .disabled(true) // Placeholder for now
+                    .disabled(true)
                 
-                Button(action: {
-                    // Future: Advanced search/filters
-                }) {
+                Button(action: {}) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.subheadline)
                         .foregroundColor(.arkadGold)
@@ -1083,7 +1528,6 @@ extension CommunitiesView {
             navigateToCommunitDetail(community)
         }) {
             VStack(spacing: 16) {
-                // Community avatar
                 Circle()
                     .fill(getCommunityColor(for: community.type))
                     .frame(width: 56, height: 56)
@@ -1095,7 +1539,6 @@ extension CommunitiesView {
                     )
                     .shadow(color: getCommunityColor(for: community.type).opacity(0.3), radius: 6, x: 0, y: 3)
                 
-                // Community info
                 VStack(spacing: 8) {
                     Text(community.name)
                         .font(.subheadline)
@@ -1321,7 +1764,7 @@ extension CommunitiesView {
     }
 }
 
-// MARK: - Supporting Types (Updated - Removed Search Tab)
+// MARK: - Supporting Types
 enum CommunityMainTab: CaseIterable {
     case discover
     case myCommunities
@@ -1335,6 +1778,180 @@ enum CommunityMainTab: CaseIterable {
         case .leaderboard: return "Leaderboard"
         case .activity: return "Activity"
         }
+    }
+}
+
+enum LeaderboardMode: CaseIterable {
+    case communities
+    case globalTraders
+    
+    var displayName: String {
+        switch self {
+        case .communities: return "Communities"
+        case .globalTraders: return "Global Traders"
+        }
+    }
+}
+
+struct GlobalTrader: Identifiable {
+    let id = UUID()
+    let userId: String
+    let username: String
+    var rank: Int
+    let totalProfitLoss: Double
+    let winRate: Double
+    let totalTrades: Int
+    let communities: [String]
+    let isVerified: Bool
+    
+    init(userId: String, username: String, rank: Int, totalProfitLoss: Double, winRate: Double, totalTrades: Int, communities: [String] = [], isVerified: Bool = false) {
+        self.userId = userId
+        self.username = username
+        self.rank = rank
+        self.totalProfitLoss = totalProfitLoss
+        self.winRate = winRate
+        self.totalTrades = totalTrades
+        self.communities = communities
+        self.isVerified = isVerified
+    }
+}
+
+// MARK: - Simplified Global Leaderboard ViewModel
+@MainActor
+class GlobalLeaderboardViewModel: ObservableObject {
+    @Published var globalTraders: [GlobalTrader] = []
+    @Published var isLoading = false
+    @Published var errorMessage = ""
+    @Published var selectedCategory: LeaderboardCategory = .consistencyMasters
+    
+    private let leaderboardService = CommunityLeaderboardService.shared
+    
+    func loadGlobalLeaderboard(category: LeaderboardCategory = .consistencyMasters) async {
+        print("🌍 Loading simplified global leaderboard for category: \(category)")
+        
+        isLoading = true
+        errorMessage = ""
+        selectedCategory = category
+        
+        do {
+            guard let currentUser = leaderboardService.authService.currentUser else {
+                throw LeaderboardError.noCurrentUser
+            }
+            
+            print("👤 Current user has \(currentUser.communityIds.count) communities")
+            
+            var allTraders: [GlobalTrader] = []
+            var processedUserIds: Set<String> = []
+            
+            for communityId in currentUser.communityIds {
+                do {
+                    print("🏘️ Getting leaderboard for community: \(communityId)")
+                    
+                    let communityEntries = try await leaderboardService.getLeaderboard(
+                        communityId: communityId,
+                        category: category,
+                        timeframe: .allTime,
+                        limit: 50
+                    )
+                    
+                    print("📊 Got \(communityEntries.count) entries from community \(communityId)")
+                    
+                    for entry in communityEntries {
+                        if processedUserIds.contains(entry.userId) {
+                            continue
+                        }
+                        
+                        let trader = await createSimpleGlobalTrader(from: entry, communityId: communityId)
+                        allTraders.append(trader)
+                        processedUserIds.insert(entry.userId)
+                    }
+                    
+                } catch {
+                    print("⚠️ Could not load leaderboard for community \(communityId): \(error)")
+                }
+            }
+            
+            print("🔄 Processing \(allTraders.count) unique traders")
+            
+            allTraders = sortTraders(allTraders, by: category)
+            
+            for i in 0..<allTraders.count {
+                allTraders[i].rank = i + 1
+            }
+            
+            globalTraders = Array(allTraders.prefix(50))
+            print("✅ Successfully loaded \(globalTraders.count) global traders")
+            
+        } catch {
+            errorMessage = "Failed to load global leaderboard: \(error.localizedDescription)"
+            print("❌ Error loading global leaderboard: \(error)")
+        }
+        
+        isLoading = false
+    }
+    
+    private func createSimpleGlobalTrader(from entry: CommunityLeaderboardEntry, communityId: String) async -> GlobalTrader {
+        var isVerified = false
+        var userCommunities: [String] = []
+        
+        do {
+            if let user = try await leaderboardService.authService.getUserById(userId: entry.userId) {
+                isVerified = user.isVerified
+                userCommunities = user.communityIds.map { "Community \($0.suffix(8))" }
+            }
+        } catch {
+            print("⚠️ Could not get user details for \(entry.userId): \(error)")
+            userCommunities = ["Community \(communityId.suffix(8))"]
+        }
+        
+        if userCommunities.isEmpty {
+            userCommunities = ["Community \(communityId.suffix(8))"]
+        }
+        
+        return GlobalTrader(
+            userId: entry.userId,
+            username: entry.username,
+            rank: entry.rank,
+            totalProfitLoss: entry.totalProfitLoss,
+            winRate: entry.winRate,
+            totalTrades: entry.totalTrades,
+            communities: userCommunities,
+            isVerified: isVerified
+        )
+    }
+    
+    private func sortTraders(_ traders: [GlobalTrader], by category: LeaderboardCategory) -> [GlobalTrader] {
+        switch category {
+        case .consistencyMasters:
+            return traders
+                .filter { $0.totalTrades >= 5 }
+                .sorted { lhs, rhs in
+                    if lhs.winRate == rhs.winRate {
+                        return lhs.totalTrades > rhs.totalTrades
+                    }
+                    return lhs.winRate > rhs.winRate
+                }
+        case .profitKings:
+            return traders.sorted { $0.totalProfitLoss > $1.totalProfitLoss }
+        case .volumeTraders:
+            return traders.sorted { $0.totalTrades > $1.totalTrades }
+        case .riskMasters:
+            return traders
+                .filter { $0.totalTrades >= 3 }
+                .sorted { lhs, rhs in
+                    let lhsScore = lhs.winRate * 0.7 + Double(min(lhs.totalTrades, 100)) * 0.3
+                    let rhsScore = rhs.winRate * 0.7 + Double(min(rhs.totalTrades, 100)) * 0.3
+                    return lhsScore > rhsScore
+                }
+        }
+    }
+    
+    func refresh() async {
+        await loadGlobalLeaderboard(category: selectedCategory)
+    }
+    
+    func changeCategory(_ category: LeaderboardCategory) async {
+        await loadGlobalLeaderboard(category: category)
     }
 }
 
