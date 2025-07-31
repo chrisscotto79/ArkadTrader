@@ -12,65 +12,73 @@ class LeaderboardCalculationService: ObservableObject {
     
     private init() {}
     
-    /// Calculate leaderboard entries for a community - simplified for now
+    /// Calculate leaderboard entries for a community - FIXED to include all members
     func calculateLeaderboard(for communityId: String) async -> [CommunityLeaderboardEntry] {
         print("📊 Calculating leaderboard for community: \(communityId)")
         
         var entries: [CommunityLeaderboardEntry] = []
         
-        // Check if we have a current user
-        guard let currentUser = authService.currentUser else {
-            print("❌ No current user found")
-            return entries
-        }
-        
-        print("✅ Current user: \(currentUser.username) (ID: \(currentUser.id))")
-        
         do {
-            print("🔍 Fetching trades for user: \(currentUser.id)")
-            // Use the simple query to avoid Firebase index requirement
-            let userTrades = try await authService.getUserTradesSimple(userId: currentUser.id)
-            print("📈 Found \(userTrades.count) total trades")
+            print("👥 Getting all community members...")
+            // ✅ GET ALL COMMUNITY MEMBERS (not just current user)
+            let communityMembers = try await FirebaseServices.shared.getCommunityMembers(communityId: communityId)
+            print("✅ Found \(communityMembers.count) community members")
             
-            let closedTrades = userTrades.filter { !$0.isOpen }
-            print("📈 Found \(closedTrades.count) closed trades")
-            
-            if closedTrades.isEmpty {
-                print("⚠️ No closed trades found - cannot calculate stats")
-                return entries
+            // ✅ CALCULATE STATS FOR EACH MEMBER
+            for member in communityMembers {
+                print("📈 Calculating stats for: \(member.username)")
+                
+                do {
+                    let userTrades = try await authService.getUserTrades(userId: member.id)
+                    let closedTrades = userTrades.filter { !$0.isOpen }
+                    
+                    // Only include users with at least 1 trade
+                    guard !closedTrades.isEmpty else {
+                        print("⚠️ \(member.username) has no closed trades - skipping")
+                        continue
+                    }
+                    
+                    let totalTrades = closedTrades.count
+                    let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
+                    let winRate = Double(winningTrades) / Double(totalTrades) * 100
+                    let totalProfitLoss = closedTrades.reduce(0) { $0 + $1.profitLoss }
+                    
+                    print("📊 \(member.username) stats: \(totalTrades) trades, \(String(format: "%.1f", winRate))% win rate, $\(String(format: "%.2f", totalProfitLoss)) P&L")
+                    
+                    let entry = CommunityLeaderboardEntry(
+                        userId: member.id,
+                        username: member.username,
+                        communityId: communityId,
+                        totalTrades: totalTrades,
+                        winRate: winRate,
+                        totalProfitLoss: totalProfitLoss
+                    )
+                    
+                    entries.append(entry)
+                    
+                } catch {
+                    print("❌ Error getting trades for \(member.username): \(error)")
+                    // Continue to next member instead of failing completely
+                }
             }
             
-            let totalTrades = closedTrades.count
-            let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
-            let winRate = Double(winningTrades) / Double(totalTrades) * 100
-            let totalProfitLoss = closedTrades.reduce(0) { $0 + $1.profitLoss }
+            // ✅ SORT BY WIN RATE (you can change this logic later)
+            entries.sort { $0.winRate > $1.winRate }
             
-            print("📊 Stats calculated:")
-            print("   - Total trades: \(totalTrades)")
-            print("   - Winning trades: \(winningTrades)")
-            print("   - Win rate: \(String(format: "%.1f", winRate))%")
-            print("   - Total P&L: $\(String(format: "%.2f", totalProfitLoss))")
+            // ✅ ASSIGN RANKS
+            for i in 0..<entries.count {
+                entries[i].rank = i + 1
+            }
             
-            let entry = CommunityLeaderboardEntry(
-                userId: currentUser.id,
-                username: currentUser.username,
-                communityId: communityId,
-                totalTrades: totalTrades,
-                winRate: winRate,
-                totalProfitLoss: totalProfitLoss
-            )
-            
-            var rankedEntry = entry
-            rankedEntry.rank = 1
-            entries.append(rankedEntry)
-            
-            print("✅ Added current user entry successfully")
+            print("✅ Final leaderboard: \(entries.count) entries")
+            for entry in entries {
+                print("   #\(entry.rank): \(entry.username) - \(String(format: "%.1f", entry.winRate))% win rate")
+            }
             
         } catch {
-            print("❌ Error getting current user trades: \(error)")
+            print("❌ Error calculating leaderboard: \(error)")
         }
         
-        print("✅ Calculated leaderboard with \(entries.count) entries")
         return entries
     }
     

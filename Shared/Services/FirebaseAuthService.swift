@@ -415,6 +415,7 @@ class FirebaseAuthService: ObservableObject {
         try await FirebaseServices.shared.leaveCommunity(communityId: communityId, userId: userId)
     }
     
+   
     func getCommunityMembers(communityId: String) async throws -> [User] {
         return try await FirebaseServices.shared.getCommunityMembers(communityId: communityId)
     }
@@ -468,6 +469,7 @@ class FirebaseAuthService: ObservableObject {
     func searchUsers(query: String) async throws -> [User] {
         return try await FirebaseServices.shared.searchUsers(query: query)
     }
+    
     
     func searchPosts(query: String) async throws -> [Post] {
         return try await FirebaseServices.shared.searchPosts(query: query)
