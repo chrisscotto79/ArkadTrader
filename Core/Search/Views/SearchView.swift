@@ -1,5 +1,5 @@
 // File: Core/Search/Views/SearchView.swift
-// Clean Search View matching original design with arkad gold colors
+// Enhanced Search View with modern, professional UI/UX
 
 import SwiftUI
 
@@ -17,47 +17,67 @@ struct SearchView: View {
     @State private var showSearchAnalytics = false
     @State private var pressedTab: SearchType?
     
+    // Animation states
+    @State private var searchBarScale = 1.0
+    @State private var showSearchHint = false
+    
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Clean Header
-                headerSection
+            ZStack {
+                // Background gradient
+                LinearGradient(
+                    colors: [
+                        Color(.systemBackground),
+                        Color(.systemGray6).opacity(0.5)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
                 
-                // Main Content
-                Group {
-                    if searchText.isEmpty {
-                        emptySearchState
-                    } else if searchViewModel.isLoading {
-                        loadingState
-                    } else if searchViewModel.searchResults.isEmpty {
-                        noResultsState
-                    } else {
-                        searchResults
+                VStack(spacing: 0) {
+                    // Enhanced Header
+                    headerSection
+                    
+                    // Main Content with transitions
+                    Group {
+                        if searchText.isEmpty {
+                            emptySearchState
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                                    removal: .opacity
+                                ))
+                        } else if searchViewModel.isLoading {
+                            loadingState
+                                .transition(.opacity)
+                        } else if searchViewModel.searchResults.isEmpty {
+                            noResultsState
+                                .transition(.opacity)
+                        } else {
+                            searchResults
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                        }
                     }
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: searchText.isEmpty)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: searchViewModel.isLoading)
                 }
-                .animation(.easeInOut(duration: 0.3), value: searchText.isEmpty)
-                .animation(.easeInOut(duration: 0.3), value: searchViewModel.isLoading)
-                .animation(.easeInOut(duration: 0.3), value: searchViewModel.searchResults.isEmpty)
-                
-                Spacer()
             }
-            .background(Color.white)
             .navigationBarHidden(true)
         }
         .sheet(isPresented: $showAdvancedFilters) {
-            Text("Advanced Filters Coming Soon")
-                .padding()
+            advancedFiltersSheet
         }
         .sheet(isPresented: $showSearchSettings) {
-            Text("Search Settings Coming Soon")
-                .padding()
+            searchSettingsSheet
         }
         .sheet(isPresented: $showSearchAnalytics) {
-            Text("Search Analytics Coming Soon")
-                .padding()
+            searchAnalyticsSheet
         }
         .alert("Search Error", isPresented: $searchViewModel.showError) {
-            Button("OK") { }
+            Button("OK", role: .cancel) { }
         } message: {
             Text(searchViewModel.errorMessage)
         }
@@ -66,554 +86,556 @@ struct SearchView: View {
     // MARK: - Header Section
     
     private var headerSection: some View {
-        VStack(spacing: 24) {
-            // Simple Search Bar
-            simpleSearchBar
-            
-            // Enhanced Filter Tabs
-            cleanFilterTabs
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(
-            LinearGradient(
-                colors: [Color.white, Color.gray.opacity(0.02)],
-                startPoint: .top,
-                endPoint: .bottom
+        VStack(spacing: 0) {
+            VStack(spacing: 16) {
+                // Enhanced Search Bar
+                enhancedSearchBar
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                
+                // Modern Filter Pills
+                modernFilterPills
+                    .padding(.top, 8)
+            }
+            .padding(.bottom, 16)
+            .background(
+                Rectangle()
+                    .fill(Color(.systemBackground))
+                    .shadow(
+                        color: Color.black.opacity(0.04),
+                        radius: 10,
+                        x: 0,
+                        y: 5
+                    )
             )
-        )
+        }
     }
     
-    private var simpleSearchBar: some View {
+    private var enhancedSearchBar: some View {
         HStack(spacing: 12) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(isSearchFocused ? .arkadGold : .gray)
-                .font(.system(size: 18, weight: .medium))
-                .animation(.easeInOut(duration: 0.2), value: isSearchFocused)
+            // Animated search icon
+            ZStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(isSearchFocused ? .arkadGold : .secondary)
+                    .font(.system(size: 17, weight: .medium))
+                    .scaleEffect(isSearchFocused ? 1.1 : 1.0)
+            }
+            .animation(.spring(response: 0.3), value: isSearchFocused)
             
-            TextField("Search traders, posts, stocks...", text: $searchText)
-                .textFieldStyle(PlainTextFieldStyle())
-                .font(.system(size: 16))
-                .focused($isSearchFocused)
-                .onSubmit {
-                    performSearch()
+            // Text field with placeholder animation
+            ZStack(alignment: .leading) {
+                if searchText.isEmpty && !isSearchFocused {
+                    Text("Search traders, posts, stocks...")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 16))
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
-                .onChange(of: searchText) { newValue in
-                    handleSearchTextChange(newValue)
-                }
-            
-            if !searchText.isEmpty {
-                Button(action: clearSearch) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.gray)
-                        .font(.system(size: 18))
-                }
-                .transition(.scale.combined(with: .opacity))
+                
+                TextField("", text: $searchText)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.primary)
+                    .focused($isSearchFocused)
+                    .onSubmit {
+                        performSearch()
+                    }
+                    .onChange(of: searchText) { newValue in
+                        handleSearchTextChange(newValue)
+                    }
             }
             
-            if isSearching {
-                ProgressView()
-                    .scaleEffect(0.8)
-                    .tint(.arkadGold)
-                    .transition(.scale.combined(with: .opacity))
+            // Action buttons
+            HStack(spacing: 8) {
+                if !searchText.isEmpty {
+                    Button(action: clearSearch) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 18))
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                
+                if isSearching {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(.arkadGold)
+                        .transition(.scale.combined(with: .opacity))
+                }
+                
+                // Microphone button (future voice search)
+                Button(action: { showSearchHint.toggle() }) {
+                    Image(systemName: "mic.fill")
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .font(.system(size: 16))
+                }
+                .opacity(searchText.isEmpty ? 1 : 0)
+                .animation(.easeInOut, value: searchText.isEmpty)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.gray.opacity(0.08))
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemGray6))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(isSearchFocused ? Color.arkadGold.opacity(0.5) : Color.clear, lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: isSearchFocused ?
+                                    [Color.arkadGold.opacity(0.6), Color.arkadGold.opacity(0.3)] :
+                                    [Color.clear, Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.5
+                        )
                 )
         )
-        .scaleEffect(isSearchFocused ? 1.01 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSearchFocused)
-    }
-    
-    private var cleanFilterTabs: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(SearchType.allCases, id: \.self) { type in
-                    filterTab(type: type)
+        .scaleEffect(searchBarScale)
+        .onTapGesture {
+            withAnimation(.spring(response: 0.3)) {
+                searchBarScale = 0.98
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.spring(response: 0.3)) {
+                    searchBarScale = 1.0
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
         }
-        .background(Color.gray.opacity(0.05))
-        .cornerRadius(16)
     }
     
-    private func filterTab(type: SearchType) -> some View {
+    private var modernFilterPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(SearchType.allCases, id: \.self) { type in
+                    modernFilterPill(type: type)
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+    
+    private func modernFilterPill(type: SearchType) -> some View {
         Button(action: {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                 selectedSearchType = type
                 if !searchText.isEmpty {
                     performSearch()
                 }
             }
         }) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: type.icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(selectedSearchType == type ? .arkadBlack : .gray)
+                    .font(.system(size: 13, weight: .semibold))
                 
                 Text(type.displayName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(selectedSearchType == type ? .arkadBlack : .gray)
+                    .font(.system(size: 14, weight: .semibold))
             }
+            .foregroundColor(selectedSearchType == type ? .white : .primary.opacity(0.7))
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(selectedSearchType == type ? Color.arkadGold : Color.clear)
+                Capsule()
+                    .fill(selectedSearchType == type ?
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.8)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ) :
+                        LinearGradient(
+                            colors: [Color(.systemGray5), Color(.systemGray5)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .shadow(
-                        color: selectedSearchType == type ? .arkadGold.opacity(0.3) : .clear,
-                        radius: selectedSearchType == type ? 6 : 0,
+                        color: selectedSearchType == type ? Color.arkadGold.opacity(0.3) : .clear,
+                        radius: 8,
                         x: 0,
-                        y: selectedSearchType == type ? 3 : 0
+                        y: 4
                     )
             )
-            .scaleEffect(
-                pressedTab == type ? 0.95 :
-                (selectedSearchType == type ? 1.02 : 1.0)
-            )
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(selectedSearchType == type ? Color.arkadGold.opacity(0.2) : Color.clear, lineWidth: 1)
+                Capsule()
+                    .strokeBorder(
+                        selectedSearchType == type ? Color.clear : Color.primary.opacity(0.1),
+                        lineWidth: 1
+                    )
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .scaleEffect(pressedTab == type ? 0.95 : 1.0)
+        .animation(.spring(response: 0.3), value: pressedTab == type)
         .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { pressing in
-            withAnimation(.easeInOut(duration: 0.1)) {
-                pressedTab = pressing ? type : nil
-            }
+            pressedTab = pressing ? type : nil
         }, perform: {})
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selectedSearchType == type)
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: pressedTab == type)
     }
     
     // MARK: - Empty Search State
     
     private var emptySearchState: some View {
         ScrollView {
-            VStack(spacing: 32) {
-                // Hero Section
-                VStack(spacing: 20) {
-                    // Large Search Icon with Animation
+            VStack(spacing: 40) {
+                // Hero Section with Animation
+                VStack(spacing: 24) {
+                    // Animated Search Icon
                     ZStack {
+                        // Outer ring
                         Circle()
-                            .fill(
+                            .stroke(
                                 LinearGradient(
-                                    colors: [Color.arkadGold.opacity(0.2), Color.arkadGold.opacity(0.05)],
+                                    colors: [Color.arkadGold.opacity(0.3), Color.arkadGold.opacity(0.1)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 2
+                            )
+                            .frame(width: 100, height: 100)
+                            .rotationEffect(.degrees(showSearchHint ? 360 : 0))
+                            .animation(.linear(duration: 20).repeatForever(autoreverses: false), value: showSearchHint)
+                        
+                        // Inner gradient circle
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [Color.arkadGold.opacity(0.1), Color.arkadGold.opacity(0.05)],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: 50
                                 )
                             )
-                            .frame(width: 120, height: 120)
+                            .frame(width: 80, height: 80)
                         
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 48, weight: .light))
+                            .font(.system(size: 36, weight: .light, design: .rounded))
                             .foregroundColor(.arkadGold)
+                            .scaleEffect(showSearchHint ? 1.1 : 1.0)
+                            .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: showSearchHint)
                     }
+                    .onAppear { showSearchHint = true }
                     
                     VStack(spacing: 12) {
                         Text("Discover ArkadTrader")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundColor(.arkadBlack)
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .foregroundColor(.primary)
                         
-                        Text("Search for traders, posts, market insights,\nand more")
-                            .font(.system(size: 16))
-                            .foregroundColor(.gray)
+                        Text("Find traders, insights, and opportunities")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
-                            .lineSpacing(2)
                     }
                 }
-                .padding(.top, 20)
+                .padding(.top, 40)
                 
-                // Quick Search Section
-                quickSearchSection
+                // Modern Recent Searches Section
+                modernRecentSearchesSection
                 
-                // Recent Searches Section
-                recentSearchesSection
-                
-                Spacer(minLength: 80)
+                Spacer(minLength: 100)
             }
             .padding(.horizontal, 20)
         }
-        .background(Color.white)
     }
+
     
-    private var quickSearchSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Quick Search")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.arkadBlack)
-                
-                Text("Popular categories and content")
-                    .font(.system(size: 13))
-                    .foregroundColor(.gray)
-            }
-            
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
-                quickSearchCard(
-                    icon: "person.2.fill",
-                    title: "Top Traders",
-                    subtitle: "Follow successful traders",
-                    iconColor: .arkadGold
-                )
-                
-                quickSearchCard(
-                    icon: "doc.text.fill",
-                    title: "Market News",
-                    subtitle: "Latest market insights",
-                    iconColor: .blue
-                )
-                
-                quickSearchCard(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "Popular Stocks",
-                    subtitle: "Trending securities",
-                    iconColor: .green
-                )
-                
-                quickSearchCard(
-                    icon: "lightbulb.fill",
-                    title: "Trading Ideas",
-                    subtitle: "Community insights",
-                    iconColor: .orange
-                )
-            }
-        }
-    }
-    
-    private func quickSearchCard(icon: String, title: String, subtitle: String, iconColor: Color) -> some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                searchText = title.lowercased()
-                performSearch()
-            }
-        }) {
-            VStack(alignment: .leading, spacing: 16) {
-                // Icon with enhanced styling
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [iconColor.opacity(0.2), iconColor.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 48, height: 48)
-                    
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(iconColor)
-                }
-                
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.arkadBlack)
-                        .lineLimit(1)
-                    
-                    Text(subtitle)
-                        .font(.system(size: 13))
-                        .foregroundColor(.gray)
-                        .lineLimit(2)
-                }
-                
-                Spacer()
-            }
-            .frame(height: 120)
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
-                    .shadow(color: .gray.opacity(0.08), radius: 8, x: 0, y: 4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.gray.opacity(0.1), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: searchText)
-    }
-    
-    private var recentSearchesSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
+    private var modernRecentSearchesSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recent Searches")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.arkadBlack)
-                    
-                    Text("Tap to search again")
-                        .font(.system(size: 13))
-                        .foregroundColor(.gray)
-                }
+                Text("Recent")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
                 
                 Spacer()
                 
                 if !searchViewModel.searchHistory.isEmpty {
-                    Button("Clear All") {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    Button(action: {
+                        withAnimation(.spring()) {
                             searchViewModel.clearSearchHistory()
                         }
+                    }) {
+                        Text("Clear")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.arkadGold)
                     }
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.arkadGold)
                 }
             }
             
             if searchViewModel.searchHistory.isEmpty {
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.gray.opacity(0.1))
-                            .frame(width: 36, height: 36)
-                        
-                        Image(systemName: "clock")
-                            .font(.system(size: 14))
-                            .foregroundColor(.gray)
-                    }
-                    
-                    Text("No recent searches")
-                        .font(.system(size: 16))
-                        .foregroundColor(.gray)
-                    
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.gray.opacity(0.03))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.gray.opacity(0.1), lineWidth: 1)
-                        )
-                )
+                emptyRecentSearches
             } else {
                 VStack(spacing: 8) {
                     ForEach(searchViewModel.searchHistory.prefix(5), id: \.self) { search in
-                        recentSearchRow(search: search)
+                        modernRecentSearchRow(search: search)
                     }
                 }
             }
         }
     }
     
-    private func recentSearchRow(search: String) -> some View {
+    private var emptyRecentSearches: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray6))
+                    .frame(width: 44, height: 44)
+                
+                Image(systemName: "clock")
+                    .font(.system(size: 18))
+                    .foregroundColor(.secondary)
+            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("No recent searches")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Text("Your search history will appear here")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary.opacity(0.7))
+            }
+            
+            Spacer()
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemGray6).opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+                )
+        )
+    }
+    
+    private func modernRecentSearchRow(search: String) -> some View {
         Button(action: {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            withAnimation(.spring()) {
                 searchText = search
                 performSearch()
             }
         }) {
             HStack(spacing: 16) {
-                // Clock icon with enhanced styling
                 ZStack {
-                    Circle()
-                        .fill(Color.gray.opacity(0.1))
-                        .frame(width: 36, height: 36)
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(.systemGray6), Color(.systemGray5)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 44, height: 44)
                     
                     Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.gray)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.secondary)
                 }
                 
                 Text(search)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.arkadBlack)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
                 
                 Spacer()
                 
                 Image(systemName: "arrow.up.left")
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray.opacity(0.6))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary.opacity(0.5))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.gray.opacity(0.03))
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.03), radius: 5, x: 0, y: 2)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.gray.opacity(0.1), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
                     )
             )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(ScaleButtonStyle())
     }
     
     // MARK: - Loading State
     
     private var loadingState: some View {
-        VStack(spacing: 24) {
-            // Animated Loading Indicator
-            ProgressView()
-                .scaleEffect(1.5)
-                .tint(.arkadGold)
+        VStack(spacing: 32) {
+            // Custom loading animation
+            ZStack {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(Color.arkadGold.opacity(0.3 - Double(index) * 0.1))
+                        .frame(width: 40 + CGFloat(index) * 20, height: 40 + CGFloat(index) * 20)
+                        .scaleEffect(showSearchHint ? 1.2 : 0.8)
+                        .animation(
+                            .easeInOut(duration: 1.5)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.2),
+                            value: showSearchHint
+                        )
+                }
+            }
+            .onAppear { showSearchHint = true }
             
-            VStack(spacing: 8) {
+            VStack(spacing: 12) {
                 Text("Searching...")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.arkadBlack)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundColor(.primary)
                 
                 Text("Finding the best results for you")
-                    .font(.system(size: 14))
-                    .foregroundColor(.gray)
+                    .font(.system(size: 15))
+                    .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white)
     }
     
     // MARK: - No Results State
     
     private var noResultsState: some View {
-        VStack(spacing: 24) {
-            // No Results Icon
+        VStack(spacing: 32) {
+            // Enhanced no results illustration
             ZStack {
                 Circle()
-                    .fill(Color.gray.opacity(0.1))
-                    .frame(width: 100, height: 100)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(.systemGray5), Color(.systemGray6)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 120, height: 120)
                 
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 40))
-                    .foregroundColor(.gray.opacity(0.6))
+                    .font(.system(size: 50, weight: .light))
+                    .foregroundColor(.secondary)
+                    .rotationEffect(.degrees(-15))
             }
             
-            VStack(spacing: 12) {
-                Text("No results for \"\(searchText)\"")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.arkadBlack)
-                
-                Text("Try searching for something else or check your spelling")
-                    .font(.system(size: 16))
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-            }
-            
-            // Suggestions
             VStack(spacing: 16) {
-                Text("Suggestions:")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.gray)
+                Text("No results found")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    suggestionRow("Try different keywords")
-                    suggestionRow("Check for typos")
-                    suggestionRow("Use more general terms")
-                    suggestionRow("Browse popular content")
+                Text("We couldn't find anything matching\n\"\(searchText)\"")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+            }
+            
+            // Enhanced suggestions
+            VStack(spacing: 12) {
+                Text("Try these:")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 4)
+                
+                VStack(spacing: 10) {
+                    suggestionPill("Different keywords")
+                    suggestionPill("Check spelling")
+                    suggestionPill("Broader search terms")
                 }
             }
-            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 32)
-        .background(Color.white)
     }
     
-    private func suggestionRow(_ text: String) -> some View {
+    private func suggestionPill(_ text: String) -> some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(Color.arkadGold.opacity(0.3))
-                .frame(width: 6, height: 6)
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.arkadGold)
             
             Text(text)
-                .font(.system(size: 14))
-                .foregroundColor(.gray)
-            
-            Spacer()
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.primary)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(Color.arkadGold.opacity(0.1))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
     
     // MARK: - Search Results
     
     private var searchResults: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
-                // Results Header
-                resultsHeader
+            LazyVStack(spacing: 12) {
+                // Enhanced results header
+                enhancedResultsHeader
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
                 
-                // Results List with Staggered Animation
+                // Results with enhanced cards
                 ForEach(Array(filteredResults.enumerated()), id: \.element.id) { index, result in
-                    SearchResultView(result: result)
+                    EnhancedSearchResultView(result: result)
+                        .padding(.horizontal, 20)
                         .transition(.asymmetric(
                             insertion: .move(edge: .bottom).combined(with: .opacity),
                             removal: .move(edge: .top).combined(with: .opacity)
                         ))
                         .animation(
                             .spring(response: 0.6, dampingFraction: 0.8)
-                            .delay(Double(index) * 0.1),
+                            .delay(Double(index) * 0.05),
                             value: filteredResults.count
                         )
                 }
             }
-            .padding(.horizontal, 20)
             .padding(.bottom, 100)
         }
-        .background(Color.gray.opacity(0.03))
     }
     
-    private var resultsHeader: some View {
-        HStack(alignment: .center, spacing: 12) {
-            // Results Count
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(filteredResults.count) result\(filteredResults.count == 1 ? "" : "s")")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.arkadBlack)
+    private var enhancedResultsHeader: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(filteredResults.count) Results")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
                 
                 if let performance = searchViewModel.searchPerformance {
-                    Text("Search time: \(String(format: "%.3f", performance.searchTime))s")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
+                    HStack(spacing: 4) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.arkadGold)
+                        
+                        Text("\(String(format: "%.1f", performance.searchTime))s")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             
             Spacer()
             
-            // Results Type Filter Indicator
-            if selectedSearchType != .all {
+            // Sort/Filter button
+            Button(action: { showAdvancedFilters = true }) {
                 HStack(spacing: 6) {
-                    Image(systemName: getFilterIcon(for: selectedSearchType))
-                        .font(.system(size: 12))
-                        .foregroundColor(.arkadGold)
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.system(size: 14))
                     
-                    Text(selectedSearchType.displayName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.arkadGold)
+                    Text("Filter")
+                        .font(.system(size: 14, weight: .semibold))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.arkadGold.opacity(0.1))
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                .foregroundColor(.arkadGold)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.arkadGold.opacity(0.1))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.arkadGold.opacity(0.3), lineWidth: 1)
+                        )
                 )
             }
-        }
-        .padding(.horizontal, 4)
-        .padding(.bottom, 8)
-    }
-    
-    private func getFilterIcon(for type: SearchType) -> String {
-        switch type {
-        case .all: return "magnifyingglass"
-        case .users: return "person.2"
-        case .posts: return "text.bubble"
-        case .stocks: return "chart.line.uptrend.xyaxis"
-        case .groups: return "person.3"
         }
     }
     
@@ -647,7 +669,7 @@ struct SearchView: View {
         
         isSearching = true
         searchTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: 300_000_000) // Reduced debounce
             if !Task.isCancelled && !newValue.isEmpty {
                 await performSearchAsync()
             }
@@ -672,7 +694,7 @@ struct SearchView: View {
     }
     
     private func clearSearch() {
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(.spring()) {
             searchTask?.cancel()
             searchText = ""
             isSearching = false
@@ -680,8 +702,129 @@ struct SearchView: View {
             isSearchFocused = false
         }
     }
+    
+    // MARK: - Sheet Views
+    
+    private var advancedFiltersSheet: some View {
+        NavigationView {
+            VStack {
+                Text("Advanced Filters")
+                    .font(.largeTitle.bold())
+                    .padding()
+                
+                Text("Coming Soon")
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+            }
+            .navigationBarItems(trailing: Button("Done") { showAdvancedFilters = false })
+        }
+    }
+    
+    private var searchSettingsSheet: some View {
+        NavigationView {
+            VStack {
+                Text("Search Settings")
+                    .font(.largeTitle.bold())
+                    .padding()
+                
+                Text("Coming Soon")
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+            }
+            .navigationBarItems(trailing: Button("Done") { showSearchSettings = false })
+        }
+    }
+    
+    private var searchAnalyticsSheet: some View {
+        NavigationView {
+            VStack {
+                Text("Search Analytics")
+                    .font(.largeTitle.bold())
+                    .padding()
+                
+                Text("Coming Soon")
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+            }
+            .navigationBarItems(trailing: Button("Done") { showSearchAnalytics = false })
+        }
+    }
 }
 
+// MARK: - Supporting Views
+
+struct EnhancedSearchResultView: View {
+    let result: SearchResult
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Avatar/Icon with gradient border
+            ZStack {
+                Circle()
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.orange],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 2
+                    )
+                    .frame(width: 52, height: 52)
+                
+                Circle()
+                    .fill(Color(.systemGray5))
+                    .frame(width: 48, height: 48)
+                
+                Image(systemName: getResultIcon(for: result.type))
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(.arkadGold)
+            }
+            
+            // Content
+            
+            Spacer()
+            
+            // Action indicator
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.secondary.opacity(0.5))
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+                )
+        )
+    }
+    
+    private func getResultIcon(for type: SearchResultType) -> String {
+        switch type {
+        case .user: return "person.fill"
+        case .post: return "text.bubble.fill"
+        case .trade: return "chart.line.uptrend.xyaxis"
+        case .group: return "person.3.fill"
+        }
+    }
+}
+
+// MARK: - Custom Button Style
+
+struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.spring(response: 0.2), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Preview
 
 #Preview {
     SearchView()

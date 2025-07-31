@@ -406,6 +406,9 @@ class FirebaseAuthService: ObservableObject {
     func getUserCommunities(userId: String) async throws -> [Community] {
         return try await FirebaseServices.shared.getUserCommunities(userId: userId)
     }
+    func getUserCommunitiesIds(userId: String) async throws -> [Community] {
+        return try await FirebaseServices.shared.getUserCommunities(userId: userId)
+    }
     
     func joinCommunity(communityId: String, userId: String) async throws {
         try await FirebaseServices.shared.joinCommunity(communityId: communityId, userId: userId)
@@ -466,21 +469,21 @@ class FirebaseAuthService: ObservableObject {
     
     // MARK: - Search Wrapper Methods
     
-    func searchUsers(query: String) async throws -> [User] {
-        return try await FirebaseServices.shared.searchUsers(query: query)
+    
+    func searchUsers(query: String, limit: Int = 20) async throws -> [User] {
+        return try await FirebaseServices.shared.searchUsers(query: query, limit: limit)
     }
-    
-    
-    func searchPosts(query: String) async throws -> [Post] {
-        return try await FirebaseServices.shared.searchPosts(query: query)
+
+    func searchPosts(query: String, limit: Int = 20) async throws -> [Post] {
+        return try await FirebaseServices.shared.searchPosts(query: query, limit: limit)
     }
-    
-    func searchTrades(query: String) async throws -> [Trade] {
-        return try await FirebaseServices.shared.searchTrades(query: query)
+
+    func searchTrades(query: String, limit: Int = 20) async throws -> [Trade] {
+        return try await FirebaseServices.shared.searchTrades(query: query, limit: limit)
     }
-    
-    func searchCommunities(query: String) async throws -> [Community] {
-        return try await FirebaseServices.shared.searchCommunities(query: query)
+
+    func searchCommunities(query: String, limit: Int = 20) async throws -> [Community] {
+        return try await FirebaseServices.shared.searchCommunities(query: query, limit: limit)
     }
     
     // MARK: - Messaging Wrapper Methods

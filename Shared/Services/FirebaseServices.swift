@@ -61,11 +61,11 @@ class FirebaseServices {
         return user == nil
     }
     
-    func searchUsers(query: String) async throws -> [User] {
+    func searchUsers(query: String, limit: Int = 20) async throws -> [User] {
         let snapshot = try await db.collection("users")
             .whereField("username", isGreaterThanOrEqualTo: query.lowercased())
             .whereField("username", isLessThan: query.lowercased() + "\u{f8ff}")
-            .limit(to: 20)
+            .limit(to: limit)
             .getDocuments()
         
         return snapshot.documents.compactMap { document in
@@ -657,21 +657,24 @@ class FirebaseServices {
         try await addTrade(copiedTrade)
     }
     
-    func searchTrades(query: String) async throws -> [Trade] {
+    
+    func searchTrades(query: String, limit: Int = 20) async throws -> [Trade] {
+        guard !query.isEmpty else { return [] }
+        
+        let searchQuery = query.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Search by ticker symbol
         let snapshot = try await db.collection("trades")
-            .order(by: "entryDate", descending: true)
-            .limit(to: 100)
+            .whereField("ticker", isGreaterThanOrEqualTo: searchQuery)
+            .whereField("ticker", isLessThan: searchQuery + "\u{f8ff}")
+            .limit(to: limit)
             .getDocuments()
         
-        let trades = snapshot.documents.compactMap { document in
+        return snapshot.documents.compactMap { document in
             try? Trade.fromFirestore(data: document.data(), id: document.documentID)
         }
-        
-        return trades.filter { trade in
-            trade.ticker.lowercased().contains(query.lowercased()) ||
-            (trade.notes ?? "").lowercased().contains(query.lowercased())
-        }
     }
+
     
     // MARK: - Post Management
     
@@ -728,20 +731,30 @@ class FirebaseServices {
         }
     }
     
-    func searchPosts(query: String) async throws -> [Post] {
-        let snapshot = try await db.collection("posts")
+    func searchPosts(query: String, limit: Int = 20) async throws -> [Post] {
+        let firebaseServices = FirebaseServices.shared
+        let searchQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !searchQuery.isEmpty else { return [] }
+        
+        // Note: Firestore doesn't support full-text search natively
+        // This is a basic implementation - for production, consider using Algolia or similar
+        
+        let snapshot = try await firebaseServices.db.collection("posts")
             .order(by: "createdAt", descending: true)
-            .limit(to: 100)
+            .limit(to: 100) // Get more posts to filter client-side
             .getDocuments()
         
         let posts = snapshot.documents.compactMap { document in
             try? Post.fromFirestore(data: document.data(), id: document.documentID)
         }
         
-        return posts.filter { post in
-            post.content.lowercased().contains(query.lowercased()) ||
-            post.authorUsername.lowercased().contains(query.lowercased())
+        // Filter posts that contain the search query
+        let filteredPosts = posts.filter { post in
+            post.content.lowercased().contains(searchQuery) ||
+            post.authorUsername.lowercased().contains(searchQuery)
         }
+        
+        return Array(filteredPosts.prefix(limit))
     }
     
     // MARK: - Like/Unlike Methods
@@ -1280,6 +1293,21 @@ class FirebaseServices {
             try? Community.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
+    private func getUserCommunityIds(userId: String) async throws -> [String] {
+        let firebaseServices = FirebaseServices.shared
+        let userDoc = try await firebaseServices.db.collection("users").document(userId).getDocument()
+        
+        guard userDoc.exists else {
+            print("⚠️ User document doesn't exist for ID: \(userId)")
+            return []
+        }
+        
+        let userData = userDoc.data() ?? [:]
+        let communityIds = userData["communityIds"] as? [String] ?? []
+        print("📋 User \(userId) is in \(communityIds.count) communities")
+        return communityIds
+    }
+
     
     func getUserCommunities(userId: String) async throws -> [Community] {
         let user = try await getUserById(userId: userId)
@@ -1294,20 +1322,117 @@ class FirebaseServices {
         }
     }
     
-    func searchCommunities(query: String) async throws -> [Community] {
-        let snapshot = try await db.collection("communities")
-            .order(by: "memberCount", descending: true)
-            .limit(to: 100)
+    
+    // Replace your searchCommunities method in FirebaseServices.swift with this:
+
+    func searchCommunities(query: String, limit: Int = 20) async throws -> [Community] {
+        guard !query.isEmpty else { return [] }
+        
+        let searchQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        print("🔍 Searching communities for: '\(searchQuery)'")
+        
+        do {
+            // FIRST: Let's get ALL communities to see what's actually in the database
+            print("🔍 DEBUG: Getting ALL communities to see what exists...")
+            let allCommunitiesSnapshot = try await db.collection("communities")
+                .limit(to: 100)
+                .getDocuments()
+            
+            print("📊 DEBUG: Found \(allCommunitiesSnapshot.documents.count) total communities:")
+            for doc in allCommunitiesSnapshot.documents {
+                if let name = doc.data()["name"] as? String {
+                    print("   - Community: '\(name)' (contains '\(searchQuery)': \(name.lowercased().contains(searchQuery)))")
+                }
+            }
+            
+            // SECOND: Try the original search method
+            print("🔍 DEBUG: Trying original range search...")
+            let nameQuery = try await db.collection("communities")
+                .whereField("name", isGreaterThanOrEqualTo: searchQuery)
+                .whereField("name", isLessThan: searchQuery + "\u{f8ff}")
+                .limit(to: limit)
+                .getDocuments()
+            
+            print("📊 DEBUG: Range search found \(nameQuery.documents.count) communities")
+            
+            // THIRD: If range search fails, fall back to client-side filtering
+            let communities: [Community]
+            if nameQuery.documents.isEmpty && !allCommunitiesSnapshot.documents.isEmpty {
+                print("🔄 DEBUG: Range search returned nothing, using client-side filtering...")
+                
+                communities = allCommunitiesSnapshot.documents.compactMap { document -> Community? in
+                    guard let name = document.data()["name"] as? String else { return nil }
+                    
+                    // Check if name contains the search query (case-insensitive)
+                    if name.lowercased().contains(searchQuery) {
+                        do {
+                            let community = try Community.fromFirestore(data: document.data(), id: document.documentID)
+                            print("✅ DEBUG: Client-side match found: \(community.name)")
+                            return community
+                        } catch {
+                            print("❌ DEBUG: Failed to parse community document \(document.documentID): \(error)")
+                            return nil
+                        }
+                    }
+                    return nil
+                }
+            } else {
+                // Use the original results
+                communities = nameQuery.documents.compactMap { document -> Community? in
+                    do {
+                        let community = try Community.fromFirestore(data: document.data(), id: document.documentID)
+                        print("✅ DEBUG: Range search match: \(community.name)")
+                        return community
+                    } catch {
+                        print("❌ DEBUG: Failed to parse community document \(document.documentID): \(error)")
+                        return nil
+                    }
+                }
+            }
+            
+            // Filter for privacy (only if user is authenticated)
+            let filteredCommunities: [Community]
+            if let currentUserId = Auth.auth().currentUser?.uid {
+                print("🔍 DEBUG: Filtering for user \(currentUserId)")
+                do {
+                    let userCommunities = try await getUserCommunities(userId: currentUserId)
+                    let userCommunityIds = Set(userCommunities.map { $0.id })
+                    print("🔍 DEBUG: User is in \(userCommunityIds.count) communities: \(userCommunityIds)")
+                    
+                    filteredCommunities = communities.filter { community in
+                        let isPublicOrMember = !community.isPrivate || userCommunityIds.contains(community.id)
+                        print("🔍 DEBUG: Community '\(community.name)' - isPrivate: \(community.isPrivate), userIsMember: \(userCommunityIds.contains(community.id)), willShow: \(isPublicOrMember)")
+                        return isPublicOrMember
+                    }
+                } catch {
+                    print("⚠️ DEBUG: Couldn't get user communities, showing public only: \(error)")
+                    filteredCommunities = communities.filter { !$0.isPrivate }
+                }
+            } else {
+                print("⚠️ DEBUG: No authenticated user, showing public communities only")
+                filteredCommunities = communities.filter { !$0.isPrivate }
+            }
+            
+            print("🎯 DEBUG: Returning \(filteredCommunities.count) communities after privacy filtering")
+            for community in filteredCommunities {
+                print("   - Final result: '\(community.name)' (private: \(community.isPrivate))")
+            }
+            
+            return filteredCommunities
+            
+        } catch {
+            print("❌ Community search error: \(error)")
+            throw SearchError.searchFailed("Failed to search communities: \(error.localizedDescription)")
+        }
+    }
+    
+    private func getUserCommunityIds(userId: String) async throws -> Set<String> {
+        let snapshot = try await db.collection("communityMembers")
+            .whereField("userId", isEqualTo: userId)
             .getDocuments()
         
-        let communities = snapshot.documents.compactMap { document in
-            try? Community.fromFirestore(data: document.data(), id: document.documentID)
-        }
-        
-        return communities.filter { community in
-            community.name.lowercased().contains(query.lowercased()) ||
-            community.description.lowercased().contains(query.lowercased())
-        }
+        let communityIds = snapshot.documents.map { $0.data()["communityId"] as? String ?? "" }
+        return Set(communityIds.filter { !$0.isEmpty })
     }
     
     func joinCommunity(communityId: String, userId: String) async throws {
@@ -2021,6 +2146,23 @@ enum FirestoreError: LocalizedError {
             return "You don't have permission to perform this action"
         case .networkError:
             return "Network error. Please check your connection"
+        }
+    }
+}
+
+enum SearchError: LocalizedError {
+    case searchFailed(String)
+    case noResults
+    case invalidQuery
+    
+    var errorDescription: String? {
+        switch self {
+        case .searchFailed(let message):
+            return message
+        case .noResults:
+            return "No results found"
+        case .invalidQuery:
+            return "Invalid search query"
         }
     }
 }
