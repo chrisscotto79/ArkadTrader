@@ -1,3 +1,11 @@
+//
+//  ProfileImagePicker.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 8/2/25.
+//
+
+
 // File: Core/Profile/Views/ProfileImagePicker.swift
 // Modern Profile Image Picker with Camera and Photo Library Support
 

@@ -1,5 +1,5 @@
 // File: Shared/Models/User.swift
-// Updated User Model with Starting Capital Support
+// Updated User Model with Profile Image Support
 
 import Foundation
 import FirebaseFirestore
@@ -10,13 +10,14 @@ struct User: Identifiable, Codable {
     var username: String
     var fullName: String
     var bio: String?
+    var profileImageUrl: String?  // NEW: Profile image URL field
     var followersCount: Int
     var followingCount: Int
     var isVerified: Bool
     var subscriptionTier: SubscriptionTier
     var totalProfitLoss: Double
     var winRate: Double
-    var startingCapital: Double  // NEW: Starting capital field
+    var startingCapital: Double
     var createdAt: Date
     var updatedAt: Date
     var communityIds: [String]
@@ -28,13 +29,14 @@ struct User: Identifiable, Codable {
         self.username = username.lowercased()
         self.fullName = fullName
         self.bio = nil
+        self.profileImageUrl = nil  // NEW: Default to nil
         self.followersCount = 0
         self.followingCount = 0
         self.isVerified = false
         self.subscriptionTier = .basic
         self.totalProfitLoss = 0.0
         self.winRate = 0.0
-        self.startingCapital = 0.0  // NEW: Default to 0
+        self.startingCapital = 0.0
         self.createdAt = Date()
         self.updatedAt = Date()
         self.communityIds = []
@@ -47,13 +49,14 @@ struct User: Identifiable, Codable {
             "username": username,
             "fullName": fullName,
             "bio": bio as Any,
+            "profileImageUrl": profileImageUrl as Any,  // NEW: Include in Firestore
             "followersCount": followersCount,
             "followingCount": followingCount,
             "isVerified": isVerified,
             "subscriptionTier": subscriptionTier.rawValue,
             "totalProfitLoss": totalProfitLoss,
             "winRate": winRate,
-            "startingCapital": startingCapital,  // NEW: Include in Firestore
+            "startingCapital": startingCapital,
             "createdAt": Timestamp(date: createdAt),
             "updatedAt": Timestamp(date: updatedAt),
             "communityIds": communityIds
@@ -70,12 +73,13 @@ struct User: Identifiable, Codable {
         var user = User(id: id, email: email, username: username, fullName: fullName)
         
         user.bio = data["bio"] as? String
+        user.profileImageUrl = data["profileImageUrl"] as? String  // NEW: Load from Firestore
         user.followersCount = data["followersCount"] as? Int ?? 0
         user.followingCount = data["followingCount"] as? Int ?? 0
         user.isVerified = data["isVerified"] as? Bool ?? false
         user.totalProfitLoss = data["totalProfitLoss"] as? Double ?? 0.0
         user.winRate = data["winRate"] as? Double ?? 0.0
-        user.startingCapital = data["startingCapital"] as? Double ?? 0.0  // NEW: Load from Firestore
+        user.startingCapital = data["startingCapital"] as? Double ?? 0.0
         user.communityIds = data["communityIds"] as? [String] ?? []
         
         if let tierString = data["subscriptionTier"] as? String {

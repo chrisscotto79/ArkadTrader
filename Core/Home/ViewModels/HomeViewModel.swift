@@ -212,19 +212,47 @@ class HomeViewModel: ObservableObject {
         guard let userId = authService.currentUser?.id,
               let username = authService.currentUser?.username else { return }
         
-        // ✅ Skip image upload, but keep all other trading features
+        print("🔄 Creating post with \(images.count) images")
+        
         let postType = determinePostType(from: content)
         
+        // ✅ FIXED: Upload images if they exist
+        var imageUrls: [String] = []
+        
+        if !images.isEmpty {
+            print("📸 Uploading \(images.count) images...")
+            
+            // Create a unique post ID for consistent image naming
+            let postId = UUID().uuidString
+            
+            // Upload each image
+            for (index, image) in images.enumerated() {
+                do {
+                    if let imageUrl = try await uploadImage(image, postId: postId, imageIndex: index) {
+                        imageUrls.append(imageUrl)
+                        print("✅ Uploaded image \(index + 1): \(imageUrl)")
+                    } else {
+                        print("⚠️ Failed to upload image \(index + 1)")
+                    }
+                } catch {
+                    print("❌ Error uploading image \(index + 1): \(error)")
+                }
+            }
+            
+            print("📸 Successfully uploaded \(imageUrls.count)/\(images.count) images")
+        }
+        
+        // Create post with uploaded image URLs
         var newPost = Post(
             content: content,
             authorId: userId,
             authorUsername: username,
             postType: postType,
             tickers: tickers,
-            imageUrls: [] // ✅ Empty for now - no images
+            imageUrls: imageUrls // ✅ FIXED: Use actual uploaded URLs
         )
         
-        // ✅ Add trading data if it's a trade result
+        // Add trading data if it's a trade result
         if postType == .tradeResult {
             newPost.tradingData = extractTradingDataFromContent(content)
         }
@@ -233,9 +261,11 @@ class HomeViewModel: ObservableObject {
             try await authService.createPost(newPost)
             posts.insert(newPost, at: 0)
             await filterPostsByCategory()
+            print("✅ Post created successfully with \(imageUrls.count) images")
         } catch {
             errorMessage = "Failed to create post: \(error.localizedDescription)"
             showError = true
+            print("❌ Failed to create post: \(error)")
         }
     }
 
@@ -270,7 +300,7 @@ class HomeViewModel: ObservableObject {
             return downloadURL.absoluteString
         } catch {
             print("❌ Image upload failed: \(error)")
-            return nil // Return nil instead of throwing
+            throw error // ✅ FIXED: Throw error instead of returning nil
         }
     }
 

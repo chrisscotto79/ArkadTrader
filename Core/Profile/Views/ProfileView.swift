@@ -1,5 +1,5 @@
 // File: Core/Profile/Views/ProfileView.swift
-// Complete Profile View with user posts, trades, portfolio, and groups - FIXED
+// Redesigned Profile View with Modern Layout - Inspired by Financial App UI
 
 import SwiftUI
 
@@ -17,37 +17,27 @@ struct ProfileView: View {
     @State private var showFollowingList = false
     
     var body: some View {
-        let user: User? = authService.currentUser
         ScrollView {
             VStack(spacing: 0) {
+                // Modern Gradient Header
+                modernHeaderSection
                 
-                // Profile Header with full-screen banner
-                ProfileHeaderSection(
-                    user: authService.currentUser,
-                    portfolioSummary: portfolioViewModel.getPortfolioSummaryForProfile(),
-                    showEditProfile: $showEditProfile,
-                    showSettings: $showSettings
-                )
-                
-                // Portfolio Performance Banner
-                PortfolioPerformanceBanner(
-                    portfolioSummary: portfolioViewModel.getPortfolioSummaryForProfile(),
-                    showPortfolioDetails: $showPortfolioDetails
-                )
-                
-                // Tab Selection
-                ProfileTabSelector(selectedTab: $selectedTab)
-                
-                // Tab Content
-                ProfileTabContent(
-                    selectedTab: selectedTab,
-                    portfolioViewModel: portfolioViewModel,
-                    postsViewModel: postsViewModel,
-                    groupsViewModel: groupsViewModel
-                )
+                // Main Content Area
+                VStack(spacing: 20) {
+                    // Quick Stats Card
+                    quickStatsCard
+                    
+                    // Portfolio Performance Card
+                    portfolioPerformanceCard
+                    
+                    // Tab Content
+                    tabContentSection
+                }
+                .padding(.horizontal)
+                .padding(.top, -30) // Overlap with header
             }
         }
-        .ignoresSafeArea(edges: .top) // Allow content to extend to very top
+        .ignoresSafeArea(.all, edges: .top) // Extend to full top
         .refreshable {
             await refreshProfile()
         }
@@ -63,12 +53,355 @@ struct ProfileView: View {
             PortfolioDetailsSheet()
                 .environmentObject(portfolioViewModel)
         }
-        
         .onAppear {
             portfolioViewModel.loadPortfolioData()
             postsViewModel.loadUserPosts(userId: authService.currentUser?.id ?? "")
             groupsViewModel.loadUserGroups(userId: authService.currentUser?.id ?? "")
         }
+    }
+    
+    // MARK: - Modern Header Section
+    private var modernHeaderSection: some View {
+        GeometryReader { geometry in
+            ZStack {
+                // Gradient Background
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color.arkadGold.opacity(0.9),
+                        Color.arkadGold.opacity(0.7),
+                        Color.arkadGold.opacity(0.5)
+                    ]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                
+                // Decorative elements
+                Circle()
+                    .fill(Color.white.opacity(0.1))
+                    .frame(width: 100, height: 100)
+                    .offset(x: -150, y: -80)
+                
+                Circle()
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 60, height: 60)
+                    .offset(x: 140, y: -100)
+                
+                VStack(spacing: 0) {
+                    // Top Bar with Safe Area
+                    HStack {
+                        Button(action: {}) {
+                            Image(systemName: "chevron.left")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                        }
+                        .opacity(0) // Hidden for main profile
+                        
+                        Spacer()
+                        
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gearshape.fill")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, geometry.safeAreaInsets.top + 50) // Proper safe area + extra padding
+                    
+                    Spacer()
+                    
+                    // Profile Info
+                    VStack(spacing: 20) {
+                        // Profile Image - Fixed to match EditProfileView pattern
+                        Group {
+                            if let imageUrl = authService.currentUser?.profileImageUrl,
+                               !imageUrl.isEmpty {
+                                AsyncImage(url: URL(string: imageUrl)) { image in
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Circle()
+                                        .fill(Color.arkadGold.opacity(0.2))
+                                        .overlay(
+                                            ProgressView()
+                                                .tint(.arkadGold)
+                                        )
+                                }
+                            } else {
+                                // Fallback to initials
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [
+                                                Color.arkadGold.opacity(0.8),
+                                                Color.arkadGold.opacity(0.6)
+                                            ]),
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .overlay(
+                                        Text(String(authService.currentUser?.username.prefix(2) ?? "LA").uppercased())
+                                            .font(.largeTitle)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.white)
+                                    )
+                            }
+                        }
+                        .frame(width: 110, height: 110)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: 5)
+                        )
+                        .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
+                        
+                        // User Info
+                        VStack(spacing: 8) {
+                            Text(authService.currentUser?.fullName ?? "User Name")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                            
+                            HStack(spacing: 16) {
+                                Text("@\(authService.currentUser?.username ?? "username")")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.9))
+                                
+                                HStack(spacing: 6) {
+                                    Image(systemName: "calendar")
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.8))
+                                    
+                                    Text("Joined \(formatJoinDate())")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 30)
+                }
+            }
+        }
+        .frame(height: 320) // Increased height to account for full top extension
+        .clipped()
+    }
+    
+    // MARK: - Quick Stats Card
+    private var quickStatsCard: some View {
+        VStack(spacing: 20) {
+            // Header with Edit Profile Button
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Trading Profile")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.textPrimary)
+                    
+                    Text("Your performance overview")
+                        .font(.caption)
+                        .foregroundColor(.textSecondary)
+                }
+                
+                Spacer()
+                
+                Button(action: { showEditProfile = true }) {
+                    Text("Edit Profile")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.arkadGold)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.arkadGold.opacity(0.1))
+                        .cornerRadius(20)
+                }
+            }
+            
+            // Stats Grid
+            HStack(spacing: 16) {
+                statItem(
+                    title: "Followers",
+                    value: "0",
+                    action: { showFollowersList = true }
+                )
+                
+                statItem(
+                    title: "Following",
+                    value: "2",
+                    action: { showFollowingList = true }
+                )
+                
+                statItem(
+                    title: "Trades",
+                    value: "\(portfolioViewModel.getPortfolioSummaryForProfile().totalTrades)",
+                    action: nil
+                )
+                
+                statItem(
+                    title: "Win Rate",
+                    value: String(format: "%.1f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
+                    action: nil
+                )
+            }
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 5)
+        )
+    }
+    
+    // MARK: - Portfolio Performance Card
+    private var portfolioPerformanceCard: some View {
+        Button(action: { showPortfolioDetails = true }) {
+            VStack(spacing: 20) {
+                // Header
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Performance Tracker")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.textPrimary)
+                        
+                        Text("Tap to view detailed analytics")
+                            .font(.caption)
+                            .foregroundColor(.arkadGold)
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "arrow.right")
+                        .font(.subheadline)
+                        .foregroundColor(.arkadGold)
+                }
+                
+                // Main Metric
+                VStack(spacing: 8) {
+                    Text("Total P&L")
+                        .font(.subheadline)
+                        .foregroundColor(.textSecondary)
+                    
+                    Text(portfolioViewModel.getPortfolioSummaryForProfile().totalProfitLoss.asCurrencyWithSign)
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .foregroundColor(portfolioViewModel.getPortfolioSummaryForProfile().totalProfitLoss >= 0 ? .marketGreen : .marketRed)
+                    
+                    Text("+12% better than last month")
+                        .font(.caption)
+                        .foregroundColor(.marketGreen)
+                }
+                
+                // Performance Metrics
+                HStack(spacing: 20) {
+                    performanceMetric(
+                        title: "Today",
+                        value: portfolioViewModel.getPortfolioSummaryForProfile().dayProfitLoss.asCurrencyWithSign,
+                        color: portfolioViewModel.getPortfolioSummaryForProfile().dayProfitLoss >= 0 ? .marketGreen : .marketRed,
+                        icon: "calendar"
+                    )
+                    
+                    performanceMetric(
+                        title: "Win Rate",
+                        value: String(format: "%.1f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
+                        color: portfolioViewModel.getPortfolioSummaryForProfile().winRate >= 50 ? .marketGreen : .marketRed,
+                        icon: "target"
+                    )
+                    
+                    performanceMetric(
+                        title: "Trades",
+                        value: "\(portfolioViewModel.getPortfolioSummaryForProfile().totalTrades)",
+                        color: .arkadGold,
+                        icon: "chart.line.uptrend.xyaxis"
+                    )
+                }
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.arkadGold.opacity(0.05),
+                                Color.white
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
+                    )
+                    .shadow(color: Color.arkadGold.opacity(0.1), radius: 10, x: 0, y: 5)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    // MARK: - Tab Content Section
+    private var tabContentSection: some View {
+        VStack(spacing: 16) {
+            // Modern Tab Selector
+            modernTabSelector
+            
+            // Tab Content
+            ProfileTabContent(
+                selectedTab: selectedTab,
+                portfolioViewModel: portfolioViewModel,
+                postsViewModel: postsViewModel,
+                groupsViewModel: groupsViewModel
+            )
+        }
+    }
+    
+    // MARK: - Modern Tab Selector
+    private var modernTabSelector: some View {
+        ProfileTabSelector(selectedTab: $selectedTab)
+    }
+    
+    // MARK: - Helper Views
+    private func statItem(title: String, value: String, action: (() -> Void)?) -> some View {
+        Button(action: action ?? {}) {
+            VStack(spacing: 8) {
+                Text(value)
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundColor(.textPrimary)
+                
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(action == nil)
+    }
+    
+    private func performanceMetric(title: String, value: String, color: Color, icon: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundColor(color)
+            
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(color)
+            
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(color.opacity(0.1))
+        )
     }
     
     @MainActor
@@ -81,393 +414,14 @@ struct ProfileView: View {
         await postsViewModel.refreshPosts()
         await groupsViewModel.refreshGroups()
     }
-}
-
-
-// MARK: - Profile Header Section
-struct ProfileHeaderSection: View {
-    let user: User?
-    let portfolioSummary: PortfolioSummary
-    @Binding var showEditProfile: Bool
-    @Binding var showSettings: Bool
     
-    // Add these environment objects and state variables
-    @EnvironmentObject var authService: FirebaseAuthService
-    @State private var showFollowersList = false
-    @State private var showFollowingList = false
-    
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                // Clean background with subtle tech patterns only
-                ZStack {
-                    // Very subtle base background
-                    Color.white
-                    
-                    // Geometric pattern overlay (keeping the tech design)
-                    ZStack {
-                        // Diagonal lines pattern
-                        Path { path in
-                            let spacing: CGFloat = 60
-                            
-                            for i in stride(from: -geometry.size.width, to: geometry.size.width * 2, by: spacing) {
-                                path.move(to: CGPoint(x: i, y: 0))
-                                path.addLine(to: CGPoint(x: i + geometry.size.height, y: geometry.size.height))
-                            }
-                        }
-                        .stroke(Color.arkadGold.opacity(0.08), lineWidth: 0.6)
-                        
-                        // Tech grid overlay
-                        Path { path in
-                            let gridSize: CGFloat = 40
-                            
-                            // Horizontal lines
-                            for y in stride(from: 0, through: geometry.size.height, by: gridSize) {
-                                path.move(to: CGPoint(x: 0, y: y))
-                                path.addLine(to: CGPoint(x: geometry.size.width, y: y))
-                            }
-                            
-                            // Vertical lines
-                            for x in stride(from: 0, through: geometry.size.width, by: gridSize) {
-                                path.move(to: CGPoint(x: x, y: 0))
-                                path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                            }
-                        }
-                        .stroke(Color.arkadGold.opacity(0.04), lineWidth: 0.3)
-                        
-                        // Enhanced floating tech elements
-                        enhancedTechElements(geometry: geometry)
-                    }
-                    
-                    // Very subtle radial highlight around avatar only
-                    RadialGradient(
-                        gradient: Gradient(colors: [
-                            Color.arkadGold.opacity(0.06),
-                            Color.arkadGold.opacity(0.03),
-                            Color.clear
-                        ]),
-                        center: .center,
-                        startRadius: 80,
-                        endRadius: 150
-                    )
-                    .offset(y: 100)
-                }
-                
-                // Profile content with proper spacing for safe area
-                VStack(spacing: 20) {
-                    // Top spacing for safe area
-                    Spacer()
-                        .frame(height: 50)
-                    
-                    // Top navigation with arkadgold accents
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(user?.fullName ?? "Unknown User")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.textPrimary)
-                            
-                            Text("@\(user?.username ?? "username")")
-                                .font(.subheadline)
-                                .foregroundColor(.arkadGold)
-                                .fontWeight(.medium)
-                        }
-                        
-                        Spacer()
-                        
-                        Button(action: { showSettings = true }) {
-                            Image(systemName: "gearshape.fill")
-                                .font(.title2)
-                                .foregroundColor(.arkadGold)
-                                .padding(10)
-                                .background(
-                                    Circle()
-                                        .fill(Color.white)
-                                        .shadow(color: Color.arkadGold.opacity(0.3), radius: 6, x: 0, y: 3)
-                                )
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    
-                    // Profile Avatar with enhanced styling
-                    ZStack {
-                        // Outer tech ring effect (reduced opacity)
-                        Circle()
-                            .fill(
-                                RadialGradient(
-                                    gradient: Gradient(colors: [
-                                        Color.arkadGold.opacity(0.15),
-                                        Color.arkadGold.opacity(0.08),
-                                        Color.clear
-                                    ]),
-                                    center: .center,
-                                    startRadius: 60,
-                                    endRadius: 90
-                                )
-                            )
-                            .frame(width: 150, height: 150)
-                        
-                        // Tech border rings
-                        ForEach(0..<4, id: \.self) { index in
-                            Circle()
-                                .stroke(
-                                    Color.arkadGold.opacity(0.3 - Double(index) * 0.05),
-                                    lineWidth: 2.0 - CGFloat(index) * 0.3
-                                )
-                                .frame(width: 115 + CGFloat(index) * 10, height: 115 + CGFloat(index) * 10)
-                        }
-                        
-                        // Main avatar circle
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [
-                                        Color.arkadGold,
-                                        Color.arkadGoldLight
-                                    ]),
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 110, height: 110)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 5)
-                            )
-                            .overlay(
-                                Text(getInitials(user: user))
-                                    .font(.system(size: 40, weight: .bold))
-                                    .foregroundColor(.white)
-                            )
-                            .shadow(color: Color.arkadGold.opacity(0.6), radius: 20, x: 0, y: 10)
-                    }
-                    
-                    // User stats with enhanced styling - CLICKABLE
-                    HStack {
-                        Spacer()
-                        
-                        Button(action: {
-                            showFollowersList = true
-                        }) {
-                            statColumn(
-                                number: "\(user?.followersCount ?? 0)",
-                                label: "Followers"
-                            )
-                        }
-                        .foregroundColor(.primary)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            showFollowingList = true
-                        }) {
-                            statColumn(
-                                number: "\(user?.followingCount ?? 0)",
-                                label: "Following"
-                            )
-                        }
-                        .foregroundColor(.primary)
-                        
-                        Spacer()
-                        
-                        statColumn(
-                            number: "\(portfolioSummary.totalTrades)",
-                            label: "Trades"
-                        )
-                        
-                        Spacer()
-                        
-                        statColumn(
-                            number: String(format: "%.1f%%", portfolioSummary.winRate),
-                            label: "Win Rate"
-                        )
-                        
-                        Spacer()
-                    }
-                    .padding(.horizontal, 20)
-                    
-                    // Clean bio section (no background/border)
-                    if let bio = user?.bio, !bio.isEmpty {
-                        Text(bio)
-                            .font(.body)
-                            .multilineTextAlignment(.center)
-                            .foregroundColor(.textPrimary)
-                            .padding(.horizontal, 35)
-                    }
-                    
-                    // FOLLOW BUTTON - Show only if viewing another user's profile
-                    if let currentUser = authService.currentUser,
-                       let profileUser = user,
-                       currentUser.id != profileUser.id {
-                        
-                        SimpleFollowButton(targetUserId: profileUser.id, targetUsername: profileUser.username)
-                            .environmentObject(authService)
-                            .padding(.horizontal, 20)
-                    }
-                    
-                    // Action Buttons with enhanced styling
-                    HStack(spacing: 15) {
-                        if isCurrentUserProfile {
-                            Button(action: { showEditProfile = true }) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "pencil")
-                                        .font(.subheadline)
-                                    Text("Edit Profile")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [Color.arkadGold, Color.arkadGoldLight]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .cornerRadius(14)
-                                .shadow(color: Color.arkadGold.opacity(0.5), radius: 10, x: 0, y: 5)
-                            }
-                        }
-                        
-                        Button(action: {
-                            shareProfile()
-                        }) {
-                            HStack(spacing: 10) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.subheadline)
-                                Text("Share Profile")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.arkadGold)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .fill(Color.white)
-                                    .shadow(color: Color.arkadGold.opacity(0.3), radius: 6, x: 0, y: 3)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .stroke(Color.arkadGold, lineWidth: 2)
-                            )
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-                }
-            }
-        }
-        .frame(height: 500) // Fixed height for the header section
-        .clipped()
-        .ignoresSafeArea(edges: .top) // Extend to the very top
-        .sheet(isPresented: $showFollowersList) {
-            SimpleFollowListView(userId: user?.id ?? "", listType: .followers)
-        }
-        .sheet(isPresented: $showFollowingList) {
-            SimpleFollowListView(userId: user?.id ?? "", listType: .following)
-        }
-    }
-    
-    // Helper computed property
-    private var isCurrentUserProfile: Bool {
-        guard let currentUser = authService.currentUser,
-              let profileUser = user else { return true }
-        return currentUser.id == profileUser.id
-    }
-    
-    // Enhanced tech elements for full-screen design
-    private func enhancedTechElements(geometry: GeometryProxy) -> some View {
-        ZStack {
-            // Top tech elements
-            Circle()
-                .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1.5)
-                .frame(width: 25, height: 25)
-                .position(x: geometry.size.width * 0.15, y: geometry.size.height * 0.15)
-            
-            Circle()
-                .stroke(Color.arkadGold.opacity(0.15), lineWidth: 1)
-                .frame(width: 18, height: 18)
-                .position(x: geometry.size.width * 0.85, y: geometry.size.height * 0.12)
-            
-            Circle()
-                .stroke(Color.arkadGold.opacity(0.18), lineWidth: 1.2)
-                .frame(width: 20, height: 20)
-                .position(x: geometry.size.width * 0.75, y: geometry.size.height * 0.25)
-            
-            // Middle area elements
-            Circle()
-                .stroke(Color.arkadGold.opacity(0.12), lineWidth: 1)
-                .frame(width: 15, height: 15)
-                .position(x: geometry.size.width * 0.1, y: geometry.size.height * 0.45)
-            
-            Circle()
-                .stroke(Color.arkadGold.opacity(0.16), lineWidth: 1.3)
-                .frame(width: 22, height: 22)
-                .position(x: geometry.size.width * 0.9, y: geometry.size.height * 0.4)
-            
-            // Tech connection lines
-            Rectangle()
-                .fill(Color.arkadGold.opacity(0.1))
-                .frame(width: geometry.size.width * 0.4, height: 1.5)
-                .position(x: geometry.size.width * 0.3, y: geometry.size.height * 0.2)
-            
-            Rectangle()
-                .fill(Color.arkadGold.opacity(0.08))
-                .frame(width: geometry.size.width * 0.3, height: 1.2)
-                .position(x: geometry.size.width * 0.7, y: geometry.size.height * 0.35)
-            
-            Rectangle()
-                .fill(Color.arkadGold.opacity(0.12))
-                .frame(width: geometry.size.width * 0.25, height: 1.8)
-                .position(x: geometry.size.width * 0.2, y: geometry.size.height * 0.5)
-        }
-    }
-    
-    // Stat column with arkadgold accents
-    private func statColumn(number: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Text(number)
-                .font(.title3)
-                .fontWeight(.bold)
-                .foregroundColor(.textPrimary)
-            
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.arkadGold)
-                .fontWeight(.medium)
-        }
-    }
-    
-    private func shareProfile() {
-        guard let user = user else { return }
+    // MARK: - Helper Methods
+    private func formatJoinDate() -> String {
+        guard let user = authService.currentUser else { return "recently" }
         
-        let shareText = """
-        Check out @\(user.username) on ArkadTrader!
-        
-        📈 Win Rate: \(String(format: "%.1f", portfolioSummary.winRate))%
-        💰 Total P&L: \(portfolioSummary.totalProfitLoss.asCurrencyWithSign)
-        🎯 Total Trades: \(portfolioSummary.totalTrades)
-        
-        Join the trading community: ArkadTrader
-        """
-        
-        UIPasteboard.general.string = shareText
-    }
-    
-    private func getInitials(user: User?) -> String {
-        guard let user = user else { return "U" }
-        let names = user.fullName.split(separator: " ")
-        let firstInitial = names.first?.first ?? Character("U")
-        let lastInitial = names.count > 1 ? names.last?.first : nil
-        
-        if let lastInitial = lastInitial {
-            return String(firstInitial) + String(lastInitial)
-        } else {
-            return String(firstInitial)
-        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter.string(from: user.createdAt)
     }
 }
 
@@ -781,271 +735,72 @@ struct SimpleUserRow: View {
         .padding(.vertical, 4)
     }
 }
-// MARK: - Portfolio Performance Banner
-struct PortfolioPerformanceBanner: View {
-    let portfolioSummary: PortfolioSummary
-    @Binding var showPortfolioDetails: Bool
+
+// MARK: - Profile Tab Selector (Reusable Component)
+struct ProfileTabSelector: View {
+    @Binding var selectedTab: ProfileTab
     
     var body: some View {
-        Button(action: { showPortfolioDetails = true }) {
-            VStack(spacing: 16) {
-                // Header with title and view details
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.title3)
-                                .foregroundColor(.arkadGold)
-                            
-                            Text("Portfolio Performance")
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.textPrimary)
-                        }
-                        
-                        Text("Tap to view detailed analytics")
-                            .font(.caption)
-                            .foregroundColor(.arkadGold.opacity(0.8))
+        HStack(spacing: 0) {
+            ForEach(ProfileTab.allCases, id: \.self) { tab in
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        selectedTab = tab
                     }
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.subheadline)
-                        .foregroundColor(.arkadGold)
-                        .padding(8)
-                        .background(Color.arkadGold.opacity(0.1))
-                        .clipShape(Circle())
-                }
-                
-                // Performance metrics grid
-                VStack(spacing: 12) {
-                    // Top row - Total P&L and Win Rate
-                    HStack(spacing: 16) {
-                        metricCard(
-                            icon: "dollarsign.circle.fill",
-                            title: "Total P&L",
-                            value: portfolioSummary.totalProfitLoss.asCurrencyWithSign,
-                            color: portfolioSummary.totalProfitLoss >= 0 ? .marketGreen : .marketRed,
-                            isMainMetric: true
-                        )
+                }) {
+                    VStack(spacing: 8) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 20, weight: selectedTab == tab ? .semibold : .medium))
+                            .foregroundColor(selectedTab == tab ? .arkadGold : .textSecondary)
                         
-                        metricCard(
-                            icon: "target",
-                            title: "Win Rate",
-                            value: String(format: "%.1f%%", portfolioSummary.winRate),
-                            color: portfolioSummary.winRate >= 50 ? .marketGreen : .marketRed,
-                            isMainMetric: true
-                        )
-                    }
-                    
-                    // Bottom row - Today's P&L and Total Trades
-                    HStack(spacing: 16) {
-                        metricCard(
-                            icon: "calendar",
-                            title: "Today",
-                            value: portfolioSummary.dayProfitLoss.asCurrencyWithSign,
-                            color: portfolioSummary.dayProfitLoss >= 0 ? .marketGreen : .marketRed,
-                            isMainMetric: false
-                        )
+                        Text(tab.title)
+                            .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
+                            .foregroundColor(selectedTab == tab ? .arkadGold : .textSecondary)
                         
-                        metricCard(
-                            icon: "number.circle.fill",
-                            title: "Total Trades",
-                            value: "\(portfolioSummary.totalTrades)",
-                            color: .arkadGold,
-                            isMainMetric: false
-                        )
+                        // Active indicator
+                        Circle()
+                            .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
+                            .frame(width: 6, height: 6)
                     }
-                }
-            }
-            .padding(20)
-            .background(
-                ZStack {
-                    // Base background with arkadgold gradient
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [
-                                    Color.arkadGold.opacity(0.08),
-                                    Color.arkadGold.opacity(0.04),
-                                    Color.white
-                                ]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    
-                    // Subtle pattern overlay
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(
-                            RadialGradient(
-                                gradient: Gradient(colors: [
-                                    Color.arkadGold.opacity(0.1),
-                                    Color.clear
-                                ]),
-                                center: .topTrailing,
-                                startRadius: 20,
-                                endRadius: 100
-                            )
-                        )
-                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(
-                        LinearGradient(
-                            gradient: Gradient(colors: [
-                                Color.arkadGold.opacity(0.3),
-                                Color.arkadGold.opacity(0.1)
-                            ]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.5
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(selectedTab == tab ? Color.arkadGold.opacity(0.1) : Color.clear)
                     )
-            )
-            .shadow(
-                color: Color.arkadGold.opacity(0.2),
-                radius: 8,
-                x: 0,
-                y: 4
-            )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
         }
-        .buttonStyle(PlainButtonStyle())
-        .padding(.horizontal)
-        .padding(.bottom, 20)
-    }
-    
-    // Metric card component
-    private func metricCard(
-        icon: String,
-        title: String,
-        value: String,
-        color: Color,
-        isMainMetric: Bool
-    ) -> some View {
-        VStack(spacing: 8) {
-            // Icon with colored background
-            Image(systemName: icon)
-                .font(isMainMetric ? .title2 : .title3)
-                .foregroundColor(color)
-                .frame(width: isMainMetric ? 32 : 28, height: isMainMetric ? 32 : 28)
-                .background(
-                    Circle()
-                        .fill(color.opacity(0.15))
-                )
-            
-            // Title
-            Text(title)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(.textSecondary)
-                .multilineTextAlignment(.center)
-            
-            // Value
-            Text(value)
-                .font(isMainMetric ? .title3 : .subheadline)
-                .fontWeight(.bold)
-                .foregroundColor(color)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, isMainMetric ? 12 : 8)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(color.opacity(0.2), lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
         )
     }
 }
 
-// MARK: - Profile Tab Selector
-struct ProfileTabSelector: View {
-    @Binding var selectedTab: ProfileTab
-    @Namespace private var tabNamespace
+// MARK: - Portfolio Details Sheet
+struct PortfolioDetailsSheet: View {
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
+    @Environment(\.dismiss) var dismiss
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Tab selector with animated indicator
-            HStack(spacing: 0) {
-                ForEach(ProfileTab.allCases, id: \.self) { tab in
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            selectedTab = tab
+        NavigationView {
+            PortfolioView()
+                .environmentObject(portfolioViewModel)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") {
+                            dismiss()
                         }
-                    }) {
-                        VStack(spacing: 8) {
-                            // Icon with styling
-                            ZStack {
-                                // Background circle for active tab
-                                if selectedTab == tab {
-                                    Circle()
-                                        .fill(
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [
-                                                    Color.arkadGold.opacity(0.2),
-                                                    Color.arkadGold.opacity(0.1)
-                                                ]),
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
-                                        .frame(width: 36, height: 36)
-                                        .matchedGeometryEffect(id: "tabBackground", in: tabNamespace)
-                                }
-                                
-                                Image(systemName: tab.icon)
-                                    .font(.system(size: 18, weight: selectedTab == tab ? .semibold : .medium))
-                                    .foregroundColor(selectedTab == tab ? .arkadGold : .textSecondary)
-                                    .scaleEffect(selectedTab == tab ? 1.1 : 1.0)
-                            }
-                            
-                            // Tab title
-                            Text(tab.title)
-                                .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
-                                .foregroundColor(selectedTab == tab ? .arkadGold : .textSecondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .contentShape(Rectangle())
+                        .foregroundColor(.arkadGold)
+                        .fontWeight(.semibold)
                     }
-                    .buttonStyle(PlainButtonStyle())
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.arkadGold.opacity(0.1), lineWidth: 1)
-                    )
-            )
-            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
-            
-            // Animated underline indicator
-            HStack(spacing: 0) {
-                ForEach(ProfileTab.allCases, id: \.self) { tab in
-                    Rectangle()
-                        .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
-                        .frame(height: 3)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(
-                            RoundedRectangle(cornerRadius: 1.5)
-                        )
-                        .animation(.easeInOut(duration: 0.3), value: selectedTab)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
         }
-        .padding(.horizontal)
-        .padding(.bottom, 16)
     }
 }
 
@@ -1160,28 +915,51 @@ struct UserPostsTab: View {
                 .padding(.top, 60)
             } else {
                 // Posts content
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 20) {
                     HStack {
-                        Text("My Posts (\(postsViewModel.posts.count))")
-                            .font(.headline)
-                            .fontWeight(.semibold)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("My Posts (\(postsViewModel.posts.count))")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundColor(.textPrimary)
+                            
+                            Text("Your trading insights and updates")
+                                .font(.caption)
+                                .foregroundColor(.textSecondary)
+                        }
                         
                         Spacer()
                         
                         if postsViewModel.posts.count > 6 {
                             NavigationLink(destination: HomeView().environmentObject(FirebaseAuthService.shared)) {
-                                Text("View All")
-                                    .font(.subheadline)
-                                    .foregroundColor(.arkadGold)
+                                HStack(spacing: 4) {
+                                    Text("View All")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    Image(systemName: "arrow.right")
+                                        .font(.caption)
+                                }
+                                .foregroundColor(.arkadGold)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.arkadGold.opacity(0.1))
+                                .cornerRadius(16)
                             }
                         }
                     }
                     .padding(.horizontal)
                     
-                    // Posts grid
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
+                    // Enhanced Posts grid
+                    LazyVStack(spacing: 16) {
                         ForEach(postsViewModel.posts.prefix(6), id: \.id) { post in
-                            ProfileUserPostCard(post: post)
+                            ProfileUserPostCard(
+                                post: post,
+                                onPostDeleted: {
+                                    Task {
+                                        await postsViewModel.refreshPosts()
+                                    }
+                                }
+                            )
                         }
                     }
                     .padding(.horizontal)
@@ -1373,9 +1151,7 @@ struct UserPortfolioTab: View {
                 )
         )
     }
-    
 }
-
 
 // MARK: - User Groups Tab
 struct UserGroupsTab: View {
@@ -1503,45 +1279,457 @@ struct UserGroupsTab: View {
 // MARK: - Supporting Card Components
 struct ProfileUserPostCard: View {
     let post: Post
+    let onPostDeleted: (() -> Void)?
+    @State private var showFullPost = false
+    @State private var showDeleteConfirmation = false
+    @State private var isDeleting = false
+    @State private var isPressed = false
+    @EnvironmentObject var authService: FirebaseAuthService
+    
+    init(post: Post, onPostDeleted: (() -> Void)? = nil) {
+        self.post = post
+        self.onPostDeleted = onPostDeleted
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(post.content)
-                .font(.caption)
-                .lineLimit(4)
-                .multilineTextAlignment(.leading)
-            
-            Spacer()
-            
-            HStack {
-                Image(systemName: "heart")
-                    .font(.caption2)
-                Text("\(post.likesCount)")
-                    .font(.caption2)
+        Button(action: {
+            showFullPost = true
+        }) {
+            // UPDATED: Horizontal layout for single column display
+            HStack(spacing: 16) {
+                // Image or icon section (fixed width)
+                imageSection
+                    .frame(width: 80)
                 
-                Spacer()
-                
-                Text(formatTimeAgo(post.createdAt))
-                    .font(.caption2)
-                    .foregroundColor(.textSecondary)
+                // Content section (flexible width)
+                VStack(alignment: .leading, spacing: 12) {
+                    // Post content
+                    Text(post.content)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .foregroundColor(.primary)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    // Bottom section with engagement and metadata
+                    VStack(spacing: 8) {
+                        // Engagement stats
+                        HStack(spacing: 16) {
+                            // Likes
+                            HStack(spacing: 6) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.red.opacity(0.1))
+                                        .frame(width: 20, height: 20)
+                                    
+                                    Image(systemName: post.likesCount > 0 ? "heart.fill" : "heart")
+                                        .font(.caption2)
+                                        .foregroundColor(post.likesCount > 0 ? .red : .gray)
+                                }
+                                
+                                Text("\(post.likesCount)")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            // Comments
+                            if post.commentsCount > 0 {
+                                HStack(spacing: 6) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color.blue.opacity(0.1))
+                                            .frame(width: 20, height: 20)
+                                        
+                                        Image(systemName: "message.fill")
+                                            .font(.caption2)
+                                            .foregroundColor(.blue)
+                                    }
+                                    
+                                    Text("\(post.commentsCount)")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            // Time
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock")
+                                    .font(.caption2)
+                                    .foregroundColor(.arkadGold.opacity(0.7))
+                                
+                                Text(formatTimeAgo(post.createdAt))
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        // Post type indicator
+                        HStack {
+                            if post.postType != .text {
+                                HStack(spacing: 4) {
+                                    Image(systemName: postTypeIcon(for: post.postType))
+                                        .font(.caption2)
+                                    
+                                    Text(post.postType.displayName)
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(postTypeColor(for: post.postType))
+                                        .shadow(color: postTypeColor(for: post.postType).opacity(0.3), radius: 2, x: 0, y: 1)
+                                )
+                            }
+                            
+                            Spacer()
+                        }
+                    }
+                }
             }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white)
+                    .shadow(
+                        color: isPressed ? Color.arkadGold.opacity(0.15) : Color.black.opacity(0.04),
+                        radius: isPressed ? 8 : 4,
+                        x: 0,
+                        y: isPressed ? 4 : 2
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.arkadGold.opacity(isPressed ? 0.3 : 0.1),
+                                Color.arkadGold.opacity(isPressed ? 0.15 : 0.05),
+                                Color.clear
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
         }
-        .padding(12)
-        .frame(height: 120)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.arkadGold.opacity(0.1), lineWidth: 1)
+        .buttonStyle(PlainButtonStyle())
+        .scaleEffect(isPressed ? 0.98 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isPressed)
+        .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { pressing in
+            isPressed = pressing
+        }, perform: {})
+        .sheet(isPresented: $showFullPost) {
+            ProfilePostDetailView(
+                post: post,
+                onDelete: {
+                    Task {
+                        await deletePost()
+                    }
+                }
+            )
+            .environmentObject(authService)
+        }
+        .overlay(deletingOverlay)
+    }
+    
+    // UPDATED: Optimized image section for horizontal layout
+    @ViewBuilder
+    private var imageSection: some View {
+        if !post.imageUrls.isEmpty {
+            ZStack(alignment: .topTrailing) {
+                AsyncImage(url: URL(string: post.imageUrls.first!)) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    ZStack {
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.arkadGold.opacity(0.3),
+                                Color.arkadGold.opacity(0.1),
+                                Color.arkadGold.opacity(0.05)
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        
+                        VStack(spacing: 4) {
+                            Image(systemName: "photo")
+                                .font(.caption)
+                                .foregroundColor(.arkadGold.opacity(0.6))
+                            
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .arkadGold))
+                                .scaleEffect(0.6)
+                        }
+                    }
+                }
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                
+                // Image count badge
+                if post.imageUrls.count > 1 {
+                    Text("\(post.imageUrls.count)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(4)
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .background(
+                                    Circle()
+                                        .fill(Color.black.opacity(0.4))
+                                )
+                        )
+                        .offset(x: -4, y: 4)
+                }
+            }
+        } else {
+            // Text-only post icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.arkadGold.opacity(0.15),
+                                Color.arkadGold.opacity(0.08),
+                                Color.arkadGold.opacity(0.03)
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                
+                VStack(spacing: 4) {
+                    Image(systemName: "quote.bubble.fill")
+                        .font(.title3)
+                        .foregroundColor(.arkadGold.opacity(0.7))
+                    
+                    Text("Text")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.arkadGold.opacity(0.8))
+                }
+            }
+            .frame(width: 80, height: 80)
+        }
+    }
+    
+    @ViewBuilder
+    private var deletingOverlay: some View {
+        if isDeleting {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.black.opacity(0.3))
                 )
-        )
+                .overlay(
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.2)
+                        
+                        Text("Deleting...")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                    }
+                )
+        }
+    }
+    
+    private func postTypeIcon(for type: PostType) -> String {
+        switch type {
+        case .text: return "text.quote"
+        case .tradeResult: return "chart.line.uptrend.xyaxis"
+        case .marketAnalysis: return "magnifyingglass.circle"
+        }
+    }
+    
+    private func postTypeColor(for type: PostType) -> Color {
+        switch type {
+        case .text: return .gray
+        case .tradeResult: return .green
+        case .marketAnalysis: return .blue
+        }
+    }
+    
+    private func deletePost() async {
+        isDeleting = true
+        
+        do {
+            try await authService.deletePost(postId: post.id)
+            print("✅ Post deleted successfully")
+            
+            // Call the callback to refresh the posts list
+            await MainActor.run {
+                onPostDeleted?()
+            }
+        } catch {
+            print("❌ Error deleting post: \(error)")
+        }
+        
+        isDeleting = false
     }
     
     private func formatTimeAgo(_ date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+// MARK: - Profile Post Detail View
+struct ProfilePostDetailView: View {
+    let post: Post
+    let onDelete: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var showDeleteConfirmation = false
+    @State private var currentImageIndex = 0
+    @EnvironmentObject var authService: FirebaseAuthService
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Post header
+                    HStack {
+                        Circle()
+                            .fill(Color.arkadGold.opacity(0.2))
+                            .frame(width: 40, height: 40)
+                            .overlay(
+                                Text(String(post.authorUsername.prefix(1)).uppercased())
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.arkadGold)
+                            )
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("@\(post.authorUsername)")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            
+                            Text(formatFullDate(post.createdAt))
+                                .font(.caption)
+                                .foregroundColor(.textSecondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    
+                    // Post content
+                    if !post.content.isEmpty {
+                        Text(post.content)
+                            .font(.body)
+                            .lineSpacing(6)
+                            .padding(.horizontal)
+                    }
+                    
+                    // Images
+                    if !post.imageUrls.isEmpty {
+                        VStack(spacing: 12) {
+                            TabView(selection: $currentImageIndex) {
+                                ForEach(Array(post.imageUrls.enumerated()), id: \.offset) { index, imageUrl in
+                                    AsyncImage(url: URL(string: imageUrl)) { image in
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                    } placeholder: {
+                                        Rectangle()
+                                            .fill(Color.gray.opacity(0.2))
+                                            .overlay(
+                                                ProgressView()
+                                                    .progressViewStyle(CircularProgressViewStyle(tint: .arkadGold))
+                                            )
+                                    }
+                                    .frame(height: 300)
+                                    .clipped()
+                                    .tag(index)
+                                }
+                            }
+                            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .automatic))
+                            .frame(height: 300)
+                            
+                            if post.imageUrls.count > 1 {
+                                Text("\(currentImageIndex + 1) of \(post.imageUrls.count)")
+                                    .font(.caption)
+                                    .foregroundColor(.textSecondary)
+                            }
+                        }
+                    }
+                    
+                    // Engagement stats
+                    HStack(spacing: 24) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "heart")
+                                .foregroundColor(.red)
+                            Text("\(post.likesCount)")
+                                .fontWeight(.medium)
+                        }
+                        
+                        HStack(spacing: 4) {
+                            Image(systemName: "message")
+                                .foregroundColor(.blue)
+                            Text("\(post.commentsCount)")
+                                .fontWeight(.medium)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    
+                    Spacer(minLength: 50)
+                }
+                .padding(.vertical)
+            }
+            .navigationTitle("Post Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(.arkadGold)
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Delete") {
+                        showDeleteConfirmation = true
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+            .confirmationDialog("Delete Post", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+                Button("Delete Post", role: .destructive) {
+                    onDelete()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This action cannot be undone.")
+            }
+        }
+    }
+    
+    private func formatFullDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }
 
@@ -1696,29 +1884,6 @@ struct ProfileUserGroupCard: View {
                         .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
                 )
         )
-    }
-}
-
-// MARK: - Portfolio Details Sheet
-struct PortfolioDetailsSheet: View {
-    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        NavigationView {
-            PortfolioView()
-                .environmentObject(portfolioViewModel)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                        .foregroundColor(.arkadGold)
-                        .fontWeight(.semibold)
-                    }
-                }
-        }
     }
 }
 

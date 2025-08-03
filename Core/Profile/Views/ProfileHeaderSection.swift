@@ -1,3 +1,11 @@
+//
+//  ProfileHeaderSection.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 8/2/25.
+//
+
+
 // File: Core/Profile/Views/ProfileHeaderSection.swift
 // Updated Profile Header with Real Profile Images
 
@@ -364,19 +372,3 @@ struct ProfileHeaderSection: View {
     }
 }
 
-#Preview {
-    ProfileHeaderSection(
-        user: .previewUser,
-        portfolioSummary: PortfolioSummary(
-            totalValue: 10000,
-            totalProfitLoss: 1250,
-            dayProfitLoss: 125,
-            totalTrades: 47,
-            winRate: 68.5,
-            openPositions: 5
-        ),
-        showEditProfile: .constant(false),
-        showSettings: .constant(false)
-    )
-    .environmentObject(FirebaseAuthService.shared)
-}

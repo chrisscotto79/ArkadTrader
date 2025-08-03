@@ -1,3 +1,11 @@
+//
+//  ProfileImageView.swift
+//  ArkadTrader
+//
+//  Created by chris scotto on 8/2/25.
+//
+
+
 // File: Core/Profile/Views/ProfileImageView.swift
 // Reusable Profile Image Component with Smart Fallbacks
 

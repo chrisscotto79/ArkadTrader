@@ -5,6 +5,8 @@ import Foundation
 import Firebase
 import FirebaseAuth
 import FirebaseFirestore
+import SwiftUICore
+import FirebaseStorage
 
 // MARK: - Main Service Class
 
@@ -855,6 +857,78 @@ class FirebaseServices {
         print("✅ Unlike completed successfully!")
     }
     
+    func uploadProfileImage(_ image: UIImage, userId: String) async throws -> String {
+        print("🔄 Starting profile image upload for user: \(userId)")
+        
+        // Compress image
+        guard let imageData = image.jpegData(compressionQuality: 0.7) else {
+            print("❌ Failed to convert image to data")
+            throw FirestoreError.invalidData
+        }
+        
+        print("📊 Image data size: \(imageData.count) bytes")
+        
+        // ✅ SIMPLIFIED FILE PATH: Use simpler naming convention
+        let fileName = "\(userId).jpg"  // Just userId.jpg - simple and clean
+        
+        // ✅ DIFFERENT PATH STRUCTURE: Try without subdirectory first
+        let storageRef = Storage.storage().reference().child("profile_images").child(fileName)
+        
+        print("🔍 Upload path: profile_images/\(fileName)")
+        
+        do {
+            print("🔄 Uploading image to Firebase Storage...")
+            
+            // Simple upload without custom metadata
+            let uploadTask = try await storageRef.putData(imageData)
+            print("✅ Image uploaded successfully")
+            print("📍 Upload path confirmed: \(storageRef.fullPath)")
+            
+            // ✅ IMMEDIATE DOWNLOAD URL ATTEMPT: Try right away
+            do {
+                let downloadURL = try await storageRef.downloadURL()
+                print("✅ Download URL obtained immediately: \(downloadURL.absoluteString)")
+                return downloadURL.absoluteString
+            } catch {
+                print("⚠️ Immediate download URL failed: \(error)")
+                
+                // ✅ ALTERNATIVE: Try constructing public URL manually
+                let publicURL = "https://firebasestorage.googleapis.com/v0/b/arkad-ios-app.firebasestorage.app/o/profile_images%2F\(fileName)?alt=media"
+                print("🔄 Trying constructed public URL: \(publicURL)")
+                return publicURL
+            }
+            
+        } catch {
+            print("❌ Profile image upload failed: \(error)")
+            throw FirestoreError.uploadFailed
+        }
+    }
+
+
+    func deleteProfileImage(imageUrl: String) async throws {
+        print("🔄 Deleting profile image: \(imageUrl)")
+        
+        guard let url = URL(string: imageUrl) else {
+            print("❌ Invalid image URL")
+            return
+        }
+        
+        // Extract the file path from the URL
+        let pathComponents = url.pathComponents
+        if let index = pathComponents.firstIndex(of: "profile_images"),
+           index + 1 < pathComponents.count {
+            let fileName = pathComponents[index + 1]
+            let storageRef = Storage.storage().reference().child("profile_images/\(fileName)")
+            
+            do {
+                try await storageRef.delete()
+                print("✅ Profile image deleted successfully")
+            } catch {
+                print("⚠️ Failed to delete profile image: \(error)")
+                // Don't throw error here - we still want to update the user record
+            }
+        }
+    }
     func getUserLikedPosts(userId: String) async throws -> Set<String> {
         print("🔍 === LOADING USER LIKED POSTS (ROBUST VERSION) ===")
         print("👤 User ID: \(userId)")
@@ -902,6 +976,7 @@ class FirebaseServices {
         print("✅ Total unique liked posts: \(allLikedPosts.count)")
         return allLikedPosts
     }
+    
     
     // MARK: - Like Helper Methods
     
@@ -2135,6 +2210,7 @@ enum FirestoreError: LocalizedError {
     case documentNotFound
     case unauthorized
     case networkError
+    case uploadFailed  // ✅ ADD THIS LINE
     
     var errorDescription: String? {
         switch self {
@@ -2146,7 +2222,10 @@ enum FirestoreError: LocalizedError {
             return "You don't have permission to perform this action"
         case .networkError:
             return "Network error. Please check your connection"
+        case .uploadFailed:
+            return "Failed to upload file"
         }
+        
     }
 }
 

@@ -14,8 +14,8 @@
             filePath = "Shared/Services/FirebaseAuthService.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "419"
-            endingLineNumber = "419"
+            startingLineNumber = "489"
+            endingLineNumber = "489"
             landmarkName = "leaveCommunity(communityId:userId:)"
             landmarkType = "7">
          </BreakpointContent>

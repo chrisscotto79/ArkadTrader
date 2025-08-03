@@ -1,5 +1,5 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
-// Complete Modern Portfolio Interface - Production Ready
+// Clean Modern Portfolio Interface with Integrated Profile Image Support
 
 import SwiftUI
 
@@ -23,7 +23,7 @@ struct PortfolioView: View {
     // MARK: - Main Body
     var body: some View {
         ZStack {
-            // Modern background
+            // Modern background gradient
             LinearGradient(
                 colors: [
                     Color(.systemGroupedBackground),
@@ -36,7 +36,7 @@ struct PortfolioView: View {
             
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 24) {
-                    // Header Section
+                    // Header Section with Profile Image
                     headerSection
                         .padding(.horizontal, 20)
                         .padding(.top, 10)
@@ -91,13 +91,13 @@ struct PortfolioView: View {
             DepositWithdrawSheet()
                 .environmentObject(portfolioViewModel)
         }
-        // .sheet(isPresented: $showProfileSettings) {
-        //     ProfileSettingsView()
-        //         .environmentObject(authService)
-        // }
+        .sheet(isPresented: $showProfileSettings) {
+            ProfileView()
+                .environmentObject(authService)
+        }
         .onAppear {
             portfolioViewModel.loadPortfolioData()
-            withAnimation(.spring(response: 1.2, dampingFraction: 0.8).delay(0.1)) {
+            withAnimation(.spring(response: 1.0, dampingFraction: 0.8).delay(0.1)) {
                 animateContent = true
             }
         }
@@ -108,6 +108,7 @@ struct PortfolioView: View {
 extension PortfolioView {
     private var headerSection: some View {
         HStack(alignment: .top) {
+            // Greeting and user name
             VStack(alignment: .leading, spacing: 8) {
                 Text(greetingText)
                     .font(.system(size: 16, weight: .medium))
@@ -115,7 +116,7 @@ extension PortfolioView {
                     .opacity(animateContent ? 1 : 0)
                     .animation(.easeInOut(duration: 0.6).delay(0.1), value: animateContent)
                 
-                Text(authService.currentUser?.fullName.components(separatedBy: " ").first ?? "Trader")
+                Text(firstName)
                     .font(.system(size: 32, weight: .bold))
                     .foregroundColor(.primary)
                     .opacity(animateContent ? 1 : 0)
@@ -125,11 +126,38 @@ extension PortfolioView {
             
             Spacer()
             
-            // Profile Button
-            Button(action: {
-                showProfileSettings = true
-            }) {
-                ZStack {
+            // Profile Image Button - USING EXACT PROFILE IMAGE PATTERN
+            profileImageButton
+        }
+    }
+    
+    private var profileImageButton: some View {
+        Button(action: { showProfileSettings = true }) {
+            Group {
+                // EXACT SAME PATTERN AS YOUR ORIGINAL CODE
+                if let imageUrl = authService.currentUser?.profileImageUrl,
+                   !imageUrl.isEmpty {
+                    AsyncImage(url: URL(string: imageUrl)) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.arkadGold.opacity(0.2), Color.arkadGold.opacity(0.1)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .overlay(
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .arkadGold))
+                                    .scaleEffect(0.8)
+                            )
+                    }
+                } else {
+                    // Fallback to initials circle
                     Circle()
                         .fill(
                             LinearGradient(
@@ -138,17 +166,25 @@ extension PortfolioView {
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 48, height: 48)
-                    
-                    Text(userInitials)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.arkadGold)
+                        .overlay(
+                            Text(userInitials)
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(.arkadGold)
+                        )
                 }
             }
-            .scaleEffect(animateContent ? 1 : 0.8)
-            .opacity(animateContent ? 1 : 0)
-            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: animateContent)
+            .frame(width: 48, height: 48)
+            .clipShape(Circle())
+            .overlay(
+                Circle()
+                    .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
+            )
+            .shadow(color: Color.arkadGold.opacity(0.2), radius: 8, x: 0, y: 4)
         }
+        .buttonStyle(PlainButtonStyle())
+        .scaleEffect(animateContent ? 1 : 0.8)
+        .opacity(animateContent ? 1 : 0)
+        .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: animateContent)
     }
 }
 
@@ -157,6 +193,7 @@ extension PortfolioView {
     private var portfolioValueCard: some View {
         VStack(spacing: 24) {
             HStack(alignment: .top) {
+                // Main portfolio info
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Portfolio Value")
                         .font(.system(size: 15, weight: .medium))
@@ -171,37 +208,17 @@ extension PortfolioView {
                             .animation(.spring(response: 0.8, dampingFraction: 0.7).delay(0.4), value: animateContent)
                         
                         if totalProfitLoss != 0 {
-                            VStack(spacing: 2) {
-                                Image(systemName: totalProfitLoss >= 0 ? "arrow.up.right" : "arrow.down.right")
-                                    .font(.system(size: 18, weight: .bold))
-                                    .foregroundColor(totalProfitLoss >= 0 ? .green : .red)
-                                
-                                Text(String(format: "%.1f%%", abs(returnPercentage)))
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(totalProfitLoss >= 0 ? .green : .red)
-                            }
-                            .opacity(animateContent ? 1 : 0)
-                            .animation(.easeInOut(duration: 0.6).delay(0.6), value: animateContent)
+                            performanceIndicator
                         }
                     }
                     
-                    HStack(spacing: 8) {
-                        Text(totalProfitLoss.asCurrencyWithSign)
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(totalProfitLoss >= 0 ? .green : .red)
-                        
-                        Text("today")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                    .opacity(animateContent ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.6).delay(0.5), value: animateContent)
+                    profitLossDisplay
                 }
                 
                 Spacer()
                 
-                // Deposit/Withdraw Button
-                depositWithdrawButtonSimple
+                // Account adjustment button
+                accountAdjustmentButton
             }
         }
         .padding(28)
@@ -216,32 +233,65 @@ extension PortfolioView {
         .animation(.spring(response: 0.8, dampingFraction: 0.8).delay(0.3), value: animateContent)
     }
     
-    private var depositWithdrawButton: some View {
+    private var performanceIndicator: some View {
+        VStack(spacing: 2) {
+            Image(systemName: totalProfitLoss >= 0 ? "arrow.up.right" : "arrow.down.right")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(totalProfitLoss >= 0 ? .green : .red)
+            
+            Text(String(format: "%.1f%%", abs(returnPercentage)))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(totalProfitLoss >= 0 ? .green : .red)
+        }
+        .opacity(animateContent ? 1 : 0)
+        .animation(.easeInOut(duration: 0.6).delay(0.6), value: animateContent)
+    }
+    
+    private var profitLossDisplay: some View {
+        HStack(spacing: 8) {
+            Text(totalProfitLoss.asCurrencyWithSign)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(totalProfitLoss >= 0 ? .green : .red)
+            
+            Text("today")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .opacity(animateContent ? 1 : 0)
+        .animation(.easeInOut(duration: 0.6).delay(0.5), value: animateContent)
+    }
+    
+    private var accountAdjustmentButton: some View {
         Button(action: {
             portfolioViewModel.showDepositWithdrawSheet = true
         }) {
-            Image(systemName: "plus.minus.circle.fill")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundColor(.arkadGold)
-                .background(
-                    Circle()
-                        .fill(Color(.systemBackground))
-                        .frame(width: 32, height: 32)
-                )
+            HStack(spacing: 6) {
+                Image(systemName: "dollarsign.circle")
+                    .font(.system(size: 18, weight: .medium))
+                
+                Text("Adjust")
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundColor(.arkadGold)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.arkadGold.opacity(0.1))
+            )
         }
         .buttonStyle(PlainButtonStyle())
         .scaleEffect(animateContent ? 1 : 0.85)
         .opacity(animateContent ? 1 : 0)
         .animation(.spring(response: 0.7, dampingFraction: 0.8).delay(0.7), value: animateContent)
     }
-
 }
 
 // MARK: - Performance Chart Card
 extension PortfolioView {
     private var performanceChartCard: some View {
-        VStack(spacing: 28) {
-            // Chart Header
+        VStack(spacing: 24) {
+            // Chart header
             HStack {
                 Text("Performance")
                     .font(.system(size: 20, weight: .bold))
@@ -252,11 +302,11 @@ extension PortfolioView {
                 timeframeSelector
             }
             
-            // Chart Area
-            premiumPerformanceChart
+            // Chart area
+            chartArea
                 .frame(height: 200)
         }
-        .padding(28)
+        .padding(24)
         .background(
             RoundedRectangle(cornerRadius: 24)
                 .fill(Color(.systemBackground))
@@ -296,111 +346,81 @@ extension PortfolioView {
                 .fill(Color(.systemGray6))
         )
     }
-    private var depositWithdrawButtonSimple: some View {
-        Button(action: {
-            portfolioViewModel.showDepositWithdrawSheet = true
-        }) {
-            HStack(spacing: 6) {
-                Image(systemName: "dollarsign.circle")
-                    .font(.system(size: 18, weight: .medium))
-                Text("Adjust account value")
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundColor(.arkadGold)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.arkadGold.opacity(0.1))
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - Premium Performance Chart
-extension PortfolioView {
-    private var premiumPerformanceChart: some View {
+    
+    private var chartArea: some View {
         GeometryReader { geometry in
             let data = generateChartData()
-            let performanceData = portfolioViewModel.getPerformanceForTimeframe(selectedTimeframe)
             
-            let chartWidth = geometry.size.width - 20
-            let chartHeight = geometry.size.height - 40
-            let chartOriginX: CGFloat = 10
-            let chartOriginY: CGFloat = 10
-            
-            guard data.count >= 2 else {
-                return AnyView(
-                    VStack {
-                        Spacer()
-                        VStack(spacing: 12) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.system(size: 40, weight: .light))
-                                .foregroundColor(.secondary.opacity(0.6))
-                            
-                            Text("Not enough data")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.secondary)
-                            
-                            Text("Add some trades to see your performance")
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundColor(.secondary.opacity(0.8))
-                                .multilineTextAlignment(.center)
-                        }
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                )
+            if data.count < 2 {
+                emptyChartView
+            } else {
+                interactiveChart(data: data, geometry: geometry)
             }
-            
-            let maxValue = data.max() ?? 0
-            let minValue = data.min() ?? 0
-            let range = maxValue - minValue
-            let adjustedRange = range < 1 ? 100.0 : range
-            let adjustedMin = range < 1 ? minValue - 50.0 : minValue
-            let adjustedMax = range < 1 ? maxValue + 50.0 : maxValue
-            let finalRange = adjustedMax - adjustedMin
-            
-            return AnyView(
-                ZStack {
-                    // Chart Background
-                    chartBackground(width: chartWidth, height: chartHeight)
-                    
-                    // Main Chart Content
-                    chartContent(
-                        data: data,
-                        width: chartWidth,
-                        height: chartHeight,
-                        adjustedMin: adjustedMin,
-                        finalRange: finalRange
-                    )
-                    
-                    // Interactive Layer
-                    chartInteractiveLayer(
-                        data: data,
-                        width: chartWidth,
-                        height: chartHeight,
-                        adjustedMin: adjustedMin,
-                        finalRange: finalRange
-                    )
-                    
-                    // Date Labels
-                    chartDateLabels(
-                        performanceData: performanceData,
-                        width: chartWidth,
-                        height: chartHeight
-                    )
-                }
-                .frame(width: chartWidth, height: chartHeight)
-                .offset(x: chartOriginX, y: chartOriginY)
-            )
         }
     }
     
+    private var emptyChartView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 40, weight: .light))
+                .foregroundColor(.secondary.opacity(0.6))
+            
+            Text("Not enough data")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.secondary)
+            
+            Text("Add some trades to see your performance")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary.opacity(0.8))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func interactiveChart(data: [Double], geometry: GeometryProxy) -> some View {
+        let chartWidth = geometry.size.width - 20
+        let chartHeight = geometry.size.height - 40
+        
+        let maxValue = data.max() ?? 0
+        let minValue = data.min() ?? 0
+        let range = maxValue - minValue
+        let adjustedRange = range < 1 ? 100.0 : range
+        let adjustedMin = range < 1 ? minValue - 50.0 : minValue
+        let adjustedMax = range < 1 ? maxValue + 50.0 : maxValue
+        let finalRange = adjustedMax - adjustedMin
+        
+        return ZStack {
+            // Chart background grid
+            chartBackground(width: chartWidth, height: chartHeight)
+            
+            // Chart content
+            chartContent(
+                data: data,
+                width: chartWidth,
+                height: chartHeight,
+                adjustedMin: adjustedMin,
+                finalRange: finalRange
+            )
+            
+            // Interactive layer
+            chartInteractiveLayer(
+                data: data,
+                width: chartWidth,
+                height: chartHeight,
+                adjustedMin: adjustedMin,
+                finalRange: finalRange
+            )
+        }
+        .frame(width: chartWidth, height: chartHeight)
+        .offset(x: 10, y: 10)
+    }
+}
+
+// MARK: - Chart Components
+extension PortfolioView {
     private func chartBackground(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
-            // Vertical Grid Lines
+            // Vertical grid lines
             Path { path in
                 for i in 1..<5 {
                     let x = width * CGFloat(i) / 5
@@ -408,12 +428,9 @@ extension PortfolioView {
                     path.addLine(to: CGPoint(x: x, y: height))
                 }
             }
-            .stroke(
-                Color.secondary.opacity(0.15),
-                style: StrokeStyle(lineWidth: 1, dash: [4, 8])
-            )
+            .stroke(Color.secondary.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4, 8]))
             
-            // Horizontal Grid Lines
+            // Horizontal grid lines
             Path { path in
                 for i in 1..<4 {
                     let y = height * CGFloat(i) / 4
@@ -421,41 +438,23 @@ extension PortfolioView {
                     path.addLine(to: CGPoint(x: width, y: y))
                 }
             }
-            .stroke(
-                Color.secondary.opacity(0.1),
-                style: StrokeStyle(lineWidth: 1, dash: [4, 8])
-            )
+            .stroke(Color.secondary.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: [4, 8]))
         }
     }
     
     private func chartContent(data: [Double], width: CGFloat, height: CGFloat, adjustedMin: Double, finalRange: Double) -> some View {
-        ZStack {
-            // Area Fill
+        let points = createChartPoints(data: data, width: width, height: height, adjustedMin: adjustedMin, finalRange: finalRange)
+        
+        return ZStack {
+            // Area fill
             Path { path in
-                let controlPoints = createSmoothPath(
-                    data: data,
-                    width: width,
-                    height: height,
-                    adjustedMin: adjustedMin,
-                    finalRange: finalRange
-                )
-                
                 path.move(to: CGPoint(x: 0, y: height))
                 
-                for (index, point) in controlPoints.enumerated() {
+                for (index, point) in points.enumerated() {
                     if index == 0 {
                         path.addLine(to: point)
                     } else {
-                        let previousPoint = controlPoints[index - 1]
-                        let controlPoint1 = CGPoint(
-                            x: previousPoint.x + (point.x - previousPoint.x) / 3,
-                            y: previousPoint.y
-                        )
-                        let controlPoint2 = CGPoint(
-                            x: point.x - (point.x - previousPoint.x) / 3,
-                            y: point.y
-                        )
-                        path.addCurve(to: point, control1: controlPoint1, control2: controlPoint2)
+                        path.addLine(to: point)
                     }
                 }
                 
@@ -466,8 +465,7 @@ extension PortfolioView {
                 LinearGradient(
                     colors: [
                         (totalProfitLoss >= 0 ? Color.green : Color.red).opacity(0.3),
-                        (totalProfitLoss >= 0 ? Color.green : Color.red).opacity(0.15),
-                        (totalProfitLoss >= 0 ? Color.green : Color.red).opacity(0.05),
+                        (totalProfitLoss >= 0 ? Color.green : Color.red).opacity(0.1),
                         Color.clear
                     ],
                     startPoint: .top,
@@ -475,43 +473,25 @@ extension PortfolioView {
                 )
             )
             
-            // Smooth Line
+            // Line
             Path { path in
-                let controlPoints = createSmoothPath(
-                    data: data,
-                    width: width,
-                    height: height,
-                    adjustedMin: adjustedMin,
-                    finalRange: finalRange
-                )
-                
-                for (index, point) in controlPoints.enumerated() {
+                for (index, point) in points.enumerated() {
                     if index == 0 {
                         path.move(to: point)
                     } else {
-                        let previousPoint = controlPoints[index - 1]
-                        let controlPoint1 = CGPoint(
-                            x: previousPoint.x + (point.x - previousPoint.x) / 3,
-                            y: previousPoint.y
-                        )
-                        let controlPoint2 = CGPoint(
-                            x: point.x - (point.x - previousPoint.x) / 3,
-                            y: point.y
-                        )
-                        path.addCurve(to: point, control1: controlPoint1, control2: controlPoint2)
+                        path.addLine(to: point)
                     }
                 }
             }
             .stroke(
                 totalProfitLoss >= 0 ? Color.green : Color.red,
-                style: StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round)
+                style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
             )
         }
     }
     
     private func chartInteractiveLayer(data: [Double], width: CGFloat, height: CGFloat, adjustedMin: Double, finalRange: Double) -> some View {
         ZStack {
-            // Touch interaction
             Rectangle()
                 .fill(Color.clear)
                 .contentShape(Rectangle())
@@ -529,7 +509,7 @@ extension PortfolioView {
                             }
                         }
                         .onEnded { _ in
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                                 withAnimation(.easeOut(duration: 0.3)) {
                                     showingChartValue = false
                                     selectedDataPoint = nil
@@ -540,37 +520,26 @@ extension PortfolioView {
             
             // Interactive elements
             if let selectedPoint = selectedDataPoint, showingChartValue {
-                let controlPoints = createSmoothPath(
-                    data: data,
-                    width: width,
-                    height: height,
-                    adjustedMin: adjustedMin,
-                    finalRange: finalRange
-                )
-                let point = controlPoints[selectedPoint.index]
+                let points = createChartPoints(data: data, width: width, height: height, adjustedMin: adjustedMin, finalRange: finalRange)
+                let point = points[selectedPoint.index]
                 
-                // Vertical indicator line
+                // Vertical line
                 Path { path in
                     path.move(to: CGPoint(x: point.x, y: 0))
                     path.addLine(to: CGPoint(x: point.x, y: height))
                 }
-                .stroke(
-                    Color.primary.opacity(0.3),
-                    style: StrokeStyle(lineWidth: 1.5, dash: [3, 6])
-                )
+                .stroke(Color.primary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [3, 6]))
                 
                 // Touch point
-                ZStack {
-                    Circle()
-                        .fill(Color(.systemBackground))
-                        .frame(width: 16, height: 16)
-                        .shadow(color: .black.opacity(0.15), radius: 4)
-                    
-                    Circle()
-                        .fill(totalProfitLoss >= 0 ? Color.green : Color.red)
-                        .frame(width: 10, height: 10)
-                }
-                .position(point)
+                Circle()
+                    .fill(Color(.systemBackground))
+                    .frame(width: 12, height: 12)
+                    .overlay(
+                        Circle()
+                            .fill(totalProfitLoss >= 0 ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                    )
+                    .position(point)
                 
                 // Value popup
                 Text(selectedPoint.value.asCurrency)
@@ -581,32 +550,12 @@ extension PortfolioView {
                     .background(
                         Capsule()
                             .fill(totalProfitLoss >= 0 ? Color.green : Color.red)
-                            .shadow(color: .black.opacity(0.2), radius: 4)
+                            .shadow(radius: 4)
                     )
                     .position(x: point.x, y: max(30, point.y - 30))
                     .transition(.scale.combined(with: .opacity))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: showingChartValue)
             }
         }
-    }
-    
-    private func chartDateLabels(performanceData: [DailyPerformance], width: CGFloat, height: CGFloat) -> some View {
-        VStack {
-            Spacer()
-            
-            HStack {
-                ForEach(0..<5) { i in
-                    let dateText = getDateLabelForIndex(i, total: 5, performanceData: performanceData)
-                    Text(dateText)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                    
-                    if i < 4 { Spacer() }
-                }
-            }
-            .padding(.horizontal, 8)
-        }
-        .offset(y: 25)
     }
 }
 
@@ -617,7 +566,7 @@ extension PortfolioView {
             StatCard(
                 icon: "target",
                 title: "Win Rate",
-                value: "\(String(format: "%.0f", winRate))%",
+                value: String(format: "%.0f%%", winRate),
                 color: winRate >= 50 ? .green : .orange,
                 delay: 0.6
             )
@@ -649,7 +598,120 @@ extension PortfolioView {
     }
 }
 
-// MARK: - StatCard Component
+// MARK: - Recent Activity Section
+extension PortfolioView {
+    private var recentActivitySection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Section header
+            HStack {
+                Text("Recent Activity")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button("View All") {
+                    // Navigate to full trades list
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.arkadGold)
+            }
+            
+            // Content
+            if recentTrades.isEmpty {
+                emptyActivityView
+            } else {
+                tradesListView
+            }
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.06), radius: 20, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.04), radius: 1, x: 0, y: 1)
+        )
+        .opacity(animateContent ? 1 : 0)
+        .scaleEffect(animateContent ? 1 : 0.95)
+        .animation(.spring(response: 0.8, dampingFraction: 0.8).delay(0.7), value: animateContent)
+    }
+    
+    private var emptyActivityView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "chart.line.uptrend.xyaxis.circle")
+                .font(.system(size: 50, weight: .light))
+                .foregroundColor(.secondary.opacity(0.6))
+            
+            VStack(spacing: 8) {
+                Text("No trades yet")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.primary)
+                
+                Text("Start your trading journey by adding your first trade")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+    
+    private var tradesListView: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(recentTrades.prefix(4).enumerated()), id: \.element.id) { index, trade in
+                RecentTradeRow(trade: trade, isLast: index == min(3, recentTrades.count - 1))
+                    .onTapGesture {
+                        selectedTrade = trade
+                        showTradeActions = true
+                    }
+            }
+        }
+    }
+}
+
+// MARK: - Floating Action Button
+extension PortfolioView {
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                Spacer()
+                
+                Button(action: { showAddTrade = true }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 20, weight: .bold))
+                        
+                        Text("Add Trade")
+                            .font(.system(size: 17, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 18)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.85)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(30)
+                    .shadow(color: Color.arkadGold.opacity(0.4), radius: 20, x: 0, y: 10)
+                    .shadow(color: Color.arkadGold.opacity(0.2), radius: 4, x: 0, y: 2)
+                }
+                .scaleEffect(animateContent ? 1 : 0.8)
+                .opacity(animateContent ? 1 : 0)
+                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(1.1), value: animateContent)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+    }
+}
+
+// MARK: - Supporting Components
 struct StatCard: View {
     let icon: String
     let title: String
@@ -702,73 +764,6 @@ struct StatCard: View {
     }
 }
 
-// MARK: - Recent Activity Section
-extension PortfolioView {
-    private var recentActivitySection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack {
-                Text("Recent Activity")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Button("View All") {
-                    // Navigate to full trades list
-                }
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.arkadGold)
-            }
-            
-            if recentTrades.isEmpty {
-                emptyActivityView
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(recentTrades.prefix(4).enumerated()), id: \.element.id) { index, trade in
-                        RecentTradeRow(trade: trade, isLast: index == min(3, recentTrades.count - 1))
-                            .onTapGesture {
-                                selectedTrade = trade
-                                showTradeActions = true
-                            }
-                    }
-                }
-            }
-        }
-        .padding(28)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.06), radius: 20, x: 0, y: 8)
-                .shadow(color: .black.opacity(0.04), radius: 1, x: 0, y: 1)
-        )
-        .opacity(animateContent ? 1 : 0)
-        .scaleEffect(animateContent ? 1 : 0.95)
-        .animation(.spring(response: 0.8, dampingFraction: 0.8).delay(0.7), value: animateContent)
-    }
-    
-    private var emptyActivityView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "chart.line.uptrend.xyaxis.circle")
-                .font(.system(size: 50, weight: .light))
-                .foregroundColor(.secondary.opacity(0.6))
-            
-            VStack(spacing: 8) {
-                Text("No trades yet")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.primary)
-                
-                Text("Start your trading journey by adding your first trade")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-}
-
-// MARK: - RecentTradeRow Component
 struct RecentTradeRow: View {
     let trade: Trade
     let isLast: Bool
@@ -776,7 +771,7 @@ struct RecentTradeRow: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                // Status Indicator
+                // Status indicator
                 ZStack {
                     Circle()
                         .fill(statusColor.opacity(0.15))
@@ -787,7 +782,7 @@ struct RecentTradeRow: View {
                         .frame(width: 8, height: 8)
                 }
                 
-                // Trade Info
+                // Trade info
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text(trade.ticker)
@@ -799,10 +794,7 @@ struct RecentTradeRow: View {
                             .foregroundColor(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(statusColor)
-                            )
+                            .background(Capsule().fill(statusColor))
                     }
                     
                     Text(timeAgoText)
@@ -812,16 +804,16 @@ struct RecentTradeRow: View {
                 
                 Spacer()
                 
-                // Trade Value
+                // Trade value
                 VStack(alignment: .trailing, spacing: 6) {
-                    if !trade.isOpen {
-                        Text(trade.profitLoss.asCurrencyWithSign)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
-                    } else {
+                    if trade.isOpen {
                         Text(trade.currentValue.asCurrency)
                             .font(.system(size: 17, weight: .bold))
                             .foregroundColor(.primary)
+                    } else {
+                        Text(trade.profitLoss.asCurrencyWithSign)
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(trade.profitLoss >= 0 ? .green : .red)
                     }
                     
                     Text("\(trade.quantity) shares")
@@ -832,8 +824,7 @@ struct RecentTradeRow: View {
             .padding(.vertical, 16)
             
             if !isLast {
-                Divider()
-                    .opacity(0.5)
+                Divider().opacity(0.5)
             }
         }
     }
@@ -846,7 +837,6 @@ struct RecentTradeRow: View {
         }
     }
     
-    // ADD this computed property to replace the timeAgo function call:
     private var timeAgoText: String {
         let date = trade.exitDate ?? trade.entryDate
         let interval = Date().timeIntervalSince(date)
@@ -859,49 +849,6 @@ struct RecentTradeRow: View {
             return "\(hours) hour\(hours == 1 ? "" : "s") ago"
         } else {
             return "Just now"
-        }
-    }
-}
-
-// MARK: - Floating Action Button
-extension PortfolioView {
-    private var floatingActionButton: some View {
-        VStack {
-            Spacer()
-            
-            HStack {
-                Spacer()
-                
-                Button(action: {
-                    showAddTrade = true
-                }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .bold))
-                        
-                        Text("Add Trade")
-                            .font(.system(size: 17, weight: .bold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 18)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.85)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(30)
-                    .shadow(color: Color.arkadGold.opacity(0.4), radius: 20, x: 0, y: 10)
-                    .shadow(color: Color.arkadGold.opacity(0.2), radius: 4, x: 0, y: 2)
-                }
-                .scaleEffect(animateContent ? 1 : 0.8)
-                .opacity(animateContent ? 1 : 0)
-                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(1.1), value: animateContent)
-            }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 40)
         }
     }
 }
@@ -939,7 +886,7 @@ extension PortfolioView {
         return chartData
     }
     
-    private func createSmoothPath(data: [Double], width: CGFloat, height: CGFloat, adjustedMin: Double, finalRange: Double) -> [CGPoint] {
+    private func createChartPoints(data: [Double], width: CGFloat, height: CGFloat, adjustedMin: Double, finalRange: Double) -> [CGPoint] {
         return data.enumerated().map { index, value in
             let x = width * CGFloat(index) / CGFloat(data.count - 1)
             let normalizedValue = (value - adjustedMin) / finalRange
@@ -947,57 +894,16 @@ extension PortfolioView {
             return CGPoint(x: x, y: y)
         }
     }
-    
-    private func getDateLabelForIndex(_ index: Int, total: Int, performanceData: [DailyPerformance]) -> String {
-        let formatter = DateFormatter()
-        
-        switch selectedTimeframe {
-        case .weekly:
-            formatter.dateFormat = "EEE"
-        case .monthly:
-            formatter.dateFormat = "MMM d"
-        case .allTime:
-            formatter.dateFormat = "MMM"
-        default:
-            formatter.dateFormat = "MMM d"
-        }
-        
-        if !performanceData.isEmpty && performanceData.count >= total {
-            let dataIndex = (performanceData.count - 1) * index / (total - 1)
-            let clampedIndex = min(dataIndex, performanceData.count - 1)
-            return formatter.string(from: performanceData[clampedIndex].date)
-        } else {
-            let calendar = Calendar.current
-            let now = Date()
-            
-            let startDate: Date
-            switch selectedTimeframe {
-            case .weekly:
-                startDate = calendar.date(byAdding: .weekOfYear, value: -1, to: now) ?? now
-            case .monthly:
-                startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
-            case .allTime:
-                startDate = calendar.date(byAdding: .month, value: -6, to: now) ?? now
-            default:
-                startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
-            }
-            
-            let timeInterval = now.timeIntervalSince(startDate)
-            let dateForIndex = Date(timeInterval: timeInterval * Double(index) / Double(total - 1), since: startDate)
-            
-            return formatter.string(from: dateForIndex)
-        }
-    }
 }
 
 // MARK: - Computed Properties
 extension PortfolioView {
     private var portfolioValue: Double {
-        return portfolioViewModel.portfolio?.totalValue ?? 0.0
+        portfolioViewModel.portfolio?.totalValue ?? 0.0
     }
     
     private var totalProfitLoss: Double {
-        return portfolioViewModel.portfolio?.totalProfitLoss ?? 0.0
+        portfolioViewModel.portfolio?.totalProfitLoss ?? 0.0
     }
     
     private var returnPercentage: Double {
@@ -1007,15 +913,11 @@ extension PortfolioView {
     }
     
     private var winRate: Double {
-        return portfolioViewModel.portfolio?.winRate ?? 0.0
+        portfolioViewModel.portfolio?.winRate ?? 0.0
     }
     
     private var openPositions: [Trade] {
         portfolioViewModel.trades.filter { $0.isOpen }
-    }
-    
-    private var closedTrades: [Trade] {
-        portfolioViewModel.trades.filter { !$0.isOpen }
     }
     
     private var allTrades: [Trade] {
@@ -1027,10 +929,8 @@ extension PortfolioView {
     }
     
     private var bestTradeValue: String {
-        guard let bestTrade = closedTrades.max(by: { $0.profitLoss < $1.profitLoss }) else {
-            return "$0"
-        }
-        return bestTrade.profitLoss.asCurrency
+        let bestTrade = portfolioViewModel.trades.filter { !$0.isOpen }.max { $0.profitLoss < $1.profitLoss }
+        return bestTrade?.profitLoss.asCurrency ?? "$0"
     }
     
     private var greetingText: String {
@@ -1042,6 +942,11 @@ extension PortfolioView {
         }
     }
     
+    private var firstName: String {
+        authService.currentUser?.fullName.components(separatedBy: " ").first ?? "Trader"
+    }
+    
+    // EXACT SAME PATTERN AS ORIGINAL
     private var userInitials: String {
         let name = authService.currentUser?.fullName ?? "User"
         let components = name.components(separatedBy: " ")
@@ -1049,22 +954,7 @@ extension PortfolioView {
         let lastInitial = components.count > 1 ? String(components.last?.first ?? Character("")) : ""
         return "\(firstInitial)\(lastInitial)".uppercased()
     }
-    
-    private func timeAgo(from date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        let days = Int(interval / 86400)
-        let hours = Int(interval / 3600)
-        
-        if days > 0 {
-            return "\(days) day\(days == 1 ? "" : "s") ago"
-        } else if hours > 0 {
-            return "\(hours) hour\(hours == 1 ? "" : "s") ago"
-        } else {
-            return "Just now"
-        }
-    }
 }
-
 
 // MARK: - TimeFrame Extension
 extension TimeFrame {

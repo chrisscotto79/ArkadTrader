@@ -178,7 +178,6 @@ struct AppSplashView: View {
                     // Enhanced app title with animated letters
                     VStack(spacing: 12) {
                         AnimatedText(text: "ARKAD", delay: 1.2)
-                        AnimatedText(text: "TRADER", delay: 1.6, size: 24, weight: .medium)
                     }
                     .opacity(textOpacity)
                 }
@@ -219,7 +218,7 @@ struct AppSplashView: View {
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundColor(.white.opacity(0.5))
                     
-                    Text("© 2025 Arkad Trading")
+                    Text("© 2025 Arkad")
                         .font(.system(.caption2, design: .rounded))
                         .foregroundColor(.arkadGold.opacity(0.7))
                 }

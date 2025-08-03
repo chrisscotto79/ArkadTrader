@@ -10,6 +10,8 @@ struct SearchView: View {
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
+    @EnvironmentObject private var authService: FirebaseAuthService
+
     
     // Sheet states for future features
     @State private var showAdvancedFilters = false
@@ -568,29 +570,30 @@ struct SearchView: View {
     
     private var searchResults: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
-                // Enhanced results header
-                enhancedResultsHeader
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                
-                // Results with enhanced cards
-                ForEach(Array(filteredResults.enumerated()), id: \.element.id) { index, result in
-                    EnhancedSearchResultView(result: result)
-                        .padding(.horizontal, 20)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                            removal: .move(edge: .top).combined(with: .opacity)
-                        ))
-                        .animation(
-                            .spring(response: 0.6, dampingFraction: 0.8)
-                            .delay(Double(index) * 0.05),
-                            value: filteredResults.count
-                        )
+                    LazyVStack(spacing: 12) {
+                        // Enhanced results header
+                        enhancedResultsHeader
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                        
+                        // Results with enhanced cards
+                        ForEach(Array(filteredResults.enumerated()), id: \.element.id) { index, result in
+                            SearchResultView(result: result)
+                                .environmentObject(authService)  // ← Now this will work
+                                .padding(.horizontal, 20)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .move(edge: .top).combined(with: .opacity)
+                                ))
+                                .animation(
+                                    .spring(response: 0.6, dampingFraction: 0.8)
+                                    .delay(Double(index) * 0.05),
+                                    value: filteredResults.count
+                                )
+                        }
+                    }
+                    .padding(.bottom, 100)
                 }
-            }
-            .padding(.bottom, 100)
-        }
     }
     
     private var enhancedResultsHeader: some View {

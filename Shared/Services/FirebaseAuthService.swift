@@ -5,6 +5,8 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 import Combine
+import FirebaseStorage  // ✅ ADDED: Missing Firebase Storage import
+import UIKit 
 
 @MainActor
 class FirebaseAuthService: ObservableObject {
@@ -190,30 +192,98 @@ class FirebaseAuthService: ObservableObject {
         
         // MARK: - Profile Updates
         
-        func updateProfile(fullName: String? = nil, bio: String? = nil, username: String? = nil) async throws {
+        func updateProfile(
+            fullName: String? = nil,
+            bio: String? = nil,
+            username: String? = nil,
+            profileImage: UIImage? = nil  // ✅ ADD THIS PARAMETER
+        ) async throws {
+            print("🔄 Updating user profile...")
+            
             guard var user = currentUser else {
+                print("❌ No current user found")
                 throw AuthError.notAuthenticated
             }
             
+            // Update basic profile fields
             if let fullName = fullName {
                 user.fullName = fullName
+                print("📝 Updated full name: \(fullName)")
             }
             
             if let bio = bio {
                 user.bio = bio
+                print("📝 Updated bio: \(bio)")
             }
             
             if let username = username, username != user.username {
                 let available = try await isUsernameAvailable(username)
                 guard available else {
+                    print("❌ Username not available: \(username)")
                     throw AuthError.usernameTaken
                 }
                 user.username = username
+                print("📝 Updated username: \(username)")
             }
             
-            try await FirebaseServices.shared.updateUser(user)
-            currentUser = user
+            // Handle profile image upload
+            if let profileImage = profileImage {
+                print("🖼️ Profile image provided, uploading...")
+                
+                // Delete old image if it exists
+                if let oldImageUrl = user.profileImageUrl {
+                    Task {
+                        try await FirebaseServices.shared.deleteProfileImage(imageUrl: oldImageUrl)
+                    }
+                }
+                
+                // Upload new image
+                let imageUrl = try await FirebaseServices.shared.uploadProfileImage(profileImage, userId: user.id)
+                user.profileImageUrl = imageUrl
+                print("✅ Profile image updated: \(imageUrl)")
+            }
+            
+            // Update timestamp
+            user.updatedAt = Date()
+            
+            // Save to Firestore
+            do {
+                try await FirebaseServices.shared.updateUser(user)
+                self.currentUser = user
+                print("✅ Profile updated successfully")
+            } catch {
+                print("❌ Failed to update user in Firestore: \(error)")
+                throw error
+            }
         }
+    func updateProfileImage(_ image: UIImage) async throws {
+        guard let user = currentUser else {
+            throw AuthError.notAuthenticated
+        }
+        
+        try await updateProfile(profileImage: image)
+    }
+
+    func removeProfileImage() async throws {
+        guard var user = currentUser else {
+            throw AuthError.notAuthenticated
+        }
+        
+        // Delete the image from storage if it exists
+        if let imageUrl = user.profileImageUrl {
+            try await FirebaseServices.shared.deleteProfileImage(imageUrl: imageUrl)
+        }
+        
+        // Update user record
+        user.profileImageUrl = nil
+        user.updatedAt = Date()
+        
+        try await FirebaseServices.shared.updateUser(user)
+        self.currentUser = user
+        
+        print("✅ Profile image removed successfully")
+    }
+
         
         // MARK: - User Management Wrapper Methods
         
@@ -625,6 +695,9 @@ enum AuthError: LocalizedError {
     case invalidEmail
     case weakPassword
     case emailAlreadyInUse
+    case invalidData      // ✅ ADD THIS
+    case uploadFailed     // ✅ ADD THIS
+    case custom(String)   // ✅ ADD THIS
     
     var errorDescription: String? {
         switch self {
@@ -644,7 +717,12 @@ enum AuthError: LocalizedError {
             return "Password must be at least 6 characters"
         case .emailAlreadyInUse:
             return "An account with this email already exists"
+        case .invalidData:
+            return "Invalid data provided"
+        case .uploadFailed:
+            return "Failed to upload file"
+        case .custom(let message):
+            return message
         }
     }
 }
-
