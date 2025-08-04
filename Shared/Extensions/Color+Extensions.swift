@@ -45,10 +45,12 @@ extension Color {
     static let borderSecondary = Color(UIColor.opaqueSeparator)
     
     // MARK: - Trading Category Colors
-    static let stockColor = Color(red: 99/255, green: 102/255, blue: 241/255)
-    static let optionColor = Color(red: 168/255, green: 85/255, blue: 247/255)
-    static let cryptoColor = Color(red: 245/255, green: 158/255, blue: 11/255)
-    static let forexColor = Color(red: 20/255, green: 184/255, blue: 166/255)
+    static let stockColor = Color.blue
+    static let optionColor = Color.purple
+    static let cryptoColor = Color.orange
+    static let forexColor = Color.green
+    static let etfColor = Color.indigo      // New color for ETF
+    static let futureColor = Color.brown 
     
     // MARK: - Social Media Colors
     static let twitterBlue = Color(red: 29/255, green: 161/255, blue: 242/255)
