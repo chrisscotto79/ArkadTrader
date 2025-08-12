@@ -13,6 +13,7 @@ class CommunitiesViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage = ""
     
+    
     // User stats
     @Published var userStats: UserCommunityStats?
     @Published var activeCommunities = 0
@@ -28,6 +29,7 @@ class CommunitiesViewModel: ObservableObject {
     private let communityService = CommunityFirebaseService.shared
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
+    
     
     // MARK: - Initialization
     init() {
@@ -383,6 +385,100 @@ class CommunitiesViewModel: ObservableObject {
             leaderboardData = leaderboards
         } catch {
             handleError(error, context: "loading leaderboards")
+        }
+    }
+}
+
+
+extension CommunitiesViewModel {
+    
+    // MARK: - Grouped Communities for Discover Tab
+    
+    /// Communities grouped by type in the desired display order
+    var groupedDiscoveryCommunities: [(type: CommunityType, communities: [Community])] {
+        // Define the display order
+        let typeOrder: [CommunityType] = [
+            .dayTrading,
+            .swingTrading,
+            .options,
+            .crypto,
+            .stocks,
+            .general
+        ]
+        
+        // Group communities by type
+        let grouped = Dictionary(grouping: discoveryCommunities) { $0.type }
+        
+        // Return in the specified order, only including types that have communities
+        return typeOrder.compactMap { type in
+            guard let communities = grouped[type], !communities.isEmpty else {
+                return nil
+            }
+            return (type: type, communities: communities.sorted {
+                // Sort within each group by member count (descending) and then by name
+                if $0.memberCount != $1.memberCount {
+                    return $0.memberCount > $1.memberCount
+                }
+                return $0.name < $1.name
+            })
+        }
+    }
+    
+    /// All community types in display order (for showing empty states)
+    var allCommunityTypesInOrder: [CommunityType] {
+        return [.dayTrading, .swingTrading, .options, .crypto, .stocks, .general]
+    }
+    
+    /// Get communities for a specific type
+    func communitiesForType(_ type: CommunityType) -> [Community] {
+        return discoveryCommunities
+            .filter { $0.type == type }
+            .sorted {
+                // Sort by member count (descending) and then by name
+                if $0.memberCount != $1.memberCount {
+                    return $0.memberCount > $1.memberCount
+                }
+                return $0.name < $1.name
+            }
+    }
+    
+    /// Check if a community type has any communities
+    func hasCommunitiesForType(_ type: CommunityType) -> Bool {
+        return discoveryCommunities.contains { $0.type == type }
+    }
+    
+    /// Get empty community types (for showing empty states)
+    var emptyCommunityTypes: [CommunityType] {
+        let typesWithCommunities = Set(discoveryCommunities.map { $0.type })
+        return allCommunityTypesInOrder.filter { !typesWithCommunities.contains($0) }
+    }
+    
+    /// Get section title for a community type
+    func sectionTitle(for type: CommunityType) -> String {
+        return type.shortDisplayName
+    }
+    
+    /// Get section icon for a community type
+    func sectionIcon(for type: CommunityType) -> String {
+        switch type {
+        case .general: return "person.3"
+        case .dayTrading: return "chart.line.uptrend.xyaxis"
+        case .swingTrading: return "chart.bar"
+        case .options: return "option"
+        case .crypto: return "bitcoinsign.circle"
+        case .stocks: return "building.columns"
+        }
+    }
+    
+    /// Get section color for a community type
+    func sectionColor(for type: CommunityType) -> String {
+        switch type {
+        case .dayTrading: return "red"
+        case .swingTrading: return "orange"
+        case .options: return "purple"
+        case .crypto: return "yellow"
+        case .stocks: return "green"
+        case .general: return "blue"
         }
     }
 }

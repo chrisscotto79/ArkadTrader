@@ -2229,6 +2229,7 @@ enum FirestoreError: LocalizedError {
     }
 }
 
+
 enum SearchError: LocalizedError {
     case searchFailed(String)
     case noResults

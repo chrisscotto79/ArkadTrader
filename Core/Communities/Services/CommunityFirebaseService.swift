@@ -3,6 +3,8 @@
 
 import Foundation
 import FirebaseFirestore
+import Firebase
+import FirebaseCore
 
 @MainActor
 class CommunityFirebaseService: ObservableObject {
@@ -10,8 +12,8 @@ class CommunityFirebaseService: ObservableObject {
     static let shared = CommunityFirebaseService()
     
     // MARK: - Dependencies
-    private let firebaseService = FirebaseServices.shared
-    private let authService = FirebaseAuthService.shared
+    let firebaseService = FirebaseServices.shared
+    let authService = FirebaseAuthService.shared
     
     // MARK: - Init (PUBLIC - not private)
     init() {}
@@ -36,12 +38,12 @@ class CommunityFirebaseService: ObservableObject {
     // MARK: - Community Data Loading
     
     // MARK: - Community Data Loading
-
+    
     /// Load all communities for discovery
     func loadDiscoveryCommunities(limit: Int = 50) async throws -> [Community] {
         return try await firebaseService.getCommunities(limit: limit)
     }
-
+    
     // ADD THE NEW METHOD HERE:
     /// Get communities owned by a specific user (alias for loadUserCreatedCommunities)
     
@@ -100,17 +102,175 @@ class CommunityFirebaseService: ObservableObject {
     }
     
     /// Get community members
-    func getCommunityMembers(communityId: String) async throws -> [User] {
-        return try await firebaseService.getCommunityMembers(communityId: communityId)
+    func getCommunityMembersWithRoles(communityId: String) async throws -> [CommunityMemberWithRole] {
+        let db = Firestore.firestore()
+        
+        print("🏁 Starting member lookup for community: \(communityId)")
+        
+        // First, try to get the community document directly
+        let communityDoc = try await db.collection("communities").document(communityId).getDocument()
+        
+        guard communityDoc.exists, let communityData = communityDoc.data() else {
+            print("❌ Community document not found: \(communityId)")
+            throw FirestoreError.invalidData
+        }
+        
+        let createdBy = communityData["createdBy"] as? String ?? ""
+        print("👑 Community owner: \(createdBy)")
+        
+        // Get members from the subcollection
+        let snapshot = try await db.collection("communities")
+            .document(communityId)
+            .collection("members")
+            .getDocuments()
+        
+        var members: [CommunityMemberWithRole] = []
+        
+        print("🔍 Found \(snapshot.documents.count) members in subcollection")
+        
+        for document in snapshot.documents {
+            let userId = document.documentID
+            let memberData = document.data()
+            
+            print("👤 Processing member: \(userId)")
+            print("📄 Member data keys: \(memberData.keys)")
+            
+            // Get actual user data using the existing getUserById method
+            do {
+                if let user = try await authService.getUserById(userId: userId) {
+                    // Determine role - creator is owner, others are members
+                    let role: CommunityRole = userId == createdBy ? .owner : .member
+                    
+                    let member = CommunityMemberWithRole(
+                        userId: userId,
+                        username: user.username,
+                        fullName: user.fullName,
+                        role: role,
+                        joinedAt: Date()
+                    )
+                    members.append(member)
+                    print("✅ Added member: \(user.fullName) (\(user.username)) as \(role.displayName)")
+                } else {
+                    print("⚠️ Could not find user details for \(userId)")
+                    // Fallback to basic info
+                    let member = CommunityMemberWithRole(
+                        userId: userId,
+                        username: "user\(userId.suffix(4))",
+                        fullName: "User \(userId.suffix(4))",
+                        role: userId == createdBy ? .owner : .member,
+                        joinedAt: Date()
+                    )
+                    members.append(member)
+                }
+            } catch {
+                print("❌ Error getting user details for member \(userId): \(error)")
+                // Fallback to basic info
+                let member = CommunityMemberWithRole(
+                    userId: userId,
+                    username: "user\(userId.suffix(4))",
+                    fullName: "User \(userId.suffix(4))",
+                    role: userId == createdBy ? .owner : .member,
+                    joinedAt: Date()
+                )
+                members.append(member)
+            }
+        }
+        
+        print("🎯 Final member count: \(members.count)")
+        
+        // Sort by role hierarchy, then by name
+        return members.sorted { lhs, rhs in
+            if lhs.role.hierarchyLevel != rhs.role.hierarchyLevel {
+                return lhs.role.hierarchyLevel > rhs.role.hierarchyLevel
+            }
+            return lhs.fullName < rhs.fullName
+        }
     }
     // MARK: - Community Guidelines
-
+    
     /// Check if community name is available
     func isNameAvailable(_ name: String) async throws -> Bool {
         let existingCommunities = try await firebaseService.searchCommunities(query: name)
         return !existingCommunities.contains {
             $0.name.lowercased() == name.lowercased()
         }
+    }
+    func deleteCommunityRule(communityId: String, ruleId: String) async throws {
+        guard let currentUser = authService.currentUser else {
+            throw FirestoreError.invalidData
+        }
+        
+        // Check if user can manage this community
+        let canManage = try await canUserManageCommunity(communityId: communityId, userId: currentUser.id)
+        guard canManage else {
+            throw FirestoreError.invalidData
+        }
+        
+        let db = Firestore.firestore()
+        let ruleRef = db.collection("communities")
+            .document(communityId)
+            .collection("rules")
+            .document(ruleId)
+        
+        // Check if it's a default rule
+        let ruleDoc = try await ruleRef.getDocument()
+        if let data = ruleDoc.data(),
+           let isDefault = data["isDefault"] as? Bool,
+           isDefault {
+            throw FirestoreError.invalidData // Cannot delete default financial disclaimer rules
+        }
+        
+        try await ruleRef.delete()
+        print("✅ Deleted custom rule from community")
+    }
+    func getCommunityRules(communityId: String) async throws -> [CommunityRule] {
+        let db = Firestore.firestore()
+        
+        let snapshot = try await db.collection("communities")
+            .document(communityId)
+            .collection("rules")
+            .order(by: "order")
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { document in
+            try? CommunityRule.fromFirestore(data: document.data(), id: document.documentID)
+        }
+    }
+    func addCommunityRule(communityId: String, rule: CommunityRule) async throws {
+        guard let currentUser = authService.currentUser else {
+            throw FirestoreError.invalidData
+        }
+        
+        // Check if user can manage this community
+        let canManage = try await canUserManageCommunity(communityId: communityId, userId: currentUser.id)
+        guard canManage else {
+            throw FirestoreError.invalidData
+        }
+        
+        let db = Firestore.firestore()
+        let ruleRef = db.collection("communities")
+            .document(communityId)
+            .collection("rules")
+            .document(rule.id)
+        
+        try await ruleRef.setData(rule.toFirestore())
+        print("✅ Added custom rule to community")
+    }
+    func createDefaultRules(communityId: String, rules: [CommunityRule]) async throws {
+        let db = Firestore.firestore()
+        let batch = db.batch()
+        
+        for rule in rules {
+            let ruleRef = db.collection("communities")
+                .document(communityId)
+                .collection("rules")
+                .document(rule.id)
+            
+            batch.setData(rule.toFirestore(), forDocument: ruleRef)
+        }
+        
+        try await batch.commit()
+        print("✅ Created default financial disclaimer rules for community")
     }
     
     // MARK: - Community Search & Filtering
@@ -198,7 +358,7 @@ class CommunityFirebaseService: ObservableObject {
     }
     
     /// Get user community stats
-    /// 
+    ///
     func getUserCommunityStats(userId: String) async throws -> UserCommunityStats {
         let userCommunities = try await firebaseService.getUserCommunities(userId: userId)
         let ownedCommunities = userCommunities.filter { $0.createdBy == userId }
@@ -215,12 +375,23 @@ class CommunityFirebaseService: ObservableObject {
     // MARK: - Community Management
     
     /// Update community member role
-    func updateMemberRole(communityId: String, userId: String, role: String) async throws {
-        try await firebaseService.updateCommunityMemberRole(
-            communityId: communityId,
-            userId: userId,
-            role: role
-        )
+    func updateMemberRole(communityId: String, userId: String, newRole: CommunityRole) async throws {
+        // For now, we'll just validate the action
+        // Later we can store roles in Firestore subcollection
+        
+        guard let currentUser = authService.currentUser else {
+            throw FirestoreError.invalidData
+        }
+        
+        // Check if current user can manage this community
+        let canManage = try await canUserManageCommunity(communityId: communityId, userId: currentUser.id)
+        guard canManage else {
+            throw FirestoreError.invalidData
+        }
+        
+        // TODO: Implement role storage in Firestore
+        // For now, we'll just simulate success
+        print("Would update user \(userId) to role \(newRole.rawValue) in community \(communityId)")
     }
     
     /// Check if user can manage community
@@ -297,26 +468,63 @@ class CommunityFirebaseService: ObservableObject {
     func handleCommunityError(_ error: Error) -> String {
         // Don't redeclare FirestoreError - use the existing one from FirebaseServices
         return "An error occurred: \(error.localizedDescription)"
+        
     }
-}
-
-// MARK: - Supporting Types
-
-/// Community sort options
-enum CommunitySortType: CaseIterable {
-    case memberCount
-    case newest
-    case alphabetical
-    case mostActive
-    
-    var displayName: String {
-        switch self {
-        case .memberCount: return "Most Members"
-        case .newest: return "Newest"
-        case .alphabetical: return "A-Z"
-        case .mostActive: return "Most Active"
+    func removeMemberFromCommunity(communityId: String, userId: String) async throws {
+        guard let currentUser = authService.currentUser else {
+            throw FirestoreError.invalidData
         }
+        
+        // Check if current user can manage this community
+        let canManage = try await canUserManageCommunity(communityId: communityId, userId: currentUser.id)
+        guard canManage else {
+            throw FirestoreError.invalidData
+        }
+        
+        // Don't allow removing the owner
+        let community = try await getSingleCommunity(communityId: communityId)
+        guard userId != community.createdBy else {
+            throw FirestoreError.invalidData
+        }
+        
+        // Remove from the members subcollection
+        let db = Firestore.firestore()
+        try await db.collection("communities")
+            .document(communityId)
+            .collection("members")
+            .document(userId)
+            .delete()
+        
+        // Also remove community from user's communityIds array
+        try await leaveCommunity(communityId: communityId, userId: userId)
     }
+    /// Get single community (helper method)
+    private func getSingleCommunity(communityId: String) async throws -> Community {
+        let communities = try await firebaseService.getCommunities(limit: 1000)
+        guard let community = communities.first(where: { $0.id == communityId }) else {
+            throw FirestoreError.invalidData
+        }
+        return community
+    }
+    
+    
+    /// Get user's role in community
+    func getUserRole(communityId: String, userId: String) async throws -> CommunityRole {
+        let community = try await getSingleCommunity(communityId: communityId)
+        
+        // For now, simple logic: creator is owner, everyone else is member
+        // Later we'll check stored roles
+        return userId == community.createdBy ? .owner : .member
+    }
+    
+    
+    // MARK: - Supporting Types
+    
+        
+    
+    
+    /// Community leaderboard data
+    
 }
 
 /// User community statistics
@@ -327,7 +535,6 @@ struct UserCommunityStats {
     let communitiesOwned: Int
     let communitiesModerated: Int
 }
-
 /// Community activity item
 struct CommunityActivity: Identifiable {
     let id: String
@@ -349,8 +556,22 @@ enum CommunityActivityType {
     case calloutMade
     case settingsChanged
 }
+enum CommunitySortType: CaseIterable {
+    case memberCount
+    case newest
+    case alphabetical
+    case mostActive
+    
+    var displayName: String {
+        switch self {
+        case .memberCount: return "Most Members"
+        case .newest: return "Newest"
+        case .alphabetical: return "A-Z"
+        case .mostActive: return "Most Active"
+        }
+    }
+}
 
-/// Community leaderboard data
 struct CommunityLeaderboards {
     let mostPopular: [Community]
     let newest: [Community]

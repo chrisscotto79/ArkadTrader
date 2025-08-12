@@ -19,13 +19,20 @@ struct FeaturedCommunitiesSection: View {
     
     @State private var isLoading = false
     
-    // MARK: - Initializers
+    let isUserMemberCheck: (Community) -> Bool
+    let onJoinCommunity: (Community) -> Void
+
     init(
         communities: [Community],
         maxFeaturedCount: Int = 3,
         onCommunityTap: @escaping (Community) -> Void,
-        onSeeAllTap: (() -> Void)? = nil
+        onSeeAllTap: (() -> Void)? = nil,
+        isUserMemberCheck: @escaping (Community) -> Bool = { _ in false },
+        onJoinCommunity: @escaping (Community) -> Void = { _ in }
     ) {
+        // ... existing assignments ...
+        self.isUserMemberCheck = isUserMemberCheck
+        self.onJoinCommunity = onJoinCommunity
         self.communities = communities
         self.maxFeaturedCount = maxFeaturedCount
         self.onCommunityTap = onCommunityTap
@@ -102,10 +109,23 @@ struct FeaturedCommunitiesSection: View {
     }
     
     private func featuredCommunityCard(_ community: Community) -> some View {
-        NavigationLink(destination: CommunityDetailView(community: community)) {
-            CommunityCard.featured(
+        Button(action: {
+            onCommunityTap(community)
+        }) {
+            EnhancedCommunityCard(
                 community: community,
-                onTap: nil
+                style: .featured(),
+                isUserMember: isUserMemberCheck(community),
+                onTap: {
+                    onCommunityTap(community)
+                },
+                onJoin: {
+                    onJoinCommunity(community)
+                    HapticManager.shared.notification(type: .success)
+                },
+                onInfo: {
+                    print("Show preview for: \(community.name)")
+                }
             )
         }
         .buttonStyle(PlainButtonStyle())
