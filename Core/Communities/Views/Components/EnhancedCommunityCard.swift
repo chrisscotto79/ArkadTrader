@@ -87,7 +87,7 @@ struct EnhancedCommunityCard: View {
         ZStack(alignment: .topTrailing) {
             // Banner Background
             Group {
-                if let bannerUrl = community.bannerImageUrl, !bannerUrl.isEmpty {
+                if let bannerUrl = community.bannerURL, !bannerUrl.isEmpty {
                     AsyncImage(url: URL(string: bannerUrl)) { image in
                         image
                             .resizable()
@@ -254,7 +254,8 @@ struct EnhancedCommunityCard: View {
                     .frame(width: 50, height: 50)
                     .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
                 
-                if let profileUrl = community.profileImageUrl, !profileUrl.isEmpty {
+                if let profileUrl = community.avatarURL, !profileUrl.isEmpty {
+
                     AsyncImage(url: URL(string: profileUrl)) { image in
                         image
                             .resizable()

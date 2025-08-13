@@ -9,6 +9,8 @@ import Foundation
 import FirebaseFirestore
 import SwiftUI
 
+// FirestoreError is already defined elsewhere in the project
+
 // MARK: - Channel Model
 struct Channel: Identifiable, Codable {
     var id: String
@@ -41,7 +43,6 @@ struct Channel: Identifiable, Codable {
         ]
     }
     
-    
     static func fromFirestore(data: [String: Any], id: String) throws -> Channel {
         guard let name = data["name"] as? String,
               let typeString = data["type"] as? String,
@@ -59,8 +60,6 @@ struct Channel: Identifiable, Codable {
         return channel
     }
 }
-
-
 
 // MARK: - Channel Type Enum
 enum ChannelType: String, CaseIterable, Codable {
@@ -140,15 +139,21 @@ struct CommunityMessage: Identifiable, Codable {
     }
 }
 
+// MARK: - Community Settings
 struct CommunitySettings {
     var name: String
     var description: String
     var isPrivate: Bool
+    var avatarURL: String? // For community avatar
+    var bannerURL: String? // For community banner
     
     init(from community: Community) {
         self.name = community.name
         self.description = community.description
         self.isPrivate = community.isPrivate
+        // Use the actual Community property names
+        self.avatarURL = community.avatarURL
+        self.bannerURL = community.bannerURL
     }
     
     // Convert back to community for updates
@@ -157,9 +162,14 @@ struct CommunitySettings {
         updatedCommunity.name = self.name
         updatedCommunity.description = self.description
         updatedCommunity.isPrivate = self.isPrivate
+        // Use the actual Community property names
+        updatedCommunity.avatarURL = self.avatarURL
+        updatedCommunity.bannerURL = self.bannerURL
         return updatedCommunity
     }
 }
+
+// MARK: - Community Role Enum
 enum CommunityRole: String, CaseIterable, Codable {
     case owner = "owner"
     case admin = "admin"
@@ -209,6 +219,7 @@ enum CommunityRole: String, CaseIterable, Codable {
     }
 }
 
+// MARK: - Community Member With Role
 struct CommunityMemberWithRole: Identifiable, Codable {
     let id: String
     let userId: String
@@ -258,6 +269,8 @@ struct CommunityMemberWithRole: Identifiable, Codable {
         )
     }
 }
+
+// MARK: - Community Rule
 struct CommunityRule: Identifiable, Codable {
     var id: String
     var title: String
@@ -266,8 +279,10 @@ struct CommunityRule: Identifiable, Codable {
     var order: Int // Display order
     var isDefault: Bool // Default rule (can't be deleted)
     var createdAt: Date
+    var category: String? // Rule category (e.g., "Trading", "Behavior", "Content")
+    var iconName: String? // Optional icon for the rule
     
-    init(title: String, description: String, isRequired: Bool = true, order: Int = 0, isDefault: Bool = false) {
+    init(title: String, description: String, isRequired: Bool = true, order: Int = 0, isDefault: Bool = false, category: String? = nil, iconName: String? = nil) {
         self.id = UUID().uuidString
         self.title = title
         self.description = description
@@ -275,11 +290,13 @@ struct CommunityRule: Identifiable, Codable {
         self.order = order
         self.isDefault = isDefault
         self.createdAt = Date()
+        self.category = category
+        self.iconName = iconName
     }
     
     // Firebase conversion
     func toFirestore() -> [String: Any] {
-        return [
+        var data: [String: Any] = [
             "title": title,
             "description": description,
             "isRequired": isRequired,
@@ -287,6 +304,15 @@ struct CommunityRule: Identifiable, Codable {
             "isDefault": isDefault,
             "createdAt": Timestamp(date: createdAt)
         ]
+        
+        if let category = category {
+            data["category"] = category
+        }
+        if let iconName = iconName {
+            data["iconName"] = iconName
+        }
+        
+        return data
     }
     
     static func fromFirestore(data: [String: Any], id: String) throws -> CommunityRule {
@@ -304,7 +330,9 @@ struct CommunityRule: Identifiable, Codable {
             description: description,
             isRequired: isRequired,
             order: order,
-            isDefault: isDefault
+            isDefault: isDefault,
+            category: data["category"] as? String,
+            iconName: data["iconName"] as? String
         )
         rule.id = id
         rule.createdAt = createdAtTimestamp.dateValue()
@@ -312,7 +340,7 @@ struct CommunityRule: Identifiable, Codable {
         return rule
     }
     
-    // MARK: - Default Financial Disclaimer Rules
+    // MARK: - Enhanced Default Financial Disclaimer Rules
     static func getDefaultTradingRules() -> [CommunityRule] {
         return [
             CommunityRule(
@@ -320,7 +348,9 @@ struct CommunityRule: Identifiable, Codable {
                 description: "All content shared in this community is for educational and informational purposes only. Nothing shared here constitutes financial, investment, or trading advice. All trading involves substantial risk of loss. You are solely responsible for your own trading decisions.",
                 isRequired: true,
                 order: 1,
-                isDefault: true
+                isDefault: true,
+                category: "Legal",
+                iconName: "exclamationmark.triangle.fill"
             ),
             
             CommunityRule(
@@ -328,7 +358,9 @@ struct CommunityRule: Identifiable, Codable {
                 description: "Trading stocks, options, crypto, and other financial instruments involves significant risk of loss. Past performance does not guarantee future results. Never trade with money you cannot afford to lose. All members trade at their own risk.",
                 isRequired: true,
                 order: 2,
-                isDefault: true
+                isDefault: true,
+                category: "Risk Management",
+                iconName: "shield.slash.fill"
             ),
             
             CommunityRule(
@@ -336,7 +368,9 @@ struct CommunityRule: Identifiable, Codable {
                 description: "When sharing trades or callouts, please provide clear entry/exit points, position size, and risk management details. This helps maintain educational value and transparency for the community.",
                 isRequired: false,
                 order: 3,
-                isDefault: true
+                isDefault: true,
+                category: "Trading Content",
+                iconName: "chart.bar.doc.horizontal"
             ),
             
             CommunityRule(
@@ -344,7 +378,9 @@ struct CommunityRule: Identifiable, Codable {
                 description: "Promoting securities with intent to artificially inflate prices is strictly prohibited. Share genuine analysis and educational content only. Misleading or manipulative content will result in immediate removal.",
                 isRequired: true,
                 order: 4,
-                isDefault: true
+                isDefault: true,
+                category: "Content Policy",
+                iconName: "hand.raised.slash.fill"
             ),
             
             CommunityRule(
@@ -352,12 +388,15 @@ struct CommunityRule: Identifiable, Codable {
                 description: "Maintain respectful dialogue even during disagreements. No harassment, personal attacks, or offensive language. We're here to learn from each other and improve our trading skills together.",
                 isRequired: true,
                 order: 5,
-                isDefault: true
+                isDefault: true,
+                category: "Behavior",
+                iconName: "person.2.fill"
             )
         ]
     }
 }
 
+// MARK: - Community Moderation Settings
 struct CommunityModerationSettings: Codable {
     var autoModEnabled: Bool
     var requireApproval: Bool // For new members

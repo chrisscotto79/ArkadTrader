@@ -47,9 +47,11 @@ struct Community: Identifiable, Codable, Hashable {
     var isPrivate: Bool
     var createdAt: Date
     
+    // Image Properties (Using consistent naming)
+    var avatarURL: String?
+    var bannerURL: String?
+    
     // Enhanced Properties
-    var profileImageUrl: String?
-    var bannerImageUrl: String?
     var lastActivityDate: Date?
     var activityLevel: ActivityLevel?
     var tags: [String] // Additional tags beyond just type
@@ -67,8 +69,8 @@ struct Community: Identifiable, Codable, Hashable {
         self.createdAt = Date()
         
         // Initialize new properties
-        self.profileImageUrl = nil
-        self.bannerImageUrl = nil
+        self.avatarURL = nil
+        self.bannerURL = nil
         self.lastActivityDate = Date() // Set to creation date initially
         self.activityLevel = .low // Default to low activity
         self.tags = []
@@ -179,13 +181,13 @@ struct Community: Identifiable, Codable, Hashable {
             "memberAvatars": memberAvatars
         ]
         
-        // Add optional fields only if they exist
-        if let profileImageUrl = profileImageUrl {
-            data["profileImageUrl"] = profileImageUrl
+        // Add optional image fields only if they exist
+        if let avatarURL = avatarURL {
+            data["avatarURL"] = avatarURL
         }
         
-        if let bannerImageUrl = bannerImageUrl {
-            data["bannerImageUrl"] = bannerImageUrl
+        if let bannerURL = bannerURL {
+            data["bannerURL"] = bannerURL
         }
         
         if let lastActivityDate = lastActivityDate {
@@ -224,9 +226,9 @@ struct Community: Identifiable, Codable, Hashable {
         community.id = id
         community.createdAt = createdAtTimestamp.dateValue()
         
-        // Handle optional new fields
-        community.profileImageUrl = data["profileImageUrl"] as? String
-        community.bannerImageUrl = data["bannerImageUrl"] as? String
+        // Handle optional image fields
+        community.avatarURL = data["avatarURL"] as? String
+        community.bannerURL = data["bannerURL"] as? String
         
         if let lastActivityTimestamp = data["lastActivityDate"] as? Timestamp {
             community.lastActivityDate = lastActivityTimestamp.dateValue()

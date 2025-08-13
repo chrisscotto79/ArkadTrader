@@ -95,7 +95,7 @@ struct CommunityPreviewSheet: View {
     
     private var bannerBackground: some View {
         Group {
-            if let bannerUrl = community.bannerImageUrl, !bannerUrl.isEmpty {
+            if let bannerUrl = community.bannerURL, !bannerUrl.isEmpty {
                 AsyncImage(url: URL(string: bannerUrl)) { image in
                     image
                         .resizable()
@@ -153,7 +153,7 @@ struct CommunityPreviewSheet: View {
                     .frame(width: 80, height: 80)
                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                 
-                if let profileUrl = community.profileImageUrl, !profileUrl.isEmpty {
+                if let profileUrl = community.avatarURL, !profileUrl.isEmpty {
                     AsyncImage(url: URL(string: profileUrl)) { image in
                         image
                             .resizable()
