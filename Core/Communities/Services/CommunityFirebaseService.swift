@@ -48,13 +48,10 @@ class CommunityFirebaseService: ObservableObject {
     /// Get communities owned by a specific user (alias for loadUserCreatedCommunities)
     
     
-    /// Load featured communities (top by member count)
+    /// Featured communities: the biggest public communities, boosted by recent chat activity
     func loadFeaturedCommunities(limit: Int = 5) async throws -> [Community] {
-        let allCommunities = try await firebaseService.getCommunities(limit: 20)
-        let featured = allCommunities
-            .sorted { $0.memberCount > $1.memberCount }
-            .prefix(limit)
-        return Array(featured)
+        let allCommunities = try await firebaseService.getCommunities(limit: 50)
+        return Array(allCommunities.sorted { $0.discoveryScore > $1.discoveryScore }.prefix(limit))
     }
     
     /// Load communities by category
@@ -317,8 +314,9 @@ class CommunityFirebaseService: ObservableObject {
         case .alphabetical:
             return communities.sorted { $0.name < $1.name }
         case .mostActive:
-            // TODO: Implement when we have activity data
-            return communities.sorted { $0.memberCount > $1.memberCount }
+            return communities.sorted {
+                ($0.lastActivityDate ?? .distantPast) > ($1.lastActivityDate ?? .distantPast)
+            }
         }
     }
     
@@ -336,7 +334,7 @@ class CommunityFirebaseService: ObservableObject {
             .prefix(5)
         
         let mostActive = communities
-            .sorted { $0.memberCount > $1.memberCount } // TODO: Use actual activity metric
+            .sorted { ($0.lastActivityDate ?? .distantPast) > ($1.lastActivityDate ?? .distantPast) }
             .prefix(5)
         
         return CommunityLeaderboards(

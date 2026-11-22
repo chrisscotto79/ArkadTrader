@@ -15,6 +15,9 @@ struct CommunityDetailView: View {
     @State private var showCreateChannel = false
     @State private var selectedChannel: Channel?
     @State private var showChannelOptions = false
+    @State private var channelToEdit: Channel?
+    @State private var channelForInfo: Channel?
+    @State private var showLeaderboard = false
     @State private var headerOffset: CGFloat = 0
     @State private var showJoinConfirmation = false
     @State private var animateEntry = false
@@ -85,14 +88,33 @@ struct CommunityDetailView: View {
         }) {
             EnhancedCommunitySettingsSheet(community: current)
         }
-        .sheet(isPresented: $showCreateChannel) {
-            CreateChannelSheet(community: community)
+        .sheet(isPresented: $showCreateChannel, onDismiss: {
+            Task { await viewModel.reloadChannels() }
+        }) {
+            CreateChannelSheet(community: current)
+        }
+        .sheet(item: $channelToEdit, onDismiss: {
+            Task { await viewModel.reloadChannels() }
+        }) { channel in
+            CreateChannelSheet(community: current, editing: channel)
+        }
+        .navigationDestination(isPresented: $showLeaderboard) {
+            CommunityLeaderboardView(community: current)
+        }
+        .alert(
+            channelForInfo.map { "#\($0.name)" } ?? "",
+            isPresented: Binding(get: { channelForInfo != nil }, set: { if !$0 { channelForInfo = nil } }),
+            presenting: channelForInfo
+        ) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { channel in
+            Text(channelInfoText(channel))
         }
         .confirmationDialog("Channel Options", isPresented: $showChannelOptions) {
             if let channel = selectedChannel {
                 if viewModel.canManageChannels && !channel.isDefault {
                     Button("Edit Channel") {
-                        // TODO: Implement edit channel
+                        channelToEdit = channel
                     }
                     
                     Button("Delete Channel", role: .destructive) {
@@ -107,7 +129,7 @@ struct CommunityDetailView: View {
                 }
                 
                 Button("Channel Info") {
-                    // TODO: Show channel info
+                    channelForInfo = channel
                 }
                 
                 Button("Cancel", role: .cancel) { }
@@ -116,6 +138,12 @@ struct CommunityDetailView: View {
     }
     
     // MARK: - Helper Functions
+    private func channelInfoText(_ channel: Channel) -> String {
+        let posting = channel.adminOnly ? "Only admins can post." : "Everyone can post."
+        let created = channel.createdAt.formatted(date: .abbreviated, time: .omitted)
+        return "\(channel.type.displayName) channel · Created \(created)\n\(posting)"
+    }
+
     private var communityColor: Color {
         switch current.type {
         case .dayTrading: return .red
@@ -535,21 +563,26 @@ extension CommunityDetailView {
                 icon: "bubble.left.and.bubble.right.fill",
                 color: .purple
             )
-            
-            statCard(
-                value: "Active",
-                label: "Status",
-                icon: "chart.line.uptrend.xyaxis",
-                color: .green,
-                isLive: true
-            )
+
+            Button {
+                showLeaderboard = true
+            } label: {
+                statCard(
+                    value: "Ranks",
+                    label: "Leaderboard",
+                    icon: "trophy.fill",
+                    color: .arkadGold
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open the community leaderboard")
         }
         .padding(.horizontal, 20)
         .opacity(animateEntry ? 1 : 0)
         .offset(y: animateEntry ? 0 : 20)
     }
     
-    private func statCard(value: String, label: String, icon: String, color: Color, isLive: Bool = false) -> some View {
+    private func statCard(value: String, label: String, icon: String, color: Color) -> some View {
         VStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 20))
@@ -561,30 +594,12 @@ extension CommunityDetailView {
                 )
             
             VStack(spacing: 4) {
-                HStack(spacing: 4) {
-                    Text(value)
-                        .font(.headline)
-                        .fontWeight(.bold)
-                    
-                    if isLive {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 6, height: 6)
-                            .overlay(
-                                Circle()
-                                    .fill(Color.green)
-                                    .frame(width: 6, height: 6)
-                                    .scaleEffect(2)
-                                    .opacity(0)
-                                    .animation(
-                                        Animation.easeInOut(duration: 1.5)
-                                            .repeatForever(autoreverses: false),
-                                        value: isLive
-                                    )
-                            )
-                    }
-                }
-                
+                Text(value)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+
                 Text(label)
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -810,104 +825,105 @@ struct EnhancedChannelRow: View {
 }
 
 // MARK: - Supporting Components
+
+/// Creates a new channel, or edits an existing one when `editing` is set.
 struct CreateChannelSheet: View {
     let community: Community
+    var editing: Channel?
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = CreateChannelViewModel()
-    
+
     @State private var channelName = ""
-    @State private var channelDescription = ""
     @State private var selectedType: ChannelType = .text
     @State private var isAdminOnly = false
-    @State private var showError = false
-    @State private var errorMessage = ""
-    
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var cleanedName: String {
+        channelName.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "#", with: "")
+    }
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section {
-                    TextField("Channel name", text: $channelName)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                    
-                    TextField("Description (optional)", text: $channelDescription)
-                }
-                
-                Section {
-                    Picker("Channel Type", selection: $selectedType) {
+                    HStack(spacing: 4) {
+                        Text("#").foregroundColor(.secondary)
+                        TextField("channel-name", text: $channelName)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    Picker("Type", selection: $selectedType) {
                         ForEach(ChannelType.allCases, id: \.self) { type in
-                            Label(type.displayName, systemImage: type.icon)
-                                .tag(type)
+                            Label(type.displayName, systemImage: type.icon).tag(type)
                         }
                     }
                 }
-                
+
                 Section {
-                    Toggle("Admin-only posting", isOn: $isAdminOnly)
+                    Toggle("Only admins can post", isOn: $isAdminOnly)
+                } footer: {
+                    Text("Members can still read and react. Use this for announcements and trade callouts.")
                 }
-                
-                Section {
-                    Button(action: createChannel) {
-                        if viewModel.isLoading {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                        } else {
-                            Text("Create Channel")
-                                .bold()
-                                .foregroundColor(.blue)
-                        }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.footnote).foregroundColor(.marketRed)
                     }
-                    .disabled(channelName.isEmpty || viewModel.isLoading)
                 }
             }
-            .navigationTitle("New Channel")
+            .navigationTitle(editing == nil ? "New Channel" : "Edit Channel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button(editing == nil ? "Create" : "Save", action: save)
+                            .fontWeight(.semibold)
+                            .disabled(cleanedName.isEmpty)
+                    }
+                }
             }
-            .alert("Error", isPresented: $showError) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
+            .onAppear {
+                guard let editing else { return }
+                channelName = editing.name
+                selectedType = editing.type
+                isAdminOnly = editing.adminOnly
             }
         }
     }
-    
-    private func createChannel() {
+
+    private func save() {
+        isSaving = true
+        errorMessage = nil
         Task {
             do {
-                let channel = Channel(
-                    name: channelName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
-                    type: selectedType,
-                    communityId: community.id,
-                    isDefault: false,
-                    adminOnly: isAdminOnly
-                )
-                
-                try await viewModel.createChannel(channel)
+                if var channel = editing {
+                    channel.name = cleanedName
+                    channel.type = selectedType
+                    channel.adminOnly = isAdminOnly
+                    try await FirebaseServices.shared.updateChannel(channel)
+                } else {
+                    let channel = Channel(
+                        name: cleanedName,
+                        type: selectedType,
+                        communityId: community.id,
+                        isDefault: false,
+                        adminOnly: isAdminOnly
+                    )
+                    try await FirebaseServices.shared.createChannel(channel)
+                }
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
-                showError = true
+                isSaving = false
             }
-        }
-    }
-}
-
-class CreateChannelViewModel: ObservableObject {
-    @Published var isLoading = false
-    private let firebaseService = FirebaseServices.shared
-    
-    func createChannel(_ channel: Channel) async throws {
-        isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            try await firebaseService.createChannel(channel)
-        } catch {
-            throw error
         }
     }
 }

@@ -670,70 +670,6 @@ extension CommunitiesView {
             viewModel.refreshData()
         }
     }
-    
-    private func comingSoonView(for feature: String, icon: String, description: String) -> some View {
-        VStack(spacing: 28) {
-            // Enhanced icon with animation
-            ZStack {
-                // Animated rings
-                ForEach(0..<3) { index in
-                    Circle()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [Color.arkadGold.opacity(0.3 - Double(index) * 0.1), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 2
-                        )
-                        .frame(width: CGFloat(100 + index * 30), height: CGFloat(100 + index * 30))
-                        .scaleEffect(1.0)
-                        .opacity(0.5)
-                        .animation(
-                            Animation.easeInOut(duration: 2)
-                                .repeatForever(autoreverses: true)
-                                .delay(Double(index) * 0.3),
-                            value: feature
-                        )
-                }
-                
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.arkadGold.opacity(0.15), Color.arkadGold.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 90, height: 90)
-                
-                Image(systemName: icon)
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.8)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            
-            // Text content
-            VStack(spacing: 14) {
-                Text("\(feature) Coming Soon")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-                
-                Text(description)
-                    .font(.system(size: 15))
-                    .foregroundColor(.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 300)
-                    .lineSpacing(4)
-            }
-        }
-        .padding(.top, 80)
-    }
 }
 
 // MARK: - My Communities Content
@@ -927,23 +863,35 @@ extension CommunitiesView {
     private var discoverContent: some View {
         VStack(spacing: 28) {
             searchBar
-            
+
             if viewModel.discoveryCommunities.isEmpty && !viewModel.isLoading {
                 emptyDiscoverState
+            } else if !viewModel.searchQuery.isEmpty {
+                searchResultsSection
             } else {
                 VStack(spacing: 36) {
-                    // Featured Section (mixed types)
-                    if !viewModel.featuredCommunities.isEmpty {
+                    if !viewModel.featuredCommunities.isEmpty && viewModel.selectedCategory == nil {
                         featuredCommunitiesSection
                     }
-                    
-                    // Type-Based Sections
                     communityTypesSections
                 }
             }
         }
     }
-    
+
+    // MARK: - Search Results
+    private var searchResultsSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sectionHeader(
+                title: "Results",
+                icon: "magnifyingglass",
+                iconColor: .arkadGold,
+                count: viewModel.discoveryCommunities.count
+            )
+            communityGrid(viewModel.discoveryCommunities)
+        }
+    }
+
     // MARK: - Featured Communities Section
     private var featuredCommunitiesSection: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -951,8 +899,7 @@ extension CommunitiesView {
                 title: "Featured",
                 icon: "star.fill",
                 iconColor: .arkadGold,
-                count: viewModel.featuredCommunities.count,
-                showSeeAll: true
+                count: viewModel.featuredCommunities.count
             )
             
             ScrollView(.horizontal, showsIndicators: false) {
@@ -977,6 +924,7 @@ extension CommunitiesView {
                 }
                 .padding(.horizontal, 24)
             }
+            .padding(.horizontal, -24)
         }
     }
     
@@ -991,59 +939,49 @@ extension CommunitiesView {
     
     private func communityTypeSection(for type: CommunityType) -> some View {
         let communities = viewModel.communitiesForType(type)
-        let hasContent = !communities.isEmpty
-        
-        return VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(
-                title: viewModel.sectionTitle(for: type),
-                icon: viewModel.sectionIcon(for: type),
-                iconColor: getSectionColor(for: type),
-                count: communities.count,
-                showSeeAll: false
-            )
-            
-            if hasContent {
-                // Grid layout for regular cards
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 16),
-                        GridItem(.flexible(), spacing: 16)
-                    ],
-                    spacing: 18
-                ) {
-                    ForEach(communities) { community in
-                        EnhancedCommunityCard(
-                            community: community,
-                            style: .regular(),
-                            isUserMember: viewModel.isUserMember(of: community),
-                            onTap: {
-                                navigateToCommunitDetail(community)
-                            },
-                            onJoin: {
-                                viewModel.joinCommunity(community)
-                                HapticManager.shared.notification(type: .success)
-                            },
-                            onInfo: {
-                                showCommunityPreview(community)
-                            }
-                        )
-                    }
+
+        return Group {
+            if !communities.isEmpty {
+                VStack(alignment: .leading, spacing: 18) {
+                    sectionHeader(
+                        title: viewModel.sectionTitle(for: type),
+                        icon: viewModel.sectionIcon(for: type),
+                        iconColor: getSectionColor(for: type),
+                        count: communities.count
+                    )
+                    communityGrid(communities)
                 }
-                .padding(.horizontal, 24)
-            } else {
-                // Empty state for this type
-                emptyCommunityTypeState(for: type)
             }
         }
     }
-    
+
+    private func communityGrid(_ communities: [Community]) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
+            spacing: 18
+        ) {
+            ForEach(communities) { community in
+                EnhancedCommunityCard(
+                    community: community,
+                    style: .regular(),
+                    isUserMember: viewModel.isUserMember(of: community),
+                    onTap: { navigateToCommunitDetail(community) },
+                    onJoin: {
+                        viewModel.joinCommunity(community)
+                        HapticManager.shared.notification(type: .success)
+                    },
+                    onInfo: { showCommunityPreview(community) }
+                )
+            }
+        }
+    }
+
     // MARK: - Section Header
     private func sectionHeader(
         title: String,
         icon: String,
         iconColor: Color,
-        count: Int,
-        showSeeAll: Bool = false
+        count: Int
     ) -> some View {
         HStack(alignment: .center) {
             HStack(spacing: 10) {
@@ -1072,42 +1010,7 @@ extension CommunitiesView {
             }
             
             Spacer()
-            
-            // Count badge
-            if count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(iconColor)
-                    .frame(minWidth: 28)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(iconColor.opacity(0.12))
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(iconColor.opacity(0.3), lineWidth: 1)
-                            )
-                    )
-            }
-            
-            // See all button (only for featured)
-            if showSeeAll {
-                Button(action: {
-                    // TODO: Navigate to see all featured communities
-                }) {
-                    HStack(spacing: 4) {
-                        Text("See all")
-                            .font(.system(size: 14, weight: .medium))
-                        
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(.arkadGold)
-                }
-            }
         }
-        .padding(.horizontal, 24)
     }
     
     // MARK: - Empty States
@@ -1165,53 +1068,6 @@ extension CommunitiesView {
             .shadow(color: .arkadGold.opacity(0.3), radius: 12, x: 0, y: 6)
         }
         .padding(.top, 80)
-    }
-    
-    private func emptyCommunityTypeState(for type: CommunityType) -> some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: viewModel.sectionIcon(for: type))
-                    .font(.system(size: 24))
-                    .foregroundColor(getSectionColor(for: type).opacity(0.4))
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("No \(type.shortDisplayName) communities yet")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                    
-                    Text("Be the first to create a \(type.displayName.lowercased()) community!")
-                        .font(.system(size: 13))
-                        .foregroundColor(.textSecondary)
-                }
-                
-                Spacer()
-                
-                Button("Create") {
-                    showCreateCommunity = true
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.arkadBlack)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(getSectionColor(for: type).opacity(0.2))
-                )
-            }
-            .padding(18)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.backgroundSecondary.opacity(0.5))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(
-                                getSectionColor(for: type).opacity(0.2),
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .padding(.horizontal, 24)
     }
     
     // MARK: - Helper Methods

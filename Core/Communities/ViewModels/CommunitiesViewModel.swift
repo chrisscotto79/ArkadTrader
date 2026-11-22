@@ -104,7 +104,7 @@ class CommunitiesViewModel: ObservableObject {
     /// Load featured communities
     func loadFeaturedCommunities() async {
         do {
-            let featured = try await communityService.loadFeaturedCommunities(limit: 3)
+            let featured = try await communityService.loadFeaturedCommunities(limit: 5)
             featuredCommunities = featured
         } catch {
             handleError(error, context: "loading featured communities")
@@ -261,7 +261,7 @@ class CommunitiesViewModel: ObservableObject {
                 results = results.filter { !$0.isPrivate }
             }
             
-            discoveryCommunities = results
+            discoveryCommunities = communityService.sortCommunities(results, by: sortType)
         } catch {
             handleError(error, context: "searching communities")
         }
@@ -424,15 +424,8 @@ extension CommunitiesViewModel {
     
     /// Get communities for a specific type
     func communitiesForType(_ type: CommunityType) -> [Community] {
-        return discoveryCommunities
-            .filter { $0.type == type }
-            .sorted {
-                // Sort by member count (descending) and then by name
-                if $0.memberCount != $1.memberCount {
-                    return $0.memberCount > $1.memberCount
-                }
-                return $0.name < $1.name
-            }
+        // discoveryCommunities is already in the user's chosen sort order
+        return discoveryCommunities.filter { $0.type == type }
     }
     
     /// Check if a community type has any communities

@@ -220,16 +220,6 @@ enum LeaderboardTimeframe: String, CaseIterable {
     }
 }
 
-enum LeaderboardError: Error, LocalizedError {
-    case noCurrentUser
-
-    var errorDescription: String? {
-        switch self {
-        case .noCurrentUser: return "You need to be signed in to see leaderboards"
-        }
-    }
-}
-
 extension Array {
     func chunked(into size: Int) -> [[Element]] {
         stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }

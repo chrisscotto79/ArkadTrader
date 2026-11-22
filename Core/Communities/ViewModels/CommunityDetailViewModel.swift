@@ -231,6 +231,12 @@ Format your callouts like this:
     
     // MARK: - Private Methods
     
+    /// Reload the channel list (after a channel is created or edited)
+    func reloadChannels() async {
+        guard let communityId = community?.id else { return }
+        await loadChannels(for: communityId)
+    }
+
     /// Load channels for the community
     private func loadChannels(for communityId: String) async {
         do {

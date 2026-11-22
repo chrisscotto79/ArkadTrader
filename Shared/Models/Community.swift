@@ -119,6 +119,16 @@ struct Community: Identifiable, Codable, Hashable {
         }
     }
     
+    /// Ranking used by discovery: member count, boosted when the community has had recent chat activity
+    var discoveryScore: Double {
+        let base = Double(max(memberCount, 1))
+        guard let lastActivity = lastActivityDate else { return base }
+        let hours = Date().timeIntervalSince(lastActivity) / 3600
+        if hours < 24 { return base * 3 }
+        if hours < 24 * 7 { return base * 2 }
+        return base
+    }
+
     /// Check if community was recently active (within last 24 hours)
     var isRecentlyActive: Bool {
         guard let lastActivity = lastActivityDate else { return false }

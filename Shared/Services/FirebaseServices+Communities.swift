@@ -297,120 +297,61 @@ extension FirebaseServices {
     func getUserCommunities(userId: String) async throws -> [Community] {
         let user = try await getUserById(userId: userId)
         guard let communityIds = user?.communityIds, !communityIds.isEmpty else { return [] }
-        
-        let snapshot = try await db.collection("communities")
-            .whereField(FieldPath.documentID(), in: communityIds)
-            .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Community.fromFirestore(data: document.data(), id: document.documentID)
-        }
-    }
-    
-    
-    // Replace your searchCommunities method in FirebaseServices.swift with this:
 
-    func searchCommunities(query: String, limit: Int = 20) async throws -> [Community] {
-        guard !query.isEmpty else { return [] }
-        
-        let searchQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        print("🔍 Searching communities for: '\(searchQuery)'")
-        
-        do {
-            // FIRST: Let's get ALL communities to see what's actually in the database
-            print("🔍 DEBUG: Getting ALL communities to see what exists...")
-            let allCommunitiesSnapshot = try await db.collection("communities")
-                .limit(to: 100)
+        // Firestore `in` filters accept at most 30 values
+        var communities: [Community] = []
+        for chunk in communityIds.chunked(into: 30) {
+            let snapshot = try await db.collection("communities")
+                .whereField(FieldPath.documentID(), in: chunk)
                 .getDocuments()
-            
-            print("📊 DEBUG: Found \(allCommunitiesSnapshot.documents.count) total communities:")
-            for doc in allCommunitiesSnapshot.documents {
-                if let name = doc.data()["name"] as? String {
-                    print("   - Community: '\(name)' (contains '\(searchQuery)': \(name.lowercased().contains(searchQuery)))")
-                }
+            communities += snapshot.documents.compactMap { document in
+                try? Community.fromFirestore(data: document.data(), id: document.documentID)
             }
-            
-            // SECOND: Try the original search method
-            print("🔍 DEBUG: Trying original range search...")
-            let nameQuery = try await db.collection("communities")
-                .whereField("name", isGreaterThanOrEqualTo: searchQuery)
-                .whereField("name", isLessThan: searchQuery + "\u{f8ff}")
-                .limit(to: limit)
-                .getDocuments()
-            
-            print("📊 DEBUG: Range search found \(nameQuery.documents.count) communities")
-            
-            // THIRD: If range search fails, fall back to client-side filtering
-            let communities: [Community]
-            if nameQuery.documents.isEmpty && !allCommunitiesSnapshot.documents.isEmpty {
-                print("🔄 DEBUG: Range search returned nothing, using client-side filtering...")
-                
-                communities = allCommunitiesSnapshot.documents.compactMap { document -> Community? in
-                    guard let name = document.data()["name"] as? String else { return nil }
-                    
-                    // Check if name contains the search query (case-insensitive)
-                    if name.lowercased().contains(searchQuery) {
-                        do {
-                            let community = try Community.fromFirestore(data: document.data(), id: document.documentID)
-                            print("✅ DEBUG: Client-side match found: \(community.name)")
-                            return community
-                        } catch {
-                            print("❌ DEBUG: Failed to parse community document \(document.documentID): \(error)")
-                            return nil
-                        }
-                    }
-                    return nil
-                }
-            } else {
-                // Use the original results
-                communities = nameQuery.documents.compactMap { document -> Community? in
-                    do {
-                        let community = try Community.fromFirestore(data: document.data(), id: document.documentID)
-                        print("✅ DEBUG: Range search match: \(community.name)")
-                        return community
-                    } catch {
-                        print("❌ DEBUG: Failed to parse community document \(document.documentID): \(error)")
-                        return nil
-                    }
-                }
-            }
-            
-            // Filter for privacy (only if user is authenticated)
-            let filteredCommunities: [Community]
-            if let currentUserId = Auth.auth().currentUser?.uid {
-                print("🔍 DEBUG: Filtering for user \(currentUserId)")
-                do {
-                    let userCommunities = try await getUserCommunities(userId: currentUserId)
-                    let userCommunityIds = Set(userCommunities.map { $0.id })
-                    print("🔍 DEBUG: User is in \(userCommunityIds.count) communities: \(userCommunityIds)")
-                    
-                    filteredCommunities = communities.filter { community in
-                        let isPublicOrMember = !community.isPrivate || userCommunityIds.contains(community.id)
-                        print("🔍 DEBUG: Community '\(community.name)' - isPrivate: \(community.isPrivate), userIsMember: \(userCommunityIds.contains(community.id)), willShow: \(isPublicOrMember)")
-                        return isPublicOrMember
-                    }
-                } catch {
-                    print("⚠️ DEBUG: Couldn't get user communities, showing public only: \(error)")
-                    filteredCommunities = communities.filter { !$0.isPrivate }
-                }
-            } else {
-                print("⚠️ DEBUG: No authenticated user, showing public communities only")
-                filteredCommunities = communities.filter { !$0.isPrivate }
-            }
-            
-            print("🎯 DEBUG: Returning \(filteredCommunities.count) communities after privacy filtering")
-            for community in filteredCommunities {
-                print("   - Final result: '\(community.name)' (private: \(community.isPrivate))")
-            }
-            
-            return filteredCommunities
-            
-        } catch {
-            print("❌ Community search error: \(error)")
-            throw SearchError.searchFailed("Failed to search communities: \(error.localizedDescription)")
         }
+        return communities
     }
-    
+
+    /// Case-insensitive search over community names, descriptions, types and tags.
+    /// Firestore has no substring search, so this scans up to 300 communities and matches locally.
+    /// Private communities are only returned to their members.
+    func searchCommunities(query: String, limit: Int = 20) async throws -> [Community] {
+        let terms = query.lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+        guard !terms.isEmpty else { return [] }
+
+        let snapshot = try await db.collection("communities").limit(to: 300).getDocuments()
+        let communities = snapshot.documents.compactMap { try? Community.fromFirestore(data: $0.data(), id: $0.documentID) }
+
+        var memberOf: Set<String> = []
+        if let userId = Auth.auth().currentUser?.uid {
+            memberOf = Set((try? await getUserById(userId: userId))?.communityIds ?? [])
+        }
+
+        func score(_ community: Community) -> Int {
+            let name = community.name.lowercased()
+            let rest = ([community.description, community.type.displayName] + community.tags).joined(separator: " ").lowercased()
+            var total = 0
+            for term in terms {
+                if name.hasPrefix(term) { total += 3 }
+                else if name.contains(term) { total += 2 }
+                else if rest.contains(term) { total += 1 }
+                else { return 0 } // every term has to match somewhere
+            }
+            return total
+        }
+
+        let visible = communities.filter { !$0.isPrivate || memberOf.contains($0.id) }
+        let scored: [(community: Community, score: Int)] = visible.map { ($0, score($0)) }
+        let ranked = scored
+            .filter { $0.score > 0 }
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                return lhs.community.memberCount > rhs.community.memberCount
+            }
+        return Array(ranked.prefix(limit).map { $0.community })
+    }
+
     func getUserCommunityIds(userId: String) async throws -> Set<String> {
         let snapshot = try await db.collection("communityMembers")
             .whereField("userId", isEqualTo: userId)
@@ -573,6 +514,17 @@ extension FirebaseServices {
         try await channelRef.setData(channel.toFirestore())
     }
     
+    /// Save a channel's editable fields (name, type, posting permission)
+    func updateChannel(_ channel: Channel) async throws {
+        try await db.collection("communities").document(channel.communityId)
+            .collection("channels").document(channel.id)
+            .updateData([
+                "name": channel.name,
+                "type": channel.type.rawValue,
+                "adminOnly": channel.adminOnly
+            ])
+    }
+
     func deleteChannel(channelId: String, communityId: String) async throws {
         // First check if it's a default channel
         let channelSnapshot = try await db.collection("communities").document(communityId)
@@ -596,7 +548,13 @@ extension FirebaseServices {
             .collection("channels").document(message.channelId)
             .collection("messages").document(message.id)
         
-        try await messageRef.setData(message.toFirestore())
+        let communityRef = db.collection("communities").document(message.communityId)
+
+        // Record activity on the community so discovery can surface active communities
+        let batch = db.batch()
+        batch.setData(message.toFirestore(), forDocument: messageRef)
+        batch.updateData(["lastActivityDate": FieldValue.serverTimestamp()], forDocument: communityRef)
+        try await batch.commit()
     }
     
     func getChannelMessages(communityId: String, channelId: String, limit: Int = 50) async throws -> [CommunityMessage] {
