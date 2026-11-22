@@ -60,10 +60,11 @@ struct CreatePostView: View {
     }
     
     // MARK: - Data
+    // Widely traded, liquid US tickers (stocks and ETFs)
     private let popularTickers = [
-        "AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "AMD",
-        "NFLX", "SPY", "QQQ", "IWM", "PLTR", "GME", "AMC", "BB", "COIN",
-        "SHOP", "SQ", "PYPL", "ROKU", "ZM", "SPOT", "UBER", "LYFT"
+        "SPY", "QQQ", "IWM", "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL",
+        "META", "TSLA", "AVGO", "AMD", "NFLX", "PLTR", "COIN", "HOOD",
+        "MSTR", "UBER", "SHOP", "XYZ", "PYPL", "JPM", "COST", "LLY", "SMCI"
     ]
     
     private let tradingHashtags = [

@@ -6,190 +6,98 @@ import SwiftUI
 // MARK: - My Communities Content
 extension CommunitiesView {
     var myCommunitiesContent: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: 24) {
             if viewModel.userCommunities.isEmpty {
                 emptyMyCommunitiesState
             } else {
-                VStack(spacing: 36) {
-                    if !viewModel.userOwnedCommunities.isEmpty {
-                        communitySection(
-                            title: "Communities I Own",
-                            communities: viewModel.userOwnedCommunities,
-                            isOwner: true
-                        )
-                    }
-                    
-                    if !viewModel.userMemberCommunities.isEmpty {
-                        communitySection(
-                            title: "Communities I'm In",
-                            communities: viewModel.userMemberCommunities,
-                            isOwner: false
-                        )
-                    }
-                }
-            }
-        }
-    }
-    
-    func communitySection(title: String, communities: [Community], isOwner: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            // Enhanced section header
-            HStack(alignment: .center) {
-                Text(title)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-                
-                // Count badge
-                Text("\(communities.count)")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(.arkadGold)
-                    .frame(minWidth: 24)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color.arkadGold.opacity(0.12))
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(Color.arkadGold.opacity(0.3), lineWidth: 1)
-                            )
+                if !viewModel.userOwnedCommunities.isEmpty {
+                    communitySection(
+                        title: "Owned by you",
+                        communities: viewModel.userOwnedCommunities,
+                        isOwner: true
                     )
-                
-                Spacer()
-                
-                if isOwner {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(.arkadGold)
-                        .opacity(0.6)
                 }
-            }
-            
-            // Community cards with enhanced design
-            LazyVStack(spacing: 14) {
-                ForEach(communities) { community in
-                    communityCard(community: community, isOwner: isOwner)
+
+                if !viewModel.userMemberCommunities.isEmpty {
+                    communitySection(
+                        title: "Member of",
+                        communities: viewModel.userMemberCommunities,
+                        isOwner: false
+                    )
                 }
             }
         }
     }
-    
-    func communityCard(community: Community, isOwner: Bool) -> some View {
-        Button(action: {
+
+    func communitySection(title: String, communities: [Community], isOwner: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text(title.uppercased())
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.secondary)
+                Text("\(communities.count)")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.secondary.opacity(0.7))
+            }
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                ForEach(Array(communities.enumerated()), id: \.element.id) { index, community in
+                    communityRow(community: community, isOwner: isOwner)
+                    if index < communities.count - 1 {
+                        Divider().padding(.leading, 76)
+                    }
+                }
+            }
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    func communityRow(community: Community, isOwner: Bool) -> some View {
+        Button {
             navigateToCommunitDetail(community)
-        }) {
-            HStack(spacing: 18) {
-                // Enhanced avatar with gradient
+        } label: {
+            HStack(spacing: 14) {
                 ZStack {
                     Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    getCommunityColor(for: community.type),
-                                    getCommunityColor(for: community.type).opacity(0.7)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 54, height: 54)
-                        .shadow(color: getCommunityColor(for: community.type).opacity(0.3), radius: 8, x: 0, y: 4)
-                    
+                        .fill(getCommunityColor(for: community.type))
+                        .frame(width: 46, height: 46)
                     Text(getCommunityInitials(from: community.name))
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
                 }
-                
-                // Enhanced info section
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(community.name)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                        .lineLimit(1)
-                    
-                    HStack(spacing: 14) {
-                        // Members with icon
-                        HStack(spacing: 4) {
-                            Image(systemName: "person.2.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(.textSecondary)
-                            
-                            Text("\(community.memberCount)")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.textSecondary)
-                        }
-                        .fixedSize()
-                        
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(community.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
                         if isOwner {
-                            // Owner badge
-                            HStack(spacing: 4) {
-                                Image(systemName: "crown.fill")
-                                    .font(.system(size: 11))
-                                
-                                Text("Owner")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .lineLimit(1)
-                            }
-                            .fixedSize()
-                            .foregroundColor(.arkadGold)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule()
-                                    .fill(Color.arkadGold.opacity(0.1))
-                            )
+                            Image(systemName: "crown.fill")
+                                .font(.caption2)
+                                .foregroundColor(.arkadGoldDark)
+                                .accessibilityLabel("Owner")
                         }
                     }
-                }
-                
-                Spacer()
-                
-                // Enhanced type badge and chevron
-                HStack(spacing: 12) {
-                    Text(community.type.shortDisplayName)
-                        .font(.system(size: 12, weight: .semibold))
+
+                    Text("\(community.type.shortDisplayName) · \(community.memberCount) \(community.memberCount == 1 ? "member" : "members")")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
-                        .fixedSize()
-                        .foregroundColor(getCommunityColor(for: community.type))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(getCommunityColor(for: community.type).opacity(0.1))
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(
-                                            getCommunityColor(for: community.type).opacity(0.3),
-                                            lineWidth: 1
-                                        )
-                                )
-                        )
-                    
-                    // Animated chevron
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.textTertiary)
-                        .opacity(0.6)
                 }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(Color(.tertiaryLabel))
             }
-            .padding(18)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [Color.borderPrimary.opacity(0.3), Color.borderPrimary.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .shadow(color: .black.opacity(0.03), radius: 8, x: 0, y: 4)
-            )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(ScaleButtonStyle())
+        .buttonStyle(.plain)
     }
 }

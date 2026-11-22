@@ -95,6 +95,8 @@ struct ProfileTabContent: View {
 // MARK: - User Posts Tab
 struct UserPostsTab: View {
     @ObservedObject var postsViewModel: UserPostsViewModel
+    @EnvironmentObject var tabRouter: TabRouter
+    @State private var showAllPosts = false
     
     var body: some View {
         VStack(spacing: 16) {
@@ -165,7 +167,8 @@ struct UserPostsTab: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                     
-                    NavigationLink(destination: HomeView().environmentObject(FirebaseAuthService.shared)) {
+                    // Posts are written from the Home tab's "New Post" button
+                    Button(action: { tabRouter.selected = .home }) {
                         HStack(spacing: 8) {
                             Image(systemName: "plus")
                             Text("Create Your First Post")
@@ -198,12 +201,12 @@ struct UserPostsTab: View {
                         Spacer()
                         
                         if postsViewModel.posts.count > 6 {
-                            NavigationLink(destination: HomeView().environmentObject(FirebaseAuthService.shared)) {
+                            Button(action: { withAnimation { showAllPosts.toggle() } }) {
                                 HStack(spacing: 4) {
-                                    Text("View All")
+                                    Text(showAllPosts ? "Show Less" : "View All")
                                         .font(.subheadline)
                                         .fontWeight(.semibold)
-                                    Image(systemName: "arrow.right")
+                                    Image(systemName: showAllPosts ? "chevron.up" : "chevron.down")
                                         .font(.caption)
                                 }
                                 .foregroundColor(.arkadGold)
@@ -218,7 +221,7 @@ struct UserPostsTab: View {
                     
                     // Enhanced Posts grid
                     LazyVStack(spacing: 16) {
-                        ForEach(postsViewModel.posts.prefix(6), id: \.id) { post in
+                        ForEach(showAllPosts ? Array(postsViewModel.posts) : Array(postsViewModel.posts.prefix(6)), id: \.id) { post in
                             ProfileUserPostCard(
                                 post: post,
                                 onPostDeleted: {
@@ -244,6 +247,9 @@ struct UserPostsTab: View {
 // MARK: - User Trades Tab
 struct UserTradesTab: View {
     @ObservedObject var portfolioViewModel: PortfolioViewModel
+    @EnvironmentObject var authService: FirebaseAuthService
+    @EnvironmentObject var tabRouter: TabRouter
+    @State private var showAddTrade = false
     
     var body: some View {
         VStack(spacing: 16) {
@@ -265,7 +271,7 @@ struct UserTradesTab: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                     
-                    NavigationLink(destination: PortfolioView().environmentObject(portfolioViewModel)) {
+                    Button(action: { showAddTrade = true }) {
                         HStack(spacing: 8) {
                             Image(systemName: "plus")
                             Text("Add Your First Trade")
@@ -290,7 +296,7 @@ struct UserTradesTab: View {
                         
                         Spacer()
                         
-                        NavigationLink(destination: PortfolioView().environmentObject(portfolioViewModel)) {
+                        Button(action: { tabRouter.selected = .portfolio }) {
                             Text("View All")
                                 .font(.subheadline)
                                 .foregroundColor(.arkadGold)
@@ -310,6 +316,11 @@ struct UserTradesTab: View {
             }
             
             Spacer(minLength: 100)
+        }
+        .sheet(isPresented: $showAddTrade) {
+            AddTradeView()
+                .environmentObject(authService)
+                .environmentObject(portfolioViewModel)
         }
     }
 }
@@ -338,7 +349,7 @@ struct UserPortfolioTab: View {
                         
                         performanceCard(
                             title: "Win Rate",
-                            value: String(format: "%.1f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
+                            value: String(format: "%.0f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
                             color: portfolioViewModel.getPortfolioSummaryForProfile().winRate >= 50 ? .marketGreen : .marketRed,
                             icon: "target"
                         )
@@ -360,10 +371,10 @@ struct UserPortfolioTab: View {
                     .padding(.horizontal)
                 }
                 
-                // Top positions
-                if !portfolioViewModel.trades.isEmpty {
+                // Top positions (closed, profitable trades)
+                if !getTopPerformingTrades().isEmpty {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Top Performing Positions")
+                        Text("Top Performing Trades")
                             .font(.headline)
                             .fontWeight(.semibold)
                             .padding(.horizontal)
@@ -381,12 +392,15 @@ struct UserPortfolioTab: View {
     }
     
     private func getBestTradeValue() -> String {
-        let bestTrade = portfolioViewModel.trades.max { $0.profitLoss < $1.profitLoss }
-        return bestTrade?.profitLoss.asCurrencyWithSign ?? "$0"
+        let closedTrades = portfolioViewModel.trades.filter { !$0.isOpen }
+        guard let bestTrade = closedTrades.max(by: { $0.profitLoss < $1.profitLoss }) else { return "—" }
+        return bestTrade.profitLoss.asCurrencyWithSign
     }
     
     private func getTopPerformingTrades() -> [Trade] {
-        return portfolioViewModel.trades.sorted { $0.profitLoss > $1.profitLoss }
+        return portfolioViewModel.trades
+            .filter { !$0.isOpen && $0.profitLoss > 0 }
+            .sorted { $0.profitLoss > $1.profitLoss }
     }
     
     private func performanceCard(title: String, value: String, color: Color, icon: String) -> some View {
@@ -423,6 +437,7 @@ struct UserPortfolioTab: View {
 // MARK: - User Groups Tab
 struct UserGroupsTab: View {
     @ObservedObject var groupsViewModel: UserGroupsViewModel
+    @EnvironmentObject var tabRouter: TabRouter
     
     var body: some View {
         VStack(spacing: 16) {
@@ -493,7 +508,7 @@ struct UserGroupsTab: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                     
-                    NavigationLink(destination: CommunitiesView()) {
+                    Button(action: { tabRouter.selected = .communities }) {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                             Text("Discover Groups")
@@ -518,7 +533,7 @@ struct UserGroupsTab: View {
                         
                         Spacer()
                         
-                        NavigationLink(destination: CommunitiesView()) {
+                        Button(action: { tabRouter.selected = .communities }) {
                             Text("Discover More")
                                 .font(.subheadline)
                                 .foregroundColor(.arkadGold)

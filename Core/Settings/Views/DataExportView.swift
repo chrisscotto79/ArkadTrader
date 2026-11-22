@@ -1,42 +1,42 @@
 // File: Core/Settings/Views/DataExportView.swift
+// Export Data: loads the signed-in user's trades and posts, writes them to CSV files
+// on the device, and hands them to the share sheet so the user can save or send them.
 
 import SwiftUI
+import FirebaseFirestore
 
 struct DataExportView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
-    
-    @State private var selectedExportTypes: Set<ExportType> = []
-    @State private var selectedDateRange: ExportDateRange = .all
-    @State private var selectedFormat: ExportFormat = .csv
-    @State private var customStartDate = Date()
-    @State private var customEndDate = Date()
-    @State private var isExporting = false
-    @State private var showingSuccessAlert = false
-    @State private var showingErrorAlert = false
-    @State private var errorMessage = ""
-    
+
+    @State private var trades: [Trade] = []
+    @State private var posts: [Post] = []
+    @State private var tradesFile: URL?
+    @State private var postsFile: URL?
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+    @State private var tradesError: String?
+    @State private var postsError: String?
+
     var body: some View {
         NavigationView {
             List {
-                // Export Overview
-                exportOverviewSection
-                
-                // Data Types Selection
-                dataTypesSection
-                
-                // Date Range Selection
-                dateRangeSection
-                
-                // Export Format
-                exportFormatSection
-                
-                // Export Actions
-                exportActionsSection
-                
-                // Recent Exports
-                recentExportsSection
+                overviewSection
+                if !hasLoaded {
+                    Section {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Loading your data...")
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                } else {
+                    filesSection
+                }
             }
+            .listStyle(InsetGroupedListStyle())
+            .refreshable { await loadData() }
             .navigationTitle("Export Data")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -49,380 +49,299 @@ struct DataExportView: View {
                 }
             }
         }
-        .alert("Export Successful", isPresented: $showingSuccessAlert) {
-            Button("OK") { }
-        } message: {
-            Text("Your data has been exported successfully. Check your email for the download link.")
-        }
-        .alert("Export Error", isPresented: $showingErrorAlert) {
-            Button("OK") { }
-        } message: {
-            Text(errorMessage)
+        .task {
+            if !hasLoaded { await loadData() }
         }
     }
-    
-    // MARK: - Export Overview Section
-    private var exportOverviewSection: some View {
+
+    // MARK: - Overview
+
+    private var overviewSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "square.and.arrow.up")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.arkadGold)
                         .font(.title2)
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Export Your Trading Data")
+                        Text("Export Your Data")
                             .font(.headline)
                             .fontWeight(.semibold)
-                        
-                        Text("Download your trades, portfolio history, and other data in various formats")
+                        Text("Create CSV files of your trades and posts. They open in Numbers, Excel or Google Sheets.")
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
-                    
-                    Spacer()
                 }
-                
-                // Data Summary
-                HStack(spacing: 20) {
-                    DataSummaryCard(
-                        icon: "chart.line.uptrend.xyaxis",
-                        title: "Trades",
-                        count: "-",
-                        color: .green
-                    )
-                    
-                    DataSummaryCard(
-                        icon: "dollarsign.circle",
-                        title: "Portfolio",
-                        count: "-",
-                        color: .blue
-                    )
-                    
-                    DataSummaryCard(
-                        icon: "person.2",
-                        title: "Social",
-                        count: "-",
-                        color: .purple
-                    )
+
+                HStack(spacing: 12) {
+                    DataSummaryCard(icon: "chart.line.uptrend.xyaxis", title: "Trades", count: countText(trades.count, error: tradesError), color: .marketGreen)
+                    DataSummaryCard(icon: "lock.open", title: "Open", count: countText(trades.filter { $0.isOpen }.count, error: tradesError), color: .arkadGoldDark)
+                    DataSummaryCard(icon: "bubble.left.and.bubble.right", title: "Posts", count: countText(posts.count, error: postsError), color: .blue)
                 }
             }
             .padding(.vertical, 8)
         }
     }
-    
-    // MARK: - Data Types Section
-    private var dataTypesSection: some View {
-        Section("Select Data to Export") {
-            ForEach(ExportType.allCases, id: \.self) { exportType in
-                ExportTypeRow(
-                    exportType: exportType,
-                    isSelected: selectedExportTypes.contains(exportType)
-                ) {
-                    if selectedExportTypes.contains(exportType) {
-                        selectedExportTypes.remove(exportType)
-                    } else {
-                        selectedExportTypes.insert(exportType)
-                    }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Date Range Section
-    private var dateRangeSection: some View {
-        Section("Date Range") {
-            ForEach(ExportDateRange.allCases, id: \.self) { range in
-                HStack {
-                    Button(action: {
-                        selectedDateRange = range
-                    }) {
-                        HStack {
-                            Image(systemName: selectedDateRange == range ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(selectedDateRange == range ? .blue : .gray)
-                            
-                            Text(range.displayName)
-                                .foregroundColor(.primary)
-                            
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-            
-            if selectedDateRange == .custom {
-                VStack(spacing: 12) {
-                    DatePicker("Start Date", selection: $customStartDate, displayedComponents: .date)
-                    DatePicker("End Date", selection: $customEndDate, displayedComponents: .date)
-                }
-                .padding(.leading, 28)
-            }
-        }
-    }
-    
-    // MARK: - Export Format Section
-    private var exportFormatSection: some View {
-        Section("Export Format") {
-            ForEach(ExportFormat.allCases, id: \.self) { format in
-                HStack {
-                    Button(action: {
-                        selectedFormat = format
-                    }) {
-                        HStack {
-                            Image(systemName: selectedFormat == format ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(selectedFormat == format ? .blue : .gray)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(format.displayName)
-                                    .foregroundColor(.primary)
-                                    .fontWeight(.medium)
-                                
-                                Text(format.description)
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-        }
-    }
-    
-    // MARK: - Export Actions Section
-    private var exportActionsSection: some View {
+
+    // MARK: - Files
+
+    private var filesSection: some View {
         Section {
-            VStack(spacing: 16) {
-                // Export Button
-                Button(action: exportData) {
-                    HStack {
-                        if isExporting {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .scaleEffect(0.8)
-                        }
-                        
-                        Text(isExporting ? "Exporting..." : "Export Data")
-                            .fontWeight(.semibold)
+            exportRow(
+                title: "Trades CSV",
+                icon: "chart.line.uptrend.xyaxis",
+                file: tradesFile,
+                error: tradesError,
+                summary: trades.isEmpty
+                    ? "You haven't logged any trades yet."
+                    : "\(trades.count) trade\(trades.count == 1 ? "" : "s"), open and closed"
+            )
+            exportRow(
+                title: "Posts CSV",
+                icon: "bubble.left.and.bubble.right",
+                file: postsFile,
+                error: postsError,
+                summary: posts.isEmpty
+                    ? "You haven't posted yet."
+                    : "\(posts.count) post\(posts.count == 1 ? "" : "s")"
+            )
+        } header: {
+            Text("Files")
+        } footer: {
+            Text("Files are created on this device and shared with the app you choose, such as Files, Mail or AirDrop. Nothing is sent anywhere until you share it.")
+        }
+    }
+
+    /// A share row when a file is ready, otherwise a greyed-out row explaining why not.
+    @ViewBuilder
+    private func exportRow(title: String, icon: String, file: URL?, error: String?, summary: String) -> some View {
+        if let file, error == nil {
+            ShareLink(item: file) {
+                HStack(spacing: 12) {
+                    Image(systemName: icon)
+                        .foregroundColor(.arkadGold)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .fontWeight(.medium)
+                            .foregroundColor(.textPrimary)
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundColor(.gray)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(selectedExportTypes.isEmpty ? Color.gray : Color.blue)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    Spacer()
+                    Image(systemName: "square.and.arrow.up")
+                        .foregroundColor(.arkadGoldDark)
                 }
-                .disabled(selectedExportTypes.isEmpty || isExporting)
-                
-                // Export Info
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .foregroundColor(.blue)
-                    
-                    Text("Exports are delivered via email and may take a few minutes to process")
-                        .font(.caption)
+                .padding(.vertical, 4)
+            }
+        } else {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .foregroundColor(.gray)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .fontWeight(.medium)
                         .foregroundColor(.gray)
+                    Text(error ?? summary)
+                        .font(.caption)
+                        .foregroundColor(error == nil ? .gray : .marketRed)
                 }
+                Spacer()
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
         }
     }
-    
-    // MARK: - Recent Exports Section
-    private var recentExportsSection: some View {
-        Section("Recent Exports") {
-            Text("No recent exports")
-                .foregroundColor(.gray)
-                .font(.body)
-                .padding(.vertical, 20)
-        }
+
+    private func countText(_ count: Int, error: String?) -> String {
+        if !hasLoaded { return "–" }
+        return error == nil ? "\(count)" : "!"
     }
-    
-    // MARK: - Helper Methods
-    
-    private func exportData() {
-        isExporting = true
-        
-        // Simulate export process
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            isExporting = false
-            
-            // Simulate random success/failure
-            if Bool.random() {
-                showingSuccessAlert = true
-            } else {
-                errorMessage = "Export failed. Please try again later."
-                showingErrorAlert = true
-            }
+
+    // MARK: - Loading
+
+    private func loadData() async {
+        guard let userId = authService.currentUser?.id, !userId.isEmpty else {
+            tradesError = "Sign in to export your data."
+            postsError = "Sign in to export your data."
+            hasLoaded = true
+            return
         }
+
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+
+        // Trades
+        do {
+            let loaded = try await authService.getUserTrades(userId: userId)
+            trades = loaded
+            tradesError = nil
+            tradesFile = try loaded.isEmpty ? nil : CSVExport.write(CSVExport.tradesCSV(loaded), named: "ArkadTrader-Trades")
+        } catch {
+            tradesError = "Couldn't load your trades. Pull down to try again."
+            tradesFile = nil
+        }
+
+        // Posts (queried without ordering so no composite index is needed; sorted here)
+        do {
+            let snapshot = try await FirebaseServices.shared.db.collection("posts")
+                .whereField("authorId", isEqualTo: userId)
+                .getDocuments()
+            let loaded = snapshot.documents
+                .compactMap { try? Post.fromFirestore(data: $0.data(), id: $0.documentID) }
+                .sorted { $0.createdAt > $1.createdAt }
+            posts = loaded
+            postsError = nil
+            postsFile = try loaded.isEmpty ? nil : CSVExport.write(CSVExport.postsCSV(loaded), named: "ArkadTrader-Posts")
+        } catch {
+            postsError = "Couldn't load your posts. Pull down to try again."
+            postsFile = nil
+        }
+
+        hasLoaded = true
     }
 }
 
-// MARK: - Export Type Enum
-enum ExportType: String, CaseIterable {
-    case trades = "trades"
-    case portfolio = "portfolio"
-    case performance = "performance"
-    case socialPosts = "social_posts"
-    case communities = "communities"
-    case messages = "messages"
-    case settings = "settings"
-    
-    var displayName: String {
-        switch self {
-        case .trades: return "Trading History"
-        case .portfolio: return "Portfolio Data"
-        case .performance: return "Performance Metrics"
-        case .socialPosts: return "Social Posts"
-        case .communities: return "Communities"
-        case .messages: return "Messages"
-        case .settings: return "Account Settings"
-        }
-    }
-    
-    var description: String {
-        switch self {
-        case .trades: return "All your trades, orders, and positions"
-        case .portfolio: return "Portfolio values, allocations, and history"
-        case .performance: return "Returns, profits/losses, and analytics"
-        case .socialPosts: return "Your posts, comments, and interactions"
-        case .communities: return "Community memberships and activity"
-        case .messages: return "Direct messages and conversations"
-        case .settings: return "Account preferences and configurations"
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .trades: return "chart.line.uptrend.xyaxis"
-        case .portfolio: return "briefcase"
-        case .performance: return "chart.bar"
-        case .socialPosts: return "bubble.left.and.bubble.right"
-        case .communities: return "person.3"
-        case .messages: return "message"
-        case .settings: return "gear"
-        }
-    }
-    
-    var color: Color {
-        switch self {
-        case .trades: return .green
-        case .portfolio: return .blue
-        case .performance: return .orange
-        case .socialPosts: return .purple
-        case .communities: return .pink
-        case .messages: return .indigo
-        case .settings: return .gray
-        }
-    }
-}
+// MARK: - CSV Export
 
-// MARK: - Export Date Range Enum
-enum ExportDateRange: String, CaseIterable {
-    case lastWeek = "last_week"
-    case lastMonth = "last_month"
-    case lastQuarter = "last_quarter"
-    case lastYear = "last_year"
-    case all = "all"
-    case custom = "custom"
-    
-    var displayName: String {
-        switch self {
-        case .lastWeek: return "Last 7 days"
-        case .lastMonth: return "Last 30 days"
-        case .lastQuarter: return "Last 3 months"
-        case .lastYear: return "Last year"
-        case .all: return "All time"
-        case .custom: return "Custom range"
+enum CSVExport {
+    static func tradesCSV(_ trades: [Trade]) -> String {
+        let header = [
+            "Trade ID", "Ticker", "Asset Type", "Status", "Quantity",
+            "Entry Price", "Entry Date", "Exit Price", "Exit Date",
+            "Realized P&L", "Realized P&L %", "Stop Loss", "Take Profit",
+            "Strategy", "Notes", "Tags"
+        ]
+        let rows = trades.map { trade -> [String] in
+            [
+                trade.id,
+                text(trade.ticker),
+                trade.tradeType.displayName,
+                trade.isOpen ? "Open" : "Closed",
+                "\(trade.quantity)",
+                number(trade.entryPrice),
+                date(trade.entryDate),
+                trade.exitPrice.map(number) ?? "",
+                trade.exitDate.map(date) ?? "",
+                trade.isOpen ? "" : number(trade.profitLoss),
+                (trade.isOpen || trade.entryPrice == 0) ? "" : number(trade.profitLossPercentage),
+                trade.stopLossPrice.map(number) ?? "",
+                trade.takeProfitPrice.map(number) ?? "",
+                text(trade.strategy ?? ""),
+                text(trade.notes ?? ""),
+                text(trade.tags.joined(separator: " "))
+            ]
         }
+        return csv(header: header, rows: rows)
     }
-}
 
-// MARK: - Export Format Enum
-enum ExportFormat: String, CaseIterable {
-    case csv = "csv"
-    case json = "json"
-    case excel = "excel"
-    case pdf = "pdf"
-    
-    var displayName: String {
-        switch self {
-        case .csv: return "CSV"
-        case .json: return "JSON"
-        case .excel: return "Excel (XLSX)"
-        case .pdf: return "PDF Report"
+    static func postsCSV(_ posts: [Post]) -> String {
+        let header = [
+            "Post ID", "Created", "Type", "Content", "Tickers", "Hashtags",
+            "Likes", "Comments", "Image Count", "Image URLs"
+        ]
+        let rows = posts.map { post -> [String] in
+            [
+                post.id,
+                date(post.createdAt),
+                post.postType.rawValue,
+                text(post.content),
+                text(post.tickers.joined(separator: " ")),
+                text(post.hashtags.joined(separator: " ")),
+                "\(post.likesCount)",
+                "\(post.commentsCount)",
+                "\(post.imageUrls.count)",
+                text(post.imageUrls.joined(separator: " "))
+            ]
         }
+        return csv(header: header, rows: rows)
     }
-    
-    var description: String {
-        switch self {
-        case .csv: return "Comma-separated values, great for spreadsheets"
-        case .json: return "Structured data format, perfect for developers"
-        case .excel: return "Microsoft Excel format with formatting"
-        case .pdf: return "Formatted report suitable for printing"
+
+    /// Writes the CSV to a dated file in the temporary directory and returns its URL.
+    static func write(_ contents: String, named baseName: String) throws -> URL {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(baseName)-\(formatter.string(from: Date()))")
+            .appendingPathExtension("csv")
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    // MARK: Helpers
+
+    private static func csv(header: [String], rows: [[String]]) -> String {
+        ([header] + rows)
+            .map { $0.map(escape).joined(separator: ",") }
+            .joined(separator: "\r\n") + "\r\n"
+    }
+
+    private static func escape(_ field: String) -> String {
+        if field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r") {
+            return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
+        return field
+    }
+
+    /// Free text: stops spreadsheet apps from treating it as a formula.
+    private static func text(_ value: String) -> String {
+        guard let first = value.first, "=+-@".contains(first) else { return value }
+        return "'" + value
+    }
+
+    private static let numberFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 8
+        return formatter
+    }()
+
+    private static func number(_ value: Double) -> String {
+        numberFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    }
+
+    private static let dateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static func date(_ value: Date) -> String {
+        dateFormatter.string(from: value)
     }
 }
 
 // MARK: - Supporting Views
-
-struct ExportTypeRow: View {
-    let exportType: ExportType
-    let isSelected: Bool
-    let onToggle: () -> Void
-    
-    var body: some View {
-        Button(action: onToggle) {
-            HStack(spacing: 12) {
-                Image(systemName: exportType.icon)
-                    .foregroundColor(exportType.color)
-                    .frame(width: 24)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(exportType.displayName)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
-                    
-                    Text(exportType.description)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(isSelected ? .blue : .gray)
-            }
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
 
 struct DataSummaryCard: View {
     let icon: String
     let title: String
     let count: String
     let color: Color
-    
+
     var body: some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
                 .foregroundColor(color)
                 .font(.title3)
-            
+
             Text(count)
                 .font(.headline)
                 .fontWeight(.bold)
-            
+
             Text(title)
                 .font(.caption)
                 .foregroundColor(.gray)
         }
         .frame(maxWidth: .infinity)
-        .padding()
+        .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(color.opacity(0.1))

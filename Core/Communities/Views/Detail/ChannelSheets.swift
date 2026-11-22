@@ -76,7 +76,7 @@ struct CreateChannelSheet: View {
                             .autocorrectionDisabled()
                     }
                     Picker("Type", selection: $selectedType) {
-                        ForEach(ChannelType.allCases, id: \.self) { type in
+                        ForEach(ChannelType.selectableTypes, id: \.self) { type in
                             Label(type.displayName, systemImage: type.icon).tag(type)
                         }
                     }
@@ -113,7 +113,8 @@ struct CreateChannelSheet: View {
             .onAppear {
                 guard let editing else { return }
                 channelName = editing.name
-                selectedType = editing.type
+                // Legacy voice channels are edited (and saved) as text channels
+                selectedType = editing.type == .voice ? .text : editing.type
                 isAdminOnly = editing.adminOnly
             }
         }

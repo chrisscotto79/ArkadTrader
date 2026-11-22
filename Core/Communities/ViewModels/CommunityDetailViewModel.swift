@@ -18,6 +18,8 @@ class CommunityDetailViewModel: ObservableObject {
     @Published var userRole: String = "member"
     @Published var isUserMember = false
     @Published var canManageChannels = false
+    /// When the current user joined, read from communities/{id}/members/{uid}
+    @Published var memberSince: Date?
     
     // MARK: - Private Properties
     private let firebaseService = FirebaseServices.shared
@@ -138,7 +140,7 @@ class CommunityDetailViewModel: ObservableObject {
         // Welcome message for general channel
         if let generalChannel = channels.first(where: { $0.name == "general" }) {
             let welcomeMessage = CommunityMessage(
-                content: "🎉 Welcome to \(community.name)! This is the general discussion channel where all members can chat and share ideas.",
+                content: "Welcome to \(community.name)! #general is open to every member, so say hello and share ideas.",
                 authorId: currentUser.id,
                 authorUsername: username,
                 channelId: generalChannel.id,
@@ -149,22 +151,10 @@ class CommunityDetailViewModel: ObservableObject {
             print("✅ Sent welcome message to #general")
         }
         
-        // Instructions for callouts channel
+        // Short guide for the callouts channel
         if let calloutsChannel = channels.first(where: { $0.name == "callouts" }) {
             let instructionsMessage = CommunityMessage(
-                content: """
-📈 **CALLOUTS CHANNEL**
-
-This channel is for trading callouts and signals. Only admins can post here.
-
-Format your callouts like this:
-**Symbol:** TSLA
-**Action:** BUY
-**Entry:** $245.50
-**Stop Loss:** $240.00
-**Target:** $255.00
-**Notes:** Breaking resistance with volume
-""",
+                content: "#callouts is for trade ideas. Only admins can post here: tap the megaphone button next to the message box to share a callout with its entry, stop and target. Members can tap \"Track in Portfolio\" on a callout to add it to their own trades.",
                 authorId: currentUser.id,
                 authorUsername: username,
                 channelId: calloutsChannel.id,
@@ -188,6 +178,7 @@ Format your callouts like this:
                 // Update local state
                 isUserMember = true
                 userRole = "member"
+                memberSince = Date()
                 
                 // Create activity (only if user has a username)
                 if authService.currentUser?.username != nil {
@@ -220,6 +211,7 @@ Format your callouts like this:
                 isUserMember = false
                 userRole = "member"
                 canManageChannels = false
+                memberSince = nil
                 
                 print("✅ Successfully left community: \(community.name)")
                 
@@ -289,9 +281,11 @@ Format your callouts like this:
                 ) ?? .member
                 userRole = role.rawValue
                 canManageChannels = role == .owner || role == .admin
+                memberSince = await loadJoinDate(communityId: community.id, userId: userId)
             } else {
                 userRole = "member"
                 canManageChannels = false
+                memberSince = nil
             }
             
             print("👤 User state loaded:")
@@ -302,6 +296,15 @@ Format your callouts like this:
         } catch {
             await handleError(error, context: "loading user state")
         }
+    }
+    
+    /// The member document's joinedAt, or nil if it's missing or can't be read
+    private func loadJoinDate(communityId: String, userId: String) async -> Date? {
+        let doc = try? await Firestore.firestore()
+            .collection("communities").document(communityId)
+            .collection("members").document(userId)
+            .getDocument()
+        return (doc?.data()?["joinedAt"] as? Timestamp)?.dateValue()
     }
     
     /// Check if we should prompt for channel setup

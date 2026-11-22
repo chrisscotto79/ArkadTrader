@@ -156,14 +156,22 @@ class FirebaseAuthService: ObservableObject {
                 throw AuthError.notAuthenticated
             }
             
-            // Delete user data from Firestore
-            if let currentUser = currentUser {
-                // Delete user document
-                try await Firestore.firestore().collection("users").document(currentUser.id).delete()
+            // Delete the profile document while still signed in (rules need auth), but keep a
+            // copy so it can be restored if Firebase refuses to delete the sign-in itself
+            // (for example requiresRecentLogin). Otherwise the user would be left with an
+            // account that has no profile.
+            let userDoc = Firestore.firestore().collection("users").document(user.uid)
+            let savedProfile = try? await userDoc.getDocument().data()
+            try await userDoc.delete()
+
+            do {
+                try await user.delete()
+            } catch {
+                if let savedProfile {
+                    try? await userDoc.setData(savedProfile)
+                }
+                throw error
             }
-            
-            // Delete auth account
-            try await user.delete()
             
             self.currentUser = nil
             isAuthenticated = false

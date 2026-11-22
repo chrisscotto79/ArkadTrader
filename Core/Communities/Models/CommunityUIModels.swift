@@ -65,21 +65,24 @@ struct Channel: Identifiable, Codable {
 enum ChannelType: String, CaseIterable, Codable {
     case text = "text"
     case callouts = "callouts"
+    /// Legacy value kept so old channel documents still decode. There is no voice feature,
+    /// so voice channels look and behave exactly like text channels.
     case voice = "voice"
+    
+    /// Types that can be picked when creating or editing a channel
+    static let selectableTypes: [ChannelType] = [.text, .callouts]
     
     var displayName: String {
         switch self {
-        case .text: return "Text"
+        case .text, .voice: return "Text"
         case .callouts: return "Callouts"
-        case .voice: return "Voice"
         }
     }
     
     var icon: String {
         switch self {
-        case .text: return "number"
+        case .text, .voice: return "number"
         case .callouts: return "megaphone"
-        case .voice: return "speaker.wave.2"
         }
     }
 }
@@ -339,7 +342,6 @@ struct CommunityMemberWithRole: Identifiable, Codable, Hashable {
     let fullName: String
     let role: CommunityRole
     let joinedAt: Date
-    let isOnline: Bool // We can add this later
     
     // ✅ ENHANCED: Additional properties
     var profileImageUrl: String?
@@ -353,7 +355,6 @@ struct CommunityMemberWithRole: Identifiable, Codable, Hashable {
         self.fullName = fullName
         self.role = role
         self.joinedAt = joinedAt
-        self.isOnline = false // Default for now
         self.profileImageUrl = profileImageUrl
         self.isVerified = isVerified
         self.lastActiveAt = nil
@@ -372,7 +373,8 @@ struct CommunityMemberWithRole: Identifiable, Codable, Hashable {
     }
     
     var displayName: String {
-        return fullName.isEmpty ? username : fullName
+        if !fullName.isEmpty { return fullName }
+        return username.isEmpty ? "Unknown member" : username
     }
     
     var timeInCommunity: String {

@@ -28,27 +28,9 @@ struct MentionSuggestionRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Profile image or special icon
+                // Profile image or initial
                 Group {
-                    if user.id == "everyone" {
-                        Circle()
-                            .fill(Color.red.opacity(0.2))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                Image(systemName: "person.3.fill")
-                                    .font(.title3)
-                                    .foregroundColor(.red)
-                            )
-                    } else if user.id == "admin" {
-                        Circle()
-                            .fill(Color.orange.opacity(0.2))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                Image(systemName: "star.fill")
-                                    .font(.title3)
-                                    .foregroundColor(.orange)
-                            )
-                    } else if let profileImageUrl = user.profileImageUrl, !profileImageUrl.isEmpty {
+                    if let profileImageUrl = user.profileImageUrl, !profileImageUrl.isEmpty {
                         AsyncImage(url: URL(string: profileImageUrl)) { image in
                             image
                                 .resizable()
@@ -91,25 +73,6 @@ struct MentionSuggestionRow: View {
                 }
                 
                 Spacer()
-                
-                // Special mention indicators
-                if user.id == "everyone" {
-                    Text("Notifies all members")
-                        .font(.caption2)
-                        .foregroundColor(.red)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.red.opacity(0.1))
-                        .cornerRadius(4)
-                } else if user.id == "admin" {
-                    Text("Notifies admins")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.1))
-                        .cornerRadius(4)
-                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)

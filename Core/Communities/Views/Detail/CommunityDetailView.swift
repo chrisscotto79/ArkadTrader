@@ -19,7 +19,6 @@ struct CommunityDetailView: View {
     @State private var channelForInfo: Channel?
     @State private var showLeaderboard = false
     @State private var headerOffset: CGFloat = 0
-    @State private var showJoinConfirmation = false
     @State private var animateEntry = false
     
     /// Latest copy of the community (refreshed after settings change), falling back to the one passed in.
@@ -110,6 +109,14 @@ struct CommunityDetailView: View {
         } message: { channel in
             Text(channelInfoText(channel))
         }
+        .alert(
+            "Something went wrong",
+            isPresented: Binding(get: { !viewModel.errorMessage.isEmpty }, set: { if !$0 { viewModel.clearError() } })
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(viewModel.errorMessage)
+        }
         .confirmationDialog("Channel Options", isPresented: $showChannelOptions) {
             if let channel = selectedChannel {
                 if viewModel.canManageChannels && !channel.isDefault {
@@ -122,7 +129,7 @@ struct CommunityDetailView: View {
                             do {
                                 try await viewModel.deleteChannel(channel)
                             } catch {
-                                print("Error deleting channel: \(error)")
+                                viewModel.errorMessage = "Couldn't delete #\(channel.name): \(error.localizedDescription)"
                             }
                         }
                     }
@@ -181,7 +188,7 @@ struct CommunityDetailView: View {
 
     private func getRoleColor() -> Color {
         switch viewModel.userRole {
-        case "owner": return .purple
+        case "owner": return .arkadGoldDark
         case "admin": return .orange
         case "moderator": return .blue
         default: return .green
@@ -316,16 +323,6 @@ extension CommunityDetailView {
                     .clipShape(Circle())
                 )
             
-            if viewModel.isUserMember {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: 3)
-                    )
-                    .offset(x: 28, y: 28)
-            }
         }
     }
     
@@ -415,9 +412,11 @@ extension CommunityDetailView {
                     
                     Spacer()
                     
-                    Text("Member since Nov 2024")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if let joined = viewModel.memberSince {
+                        Text("Member since \(joined.formatted(.dateTime.month(.abbreviated).year()))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             
@@ -433,12 +432,12 @@ extension CommunityDetailView {
                             }
                             .font(.subheadline)
                             .fontWeight(.semibold)
-                            .foregroundColor(.white)
+                            .foregroundColor(.black)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(
                                 RoundedRectangle(cornerRadius: 14)
-                                    .fill(Color.purple.gradient)
+                                    .fill(Color.arkadGold)
                             )
                         }
                     } else {
@@ -459,16 +458,10 @@ extension CommunityDetailView {
                         }
                     }
                 } else {
-                    Button(action: {
-                        if current.isPrivate {
-                            showJoinConfirmation = true
-                        } else {
-                            viewModel.joinCommunity()
-                        }
-                    }) {
+                    Button(action: { viewModel.joinCommunity() }) {
                         HStack(spacing: 8) {
-                            Image(systemName: current.isPrivate ? "lock.fill" : "person.badge.plus")
-                            Text(current.isPrivate ? "Request to Join" : "Join Community")
+                            Image(systemName: "person.badge.plus")
+                            Text("Join Community")
                         }
                         .font(.subheadline)
                         .fontWeight(.semibold)
@@ -479,14 +472,6 @@ extension CommunityDetailView {
                             RoundedRectangle(cornerRadius: 14)
                                 .fill(communityColor.gradient)
                         )
-                    }
-                    .alert("Request to Join", isPresented: $showJoinConfirmation) {
-                        Button("Cancel", role: .cancel) { }
-                        Button("Send Request") {
-                            viewModel.joinCommunity()
-                        }
-                    } message: {
-                        Text("Your request will be sent to the community admins for approval.")
                     }
                 }
                 
@@ -544,7 +529,7 @@ extension CommunityDetailView {
                 value: "\(viewModel.channels.count)",
                 label: "Channels",
                 icon: "bubble.left.and.bubble.right.fill",
-                color: .purple
+                color: .arkadGoldDark
             )
 
             Button {
@@ -652,8 +637,9 @@ extension CommunityDetailView {
                 enhancedEmptyChannelsView
             } else {
                 VStack(spacing: 2) {
-                    let groupedChannels = Dictionary(grouping: viewModel.channels) { $0.type }
-                    let sortedTypes: [ChannelType] = [.text, .callouts, .voice]
+                    // Legacy voice channels have no voice feature, so they're listed as text channels
+                    let groupedChannels = Dictionary(grouping: viewModel.channels) { $0.type == .voice ? ChannelType.text : $0.type }
+                    let sortedTypes: [ChannelType] = [.text, .callouts]
                     
                     ForEach(sortedTypes, id: \.self) { channelType in
                         if let channels = groupedChannels[channelType], !channels.isEmpty {
@@ -809,5 +795,13 @@ struct ShimmerModifier: ViewModifier {
                     isAnimating = true
                 }
             }
+    }
+}
+
+/// Reports the scroll position so the header can collapse as you scroll
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

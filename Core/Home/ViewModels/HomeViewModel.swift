@@ -31,6 +31,49 @@ struct MarketNewsArticle: Identifiable, Codable {
         self.category = category
     }
     
+    // MARK: - Publish date
+    // publishedUtc is an ISO 8601 UTC string (e.g. "2026-11-22T14:05:00Z"), which also
+    // sorts correctly as a string in Firestore. Finnhub gives unix seconds.
+    
+    static func utcString(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+    
+    /// Parses publishedUtc with or without fractional seconds.
+    static func date(fromUTCString string: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: string) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: string)
+    }
+    
+    var publishedDate: Date? {
+        MarketNewsArticle.date(fromUTCString: publishedUtc)
+    }
+    
+    /// "Just now", "5m ago", "2h ago", "3d ago", then a short date.
+    var relativePublishedText: String {
+        guard let date = publishedDate else { return "" }
+        let seconds = max(0, Date().timeIntervalSince(date))
+        switch seconds {
+        case ..<60:
+            return "Just now"
+        case ..<3600:
+            return "\(Int(seconds / 60))m ago"
+        case ..<86_400:
+            return "\(Int(seconds / 3600))h ago"
+        case ..<(7 * 86_400):
+            return "\(Int(seconds / 86_400))d ago"
+        default:
+            return date.formatted(date: .abbreviated, time: .omitted)
+        }
+    }
+    
     // Firebase conversion methods
     func toFirestore() -> [String: Any] {
         return [
@@ -593,21 +636,20 @@ class HomeViewModel: ObservableObject {
         }
     }
     
-    func getTrendingNews() -> [MarketNewsArticle] {
-        // For trending, prioritize articles with images but don't exclude others
+    /// The newest few articles that have a picture, shown as large cards.
+    /// (Finnhub returns general news newest-first; there is no popularity signal.)
+    func getTopStories() -> [MarketNewsArticle] {
         let articlesWithImages = marketNews.filter { article in
-            article.imageUrl != nil && !article.imageUrl!.isEmpty
+            if let imageUrl = article.imageUrl { return !imageUrl.isEmpty }
+            return false
         }
-        
-        // If we have articles with images, use those, otherwise use all articles
-        let trendingSource = articlesWithImages.isEmpty ? marketNews : articlesWithImages
-        
-        return Array(trendingSource.prefix(10))
+        return Array(articlesWithImages.prefix(5))
     }
     
+    /// Every other article, newest first.
     func getRegularNews() -> [MarketNewsArticle] {
-        // Return all news for the main feed
-        return marketNews
+        let topIds = Set(getTopStories().map { $0.id })
+        return marketNews.filter { !topIds.contains($0.id) }
     }
     
     func getNewsStats() -> (totalArticles: Int, recentArticles: Int) {
@@ -615,13 +657,8 @@ class HomeViewModel: ObservableObject {
         let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
         
         let recentArticles = marketNews.filter { article in
-            let isoFormatter = ISO8601DateFormatter()
-            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            
-            if let publishedDate = isoFormatter.date(from: article.publishedUtc) {
-                return publishedDate > oneDayAgo
-            }
-            return false
+            guard let publishedDate = article.publishedDate else { return false }
+            return publishedDate > oneDayAgo
         }.count
         
         return (totalArticles, recentArticles)
@@ -652,9 +689,12 @@ class HomeViewModel: ObservableObject {
         let (data, _) = try await URLSession.shared.data(from: url)
         let newsItems = try JSONDecoder().decode([NewsItem].self, from: data)
         
-        return newsItems.prefix(50).compactMap { item in
-            MarketNewsArticle.fromNewsItem(item)
-        }
+        return newsItems
+            .sorted { $0.datetime > $1.datetime }
+            .prefix(50)
+            .compactMap { item in
+                MarketNewsArticle.fromNewsItem(item)
+            }
     }
 }
 
@@ -673,11 +713,9 @@ fileprivate struct NewsItem: Codable {
 
 extension MarketNewsArticle {
     fileprivate static func fromNewsItem(_ item: NewsItem) -> MarketNewsArticle? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        
+        // Finnhub's datetime is unix seconds (UTC)
         let publishedDate = Date(timeIntervalSince1970: TimeInterval(item.datetime))
-        let publishedUtc = formatter.string(from: publishedDate)
+        let publishedUtc = MarketNewsArticle.utcString(from: publishedDate)
         
         let keywords = item.related?.components(separatedBy: ",") ?? []
         

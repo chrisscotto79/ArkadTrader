@@ -167,7 +167,7 @@ extension ChannelChatView {
             if !query.contains(" ") && query.count <= 20 {
                 currentMentionQuery = query
                 searchForMentionUsers(query: query)
-                showingMentionSuggestions = true
+                showingMentionSuggestions = !mentionSuggestions.isEmpty
             } else {
                 hideMentionSuggestions()
             }
@@ -183,22 +183,6 @@ extension ChannelChatView {
             user.username.lowercased().hasPrefix(lowercaseQuery) ||
             user.fullName.lowercased().contains(lowercaseQuery)
         }.sorted { $0.username < $1.username }
-        
-        // Add special mentions
-        if query.isEmpty || "everyone".hasPrefix(lowercaseQuery) {
-            // Create a special "everyone" user for @everyone mentions
-            let everyoneUser = createSpecialMentionUser(username: "everyone", fullName: "Everyone")
-            mentionSuggestions.insert(everyoneUser, at: 0)
-        }
-        
-        if query.isEmpty || "admin".hasPrefix(lowercaseQuery) {
-            let adminUser = createSpecialMentionUser(username: "admin", fullName: "All Admins")
-            mentionSuggestions.insert(adminUser, at: 0)
-        }
-    }
-    
-    func createSpecialMentionUser(username: String, fullName: String) -> User {
-        return User(id: username, email: "", username: username, fullName: fullName)
     }
     
     func hideMentionSuggestions() {

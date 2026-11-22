@@ -46,14 +46,7 @@ struct SimpleFollowButton: View {
                 )
             }
             .disabled(isLoading)
-            
-            // Debug info (remove in production)
-            if !debugInfo.isEmpty {
-                Text(debugInfo)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+
         }
         .onAppear {
             Task {

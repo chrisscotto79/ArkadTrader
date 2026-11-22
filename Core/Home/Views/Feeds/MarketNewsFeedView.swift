@@ -1,16 +1,17 @@
-// File: Core/Home/Views/MarketNewsFeedView.swift
-// Market News Feed View with Trending Section
+// File: Core/Home/Views/Feeds/MarketNewsFeedView.swift
+// Market news feed: top stories carousel and the latest articles (Finnhub).
 
 import SwiftUI
 
+/// The Home tab's News feed. HomeView owns the view model and the surrounding
+/// ScrollView, and reloads the news on pull-to-refresh.
 struct MarketNewsFeedView: View {
-    @StateObject private var homeViewModel = HomeViewModel()
+    @ObservedObject var homeViewModel: HomeViewModel
     @State private var selectedArticle: MarketNewsArticle?
-    @State private var showingArticleDetail = false
     
     var body: some View {
-        ZStack {
-            if homeViewModel.isLoadingNews {
+        Group {
+            if homeViewModel.isLoadingNews && homeViewModel.marketNews.isEmpty {
                 LoadingNewsView()
             } else if homeViewModel.marketNews.isEmpty {
                 EmptyNewsView {
@@ -19,55 +20,39 @@ struct MarketNewsFeedView: View {
                     }
                 }
             } else {
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 24) {
-                        // Trending News Section
-                        trendingNewsSection
-                        
-                        // All News Section
-                        allNewsSection
+                VStack(spacing: 24) {
+                    if !homeViewModel.getTopStories().isEmpty {
+                        topStoriesSection
                     }
-                    .padding(.bottom, 80) // Space for tab bar
-                }
-                .refreshable {
-                    await homeViewModel.loadMarketNews()
+                    
+                    allNewsSection
                 }
             }
         }
-        .onAppear {
-            Task {
+        .task {
+            if homeViewModel.marketNews.isEmpty {
                 await homeViewModel.loadMarketNews()
             }
         }
-        .sheet(isPresented: $showingArticleDetail) {
-            if let article = selectedArticle {
-                ArticleDetailView(article: article)
-            }
+        .sheet(item: $selectedArticle) { article in
+            ArticleDetailView(article: article)
         }
     }
     
-    // MARK: - Trending News Section
-    private var trendingNewsSection: some View {
+    // MARK: - Top Stories Section
+    private var topStoriesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Trending")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Image(systemName: "flame.fill")
-                    .foregroundColor(.orange)
-                
-                Spacer()
-            }
-            .padding(.horizontal)
+            Text("Top Stories")
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
+                .padding(.horizontal)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
-                    ForEach(homeViewModel.getTrendingNews(), id: \.id) { article in
-                        TrendingNewsCard(article: article) {
+                    ForEach(homeViewModel.getTopStories(), id: \.id) { article in
+                        TopStoryCard(article: article) {
                             selectedArticle = article
-                            showingArticleDetail = true
                         }
                     }
                 }
@@ -89,7 +74,6 @@ struct MarketNewsFeedView: View {
                 ForEach(homeViewModel.getRegularNews(), id: \.id) { article in
                     NewsArticleCard(article: article) {
                         selectedArticle = article
-                        showingArticleDetail = true
                     }
                     .padding(.horizontal)
                 }
@@ -98,8 +82,8 @@ struct MarketNewsFeedView: View {
     }
 }
 
-// MARK: - Trending News Card
-struct TrendingNewsCard: View {
+// MARK: - Top Story Card
+struct TopStoryCard: View {
     let article: MarketNewsArticle
     let onTap: () -> Void
     @State private var imageLoadError = false
@@ -149,7 +133,7 @@ struct TrendingNewsCard: View {
                         
                         Spacer()
                         
-                        Text(formatNewsDate(article.publishedUtc))
+                        Text(article.relativePublishedText)
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
@@ -192,15 +176,9 @@ struct TrendingNewsCard: View {
             )
             .frame(width: 280, height: 160)
             .overlay(
-                VStack(spacing: 8) {
-                    Image(systemName: "newspaper.fill")
-                        .font(.largeTitle)
-                        .foregroundColor(.blue.opacity(0.5))
-                    Text("ArkadTrader News")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.blue.opacity(0.7))
-                }
+                Image(systemName: "newspaper.fill")
+                    .font(.largeTitle)
+                    .foregroundColor(.blue.opacity(0.5))
             )
             .cornerRadius(12)
     }
@@ -215,16 +193,6 @@ struct TrendingNewsCard: View {
         }
     }
     
-    private func formatNewsDate(_ dateString: String) -> String {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        guard let date = isoFormatter.date(from: dateString) else { return "Recent" }
-        
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
 }
 
 // MARK: - News Article Card
@@ -296,7 +264,7 @@ struct NewsArticleCard: View {
                     }
                     
                     // Time
-                    Text(formatNewsDate(article.publishedUtc))
+                    Text(article.relativePublishedText)
                         .font(.caption)
                         .foregroundColor(.gray)
                 }
@@ -328,16 +296,6 @@ struct NewsArticleCard: View {
             .cornerRadius(12)
     }
     
-    private func formatNewsDate(_ dateString: String) -> String {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        guard let date = isoFormatter.date(from: dateString) else { return "Recent" }
-        
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
 }
 
 // MARK: - Article Detail View
@@ -386,7 +344,7 @@ struct ArticleDetailView: View {
                             
                             Spacer()
                             
-                            Text(formatDetailDate(article.publishedUtc))
+                            Text(formatDetailDate(article))
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                         }
@@ -424,7 +382,7 @@ struct ArticleDetailView: View {
                         
                         // Read Full Article Button
                         Button(action: {
-                            if let url = URL(string: article.articleUrl), UIApplication.shared.canOpenURL(url) {
+                            if let url = URL(string: article.articleUrl) {
                                 openURL(url)
                             }
                         }) {
@@ -453,8 +411,10 @@ struct ArticleDetailView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    ShareLink(item: URL(string: article.articleUrl) ?? URL(string: "https://arkadtrader.com")!) {
-                        Image(systemName: "square.and.arrow.up")
+                    if let articleURL = URL(string: article.articleUrl) {
+                        ShareLink(item: articleURL) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
                     }
                 }
             }
@@ -472,29 +432,16 @@ struct ArticleDetailView: View {
             )
             .frame(height: 250)
             .overlay(
-                VStack(spacing: 12) {
-                    Image(systemName: "newspaper.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.blue.opacity(0.5))
-                    Text("ArkadTrader News")
-                        .font(.headline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.blue.opacity(0.7))
-                }
+                Image(systemName: "newspaper.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.blue.opacity(0.5))
             )
             .cornerRadius(16)
     }
     
-    private func formatDetailDate(_ dateString: String) -> String {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        guard let date = isoFormatter.date(from: dateString) else { return "Recent" }
-        
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+    private func formatDetailDate(_ article: MarketNewsArticle) -> String {
+        guard let date = article.publishedDate else { return "" }
+        return "\(date.formatted(date: .abbreviated, time: .shortened)) · \(article.relativePublishedText)"
     }
 }
 
@@ -557,5 +504,7 @@ struct LoadingNewsView: View {
 }
 
 #Preview {
-    MarketNewsFeedView()
+    ScrollView {
+        MarketNewsFeedView(homeViewModel: HomeViewModel())
+    }
 }

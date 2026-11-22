@@ -69,6 +69,7 @@ class PortfolioViewModel: ObservableObject {
         authService.listenToUserTrades(userId: userId) { [weak self] trades in
             DispatchQueue.main.async {
                 self?.trades = trades
+                self?.applyLatestQuotes()
                 self?.calculatePortfolioMetrics()
                 self?.generatePortfolioAnalytics()
                 self?.updateUserProfileStats()
@@ -77,6 +78,7 @@ class PortfolioViewModel: ObservableObject {
                 
                 // Check if we need to prompt for starting capital
                 self?.checkForStartingCapitalPrompt()
+                self?.updateCurrentPrices(onlyMissing: true)
             }
         }
     }
@@ -523,9 +525,34 @@ class PortfolioViewModel: ObservableObject {
         }
     }
     
-    private func updateCurrentPrices() {
-        // Placeholder for real-time price updates
-        // Will be implemented when market data API is integrated
+    /// Latest market price per ticker, kept in memory only (never written to Firestore)
+    private var latestQuotes: [String: Double] = [:]
+
+    /// Fetches live quotes for open stock positions from Finnhub, then revalues the portfolio.
+    /// Does nothing when no API key is configured; positions are then valued at entry price.
+    private func updateCurrentPrices(onlyMissing: Bool = false) {
+        var symbols = Set(trades.filter { $0.isOpen && $0.tradeType == .stock }.map { $0.ticker.uppercased() })
+        if onlyMissing {
+            symbols.subtract(latestQuotes.keys)
+        }
+        guard !symbols.isEmpty, !AppConfig.finnhubAPIKey.isEmpty else { return }
+
+        Task {
+            let quotes = await MarketQuotes.fetch(symbols: symbols)
+            guard !quotes.isEmpty else { return }
+            latestQuotes.merge(quotes) { _, new in new }
+            applyLatestQuotes()
+            calculatePortfolioMetrics()
+            lastUpdated = Date()
+        }
+    }
+
+    private func applyLatestQuotes() {
+        for index in trades.indices where trades[index].isOpen {
+            if let price = latestQuotes[trades[index].ticker.uppercased()] {
+                trades[index].currentPrice = price
+            }
+        }
     }
     
     private func showErrorMessage(_ message: String) {
@@ -900,5 +927,42 @@ struct DepositWithdrawSheet: View {
         }
         
         showAlert = true
+    }
+}
+
+// MARK: - Market quotes
+
+/// Minimal Finnhub quote client: GET /quote?symbol=AAPL returns {"c": current price, ...}
+enum MarketQuotes {
+    private struct Quote: Decodable { let c: Double }
+
+    static func fetch(symbols: Set<String>) async -> [String: Double] {
+        let key = AppConfig.finnhubAPIKey
+        guard !key.isEmpty else { return [:] }
+
+        return await withTaskGroup(of: (String, Double?).self) { group in
+            for symbol in symbols {
+                group.addTask {
+                    var components = URLComponents(string: "https://finnhub.io/api/v1/quote")
+                    components?.queryItems = [
+                        URLQueryItem(name: "symbol", value: symbol),
+                        URLQueryItem(name: "token", value: key)
+                    ]
+                    guard let url = components?.url,
+                          let (data, _) = try? await URLSession.shared.data(from: url),
+                          let quote = try? JSONDecoder().decode(Quote.self, from: data),
+                          quote.c > 0 else {
+                        return (symbol, nil)
+                    }
+                    return (symbol, quote.c)
+                }
+            }
+
+            var result: [String: Double] = [:]
+            for await (symbol, price) in group {
+                if let price { result[symbol] = price }
+            }
+            return result
+        }
     }
 }

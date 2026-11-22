@@ -25,8 +25,9 @@ struct EnhancedMessageRowWithReactions: View {
     let onReact: (String) -> Void
     let onShowEmojiPicker: () -> Void
     let onProfileTap: (User) -> Void
-    let readReceipts: Set<String> // User IDs who have read this message
     let currentUserId: String
+    /// Used to highlight @mentions of the current user
+    var currentUsername: String = ""
     var canManageCallout: Bool = false
     var onTrackCallout: () -> Void = {}
     var onUpdateCalloutStatus: (TradeCallout.Status) -> Void = { _ in }
@@ -130,18 +131,6 @@ struct EnhancedMessageRowWithReactions: View {
                     .stroke(Color.white.opacity(0.3), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 1)
-            .overlay(
-                // Online status indicator (optional)
-                shouldShowOnlineStatus ?
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 12, height: 12)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: 2)
-                    )
-                    .offset(x: 16, y: 16) : nil
-            )
         }
         .buttonStyle(ProfileImageButtonStyle())
     }
@@ -191,18 +180,6 @@ struct EnhancedMessageRowWithReactions: View {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.caption)
                         .foregroundColor(.accentColor)
-                }
-                
-                // Subscription tier badge
-                if let author = author, author.subscriptionTier != .basic {
-                    Text(author.subscriptionTier.displayName.uppercased())
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(subscriptionTierColor(author.subscriptionTier))
-                        .cornerRadius(4)
                 }
             }
             
@@ -293,11 +270,6 @@ struct EnhancedMessageRowWithReactions: View {
                     Spacer()
                 }
             }
-            
-            // NEW: Read Receipts (only show for current user's messages)
-            if isUserMessage && !readReceipts.isEmpty {
-                readReceiptsView
-            }
         }
     }
     
@@ -382,13 +354,14 @@ struct EnhancedMessageRowWithReactions: View {
             
             Spacer()
             
-            // Download button
-            Button(action: {
-                // to do - downloadDocument(mediaContent)
-            }) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.accentColor)
+            // Opens the file (Safari / Quick Look handles download and sharing)
+            if let url = URL(string: mediaContent.url) {
+                Link(destination: url) {
+                    Image(systemName: "arrow.up.right.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.accentColor)
+                }
+                .accessibilityLabel("Open \(mediaContent.fileName)")
             }
         }
         .padding(.horizontal, 12)
@@ -402,6 +375,15 @@ struct EnhancedMessageRowWithReactions: View {
     
     @ViewBuilder
     private func videoPreviewView(_ mediaContent: MediaContent) -> some View {
+        if let url = URL(string: mediaContent.url) {
+            Link(destination: url) { videoThumbnail }
+                .accessibilityLabel("Play video")
+        } else {
+            videoThumbnail
+        }
+    }
+    
+    private var videoThumbnail: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemGray5))
@@ -412,7 +394,7 @@ struct EnhancedMessageRowWithReactions: View {
                     .font(.largeTitle)
                     .foregroundColor(.white)
                 
-                Text("Video Message")
+                Text("Play video")
                     .font(.caption)
                     .foregroundColor(.white)
             }
@@ -475,19 +457,6 @@ struct EnhancedMessageRowWithReactions: View {
             }
         }
         return String(message.authorUsername.prefix(2)).uppercased()
-    }
-    
-    private var shouldShowOnlineStatus: Bool {
-        // Implement online status logic if needed
-        return false
-    }
-    
-    private func subscriptionTierColor(_ tier: SubscriptionTier) -> Color {
-        switch tier {
-        case .basic: return .gray
-        case .pro: return .blue
-        case .elite: return .purple
-        }
     }
     
     private func formatTimestamp(_ date: Date) -> String {
@@ -575,7 +544,7 @@ struct EnhancedMessageRowWithReactions: View {
                     
                     // Check if this mention is for current user
                     let mentionText = String(message.content[range])
-                    if mentionText.lowercased().contains(currentUserId.lowercased()) {
+                    if isMentionOfCurrentUser(mentionText) {
                         attributedString[attributedRange].backgroundColor = .yellow.opacity(0.3)
                     }
                 }
@@ -583,6 +552,10 @@ struct EnhancedMessageRowWithReactions: View {
         }
         
         return attributedString
+    }
+    
+    private func isMentionOfCurrentUser(_ mention: String) -> Bool {
+        !currentUsername.isEmpty && mention.lowercased() == "@\(currentUsername.lowercased())"
     }
     
     private var messageBackgroundColor: Color {
@@ -594,37 +567,12 @@ struct EnhancedMessageRowWithReactions: View {
         let currentUserMentioned = matches.contains { match in
             if let range = Range(match.range, in: message.content) {
                 let mentionText = String(message.content[range])
-                return mentionText.lowercased().contains(currentUserId.lowercased())
+                return isMentionOfCurrentUser(mentionText)
             }
             return false
         }
         
         return currentUserMentioned ? Color.accentColor.opacity(0.1) : Color(.systemGray6)
-    }
-    
-    // MARK: - Read Receipts View
-    private var readReceiptsView: some View {
-        HStack(spacing: 4) {
-            if readReceipts.count > 0 {
-                Image(systemName: readReceipts.count == 1 ? "checkmark" : "checkmark.circle.fill")
-                    .font(.caption2)
-                    .foregroundColor(readReceipts.count == 1 ? .secondary : .accentColor)
-                
-                if readReceipts.count > 1 {
-                    Text("\(readReceipts.count)")
-                        .font(.caption2)
-                        .foregroundColor(.accentColor)
-                        .fontWeight(.medium)
-                }
-                
-                Text("Read")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-        }
-        .padding(.top, 2)
     }
 }
 

@@ -9,7 +9,6 @@ struct UserPostCard: View {
     @State private var showOtherUserProfile = false
     @State private var profileUser: User?
     @State private var isLoadingUser = false
-    @State private var debugMessage = ""
     @State private var showComments = false
     
     // Delete functionality
@@ -255,7 +254,8 @@ struct UserPostCard: View {
             // Engagement buttons
             engagementSection
         }
-        .background(Color.white) // ✅ Keep background but remove card styling
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(shareConfirmationToast, alignment: .top)
         .overlay(deletingOverlay)
         .sheet(isPresented: $showOtherUserProfile) { profileSheet }
@@ -263,7 +263,6 @@ struct UserPostCard: View {
         .sheet(isPresented: $showReportSheet) { reportSheet }
         .confirmationDialog("Share Post", isPresented: $showShareSheet, titleVisibility: .visible) { shareDialog }
         .confirmationDialog("Delete Post", isPresented: $showDeleteConfirmation, titleVisibility: .visible) { deleteDialog }
-        .onAppear { setupDebugMessage() }
     }
     
     // MARK: - View Components
@@ -271,34 +270,13 @@ struct UserPostCard: View {
     private var userHeaderSection: some View {
         Button(action: { handleProfileTap() }) {
             HStack(spacing: 12) {
-                // Avatar
                 ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.arkadGold.opacity(0.3), Color.arkadGold.opacity(0.1)]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 44, height: 44)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
-                        )
-                    
-                    Text(String(post.authorUsername.prefix(1)).uppercased())
-                        .font(.title3)
-                        .fontWeight(.bold)
-                        .foregroundColor(.arkadGold)
-                    
+                    UserAvatar(username: post.authorUsername, size: 40)
                     if isLoadingUser {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                            .foregroundColor(.arkadGold)
+                        ProgressView().scaleEffect(0.6)
                     }
                 }
-                
+
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text("@\(post.authorUsername)")
@@ -308,20 +286,13 @@ struct UserPostCard: View {
                         
                         if post.postType != .text {
                             Text(post.postType.displayName)
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundColor(postTypeColor(for: post.postType))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(postTypeColor(for: post.postType))
-                                .cornerRadius(6)
+                                .background(Capsule().fill(postTypeColor(for: post.postType).opacity(0.12)))
                         }
                         
-                        if !debugMessage.isEmpty {
-                            Text(debugMessage)
-                                .font(.caption2)
-                                .foregroundColor(.red)
-                        }
                     }
                     
                     Text(formatDate(post.createdAt))
@@ -350,15 +321,15 @@ struct UserPostCard: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .frame(width: 32, height: 32)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(Circle())
+                        .contentShape(Rectangle())
+                        .accessibilityLabel("More")
                 }
                 .buttonStyle(PlainButtonStyle())
             }
         }
         .buttonStyle(PlainButtonStyle())
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
     }
 
     @ViewBuilder
@@ -405,101 +376,36 @@ struct UserPostCard: View {
                 TradeSummaryCard(trade: trade)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
     }
 
     @ViewBuilder
     private var imageSection: some View {
         if !post.imageUrls.isEmpty {
-            VStack(spacing: 0) {
-                // ✅ Simple horizontal scroll with snap-like behavior
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 0) {
-                            ForEach(Array(post.imageUrls.enumerated()), id: \.offset) { index, imageUrl in
-                                AsyncImage(url: URL(string: imageUrl)) { image in
-                                    image
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                } placeholder: {
-                                    Rectangle()
-                                        .fill(Color.gray.opacity(0.2))
-                                        .overlay(
-                                            ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: .arkadGold))
-                                        )
-                                }
-                                .frame(width: UIScreen.main.bounds.width, height: 400)
-                                .clipped()
-                                .id(index) // ✅ ID for scroll targeting
-                                .onTapGesture {
-                                    // Future: Add full-screen image viewer
-                                }
-                            }
-                        }
-                        .background(
-                            // ✅ Invisible view to detect scroll changes
-                            GeometryReader { geometry in
-                                Color.clear
-                                    .onAppear {
-                                        currentImageIndex = 0
-                                    }
-                                    .onChange(of: geometry.frame(in: .global).minX) { oldValue, newValue in
-                                        // Calculate current image index based on scroll position
-                                        let screenWidth = UIScreen.main.bounds.width
-                                        let newIndex = Int(round(-newValue / screenWidth))
-                                        let clampedIndex = max(0, min(newIndex, post.imageUrls.count - 1))
-                                        
-                                        if clampedIndex != currentImageIndex {
-                                            currentImageIndex = clampedIndex
-                                        }
-                                    }
-                            }
-                        )
-                    }
-                    .scrollIndicators(.hidden)
-                    .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
-                        // ✅ Auto-snap to nearest image after scroll ends
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                proxy.scrollTo(currentImageIndex, anchor: .leading)
-                            }
+            TabView(selection: $currentImageIndex) {
+                ForEach(Array(post.imageUrls.enumerated()), id: \.offset) { index, imageUrl in
+                    AsyncImage(url: URL(string: imageUrl)) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else if phase.error != nil {
+                            Image(systemName: "photo")
+                                .font(.title)
+                                .foregroundColor(.secondary)
+                        } else {
+                            ProgressView()
                         }
                     }
-                }
-                .frame(height: 400)
-                
-                // ✅ Working page indicators
-                if post.imageUrls.count > 1 {
-                    HStack(spacing: 8) {
-                        ForEach(0..<post.imageUrls.count, id: \.self) { index in
-                            Button(action: {
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    currentImageIndex = index
-                                }
-                            }) {
-                                Circle()
-                                    .fill(currentImageIndex == index ? Color.arkadGold : Color.white)
-                                    .frame(width: currentImageIndex == index ? 10 : 8, height: currentImageIndex == index ? 10 : 8)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(currentImageIndex == index ? Color.arkadGold.opacity(0.3) : Color.gray.opacity(0.5), lineWidth: 1)
-                                    )
-                                    .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-                                    .animation(.easeInOut(duration: 0.2), value: currentImageIndex)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGray6))
+                    .clipped()
+                    .tag(index)
                 }
             }
-            .padding(.top, 16)
-            .onAppear {
-                currentImageIndex = 0
-            }
+            .tabViewStyle(.page(indexDisplayMode: post.imageUrls.count > 1 ? .automatic : .never))
+            .frame(height: 320)
+            .padding(.top, 12)
+            .accessibilityLabel("\(post.imageUrls.count) photo\(post.imageUrls.count == 1 ? "" : "s")")
         }
     }
 
@@ -507,8 +413,8 @@ struct UserPostCard: View {
     private var engagementSection: some View {
         VStack(spacing: 0) {
             Divider()
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
             
             HStack(spacing: 24) { // ✅ Reduced spacing from 32 to 24
                 // Like button
@@ -581,8 +487,8 @@ struct UserPostCard: View {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
     }
     
@@ -662,11 +568,7 @@ struct UserPostCard: View {
             copyPostContent()
         }
         
-        Button("Copy Link") {
-            copyPostLink()
-        }
-        
-        Button("Share via iOS") {
+        Button("Share…") {
             shareViaIOS()
         }
         
@@ -707,13 +609,6 @@ struct UserPostCard: View {
     }
     
     // MARK: - Helper Methods
-    private func setupDebugMessage() {
-        debugMessage = authService.isAuthenticated ? "✓" : "✗"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            debugMessage = ""
-        }
-    }
-    
     // MARK: - Delete Post Function
     private func deletePost() async {
         guard let currentUserId = authService.currentUser?.id,
@@ -747,36 +642,21 @@ struct UserPostCard: View {
     
     // MARK: - Sharing Functions
     private func copyPostContent() {
-        let content = """
-        @\(post.authorUsername): \(post.content)
-        
-        — Shared from ArkadTrader
-        """
-        
-        UIPasteboard.general.string = content
-        showShareMessage("Post content copied!")
-        
-        print("📋 Copied post content: \(post.content)")
+        UIPasteboard.general.string = shareText
+        showShareMessage("Post copied")
     }
     
-    private func copyPostLink() {
-        // Generate a shareable link (you can customize this format)
-        let link = "https://arkadtrader.app/post/\(post.id)"
+    /// The text used when copying or sharing a post (there are no web links to posts).
+    private var shareText: String {
+        """
+        @\(post.authorUsername): \(post.displayContent)
         
-        UIPasteboard.general.string = link
-        showShareMessage("Link copied!")
-        
-        print("🔗 Copied post link: \(link)")
+        — shared from Arkad
+        """
     }
     
     private func shareViaIOS() {
-        let content = """
-        Check out this post from @\(post.authorUsername) on ArkadTrader:
-        
-        \(post.content)
-        
-        https://arkadtrader.app/post/\(post.id)
-        """
+        let content = shareText
         
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let window = windowScene.windows.first else {
@@ -796,9 +676,12 @@ struct UserPostCard: View {
             popover.permittedArrowDirections = []
         }
         
-        window.rootViewController?.present(activityController, animated: true)
-        
-        print("📱 Opened iOS share sheet for post: \(post.id)")
+        // Present from the top-most controller so it works while a sheet is showing
+        var presenter = window.rootViewController
+        while let presented = presenter?.presentedViewController {
+            presenter = presented
+        }
+        presenter?.present(activityController, animated: true)
     }
     
     private func showShareMessage(_ message: String) {
@@ -844,96 +727,33 @@ struct UserPostCard: View {
     
     // MARK: - Profile Navigation Logic
     private func handleProfileTap() {
-        print("🔄 handleProfileTap() called")
-        print("📋 Post Author ID: \(post.authorId)")
-        print("👤 Post Author Username: \(post.authorUsername)")
-        print("🔐 Auth Service Current User: \(authService.currentUser?.id ?? "nil")")
-        print("✅ Is Authenticated: \(authService.isAuthenticated)")
-        
-        debugMessage = "Loading..."
-        
-        // Check if this is the current user's post
-        if let currentUser = authService.currentUser,
-           currentUser.id == post.authorId {
-            print("👤 User tapped their own profile - not opening modal")
-            debugMessage = "Your post"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                debugMessage = ""
-            }
-            return
-        }
-        
-        // Load other user's profile
-        Task {
-            await loadUserProfile()
-        }
+        // Your own post: nothing to open
+        guard authService.currentUser?.id != post.authorId else { return }
+        Task { await loadUserProfile() }
     }
-    
+
     private func loadUserProfile() async {
-        print("🔄 loadUserProfile() started")
-        
-        guard profileUser == nil else {
-            print("✅ Profile already loaded, showing modal")
-            await MainActor.run {
-                showOtherUserProfile = true
-                debugMessage = ""
-            }
+        if profileUser != nil {
+            showOtherUserProfile = true
             return
         }
-        
-        await MainActor.run {
-            isLoadingUser = true
-            debugMessage = "Loading..."
-        }
-        
-        do {
-            print("🔍 Fetching user by ID: \(post.authorId)")
-            
-            if let user = try await authService.getUserById(userId: post.authorId) {
-                print("✅ User found: \(user.username)")
-                await MainActor.run {
-                    profileUser = user
-                    isLoadingUser = false
-                    debugMessage = "Found!"
-                    showOtherUserProfile = true
-                }
-            } else {
-                print("⚠️ User not found, creating minimal user")
-                await MainActor.run {
-                    profileUser = createMinimalUser()
-                    isLoadingUser = false
-                    debugMessage = "Minimal"
-                    showOtherUserProfile = true
-                }
-            }
-        } catch {
-            print("❌ Error loading user profile: \(error)")
-            
-            await MainActor.run {
-                profileUser = createMinimalUser()
-                isLoadingUser = false
-                debugMessage = "Error"
-                showOtherUserProfile = true
-            }
-        }
-        
-        // Clear debug message after delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            debugMessage = ""
-        }
+        isLoadingUser = true
+        let user = try? await authService.getUserById(userId: post.authorId)
+        profileUser = user ?? createMinimalUser()
+        isLoadingUser = false
+        showOtherUserProfile = true
     }
-    
+
     private func createMinimalUser() -> User {
-        print("🔨 Creating minimal user for: \(post.authorUsername)")
-        
+        // Built only from what the post itself tells us; no invented details.
         var user = User(
             id: post.authorId,
-            email: "\(post.authorUsername)@example.com",
+            email: "",
             username: post.authorUsername,
-            fullName: post.authorUsername.capitalized
+            fullName: post.authorUsername
         )
         
-        user.bio = "Trader on ArkadTrader"
+        user.bio = nil
         user.followersCount = 0
         user.followingCount = 0
         user.totalProfitLoss = 0.0

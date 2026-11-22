@@ -101,7 +101,7 @@ struct EnhancedCommunitySettingsSheet: View {
                 
                 // Basic Settings (Only for owners)
                 if viewModel.isOwner {
-                    Section("Community Settings") {
+                    Section {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Community Name")
                                 .font(.subheadline)
@@ -120,6 +120,10 @@ struct EnhancedCommunitySettingsSheet: View {
                         }
                         
                         Toggle("Private Community", isOn: $viewModel.settings.isPrivate)
+                    } header: {
+                        Text("Community Settings")
+                    } footer: {
+                        Text("Private communities are hidden from Discover and search for anyone who isn't a member.")
                     }
                     
                     // Community Images Section

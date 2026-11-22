@@ -1,28 +1,33 @@
 // File: Core/Settings/Views/SettingsView.swift
-// Fixed Settings View with all navigation implemented
+// Settings: profile, data export, help, about, sign out and account deletion.
 
 import SwiftUI
+import FirebaseAuth
 
 struct SettingsView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
     @State private var showEditProfile = false
-    @State private var showNotificationSettings = false
-    @State private var showPrivacySettings = false
-    @State private var showTradingSettings = false
-    @State private var showBrokerConnection = false
     @State private var showDataExport = false
     @State private var showHelpCenter = false
     @State private var showContactSupport = false
     @State private var showAbout = false
 
-    
+    // Account deletion
+    @State private var showDeleteConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var showDeleteError = false
+    @State private var deleteErrorMessage = ""
+
+    /// Firebase only allows deleting an account shortly after signing in.
+    private static let recentLoginWindow: TimeInterval = 5 * 60
+
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
                 // Profile header section
                 profileHeaderSection
-                
+
                 // Settings list
                 settingsListSection
             }
@@ -35,27 +40,18 @@ struct SettingsView: View {
                     }
                     .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .disabled(isDeletingAccount)
                 }
             }
         }
+        .overlay {
+            if isDeletingAccount {
+                deletingOverlay
+            }
+        }
+        .interactiveDismissDisabled(isDeletingAccount)
         .sheet(isPresented: $showEditProfile) {
             EditProfileView()
-                .environmentObject(authService)
-        }
-        .sheet(isPresented: $showNotificationSettings) {
-            NotificationSettingsView()
-                .environmentObject(authService)
-        }
-        .sheet(isPresented: $showPrivacySettings) {
-            PrivacySettingsView()
-                .environmentObject(authService)
-        }
-        .sheet(isPresented: $showTradingSettings) {
-            TradingSettingsView()
-                .environmentObject(authService)
-        }
-        .sheet(isPresented: $showBrokerConnection) {
-            BrokerConnectionView()
                 .environmentObject(authService)
         }
         .sheet(isPresented: $showDataExport) {
@@ -64,18 +60,32 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showHelpCenter) {
             HelpCenterView()
-                .environmentObject(authService)
         }
         .sheet(isPresented: $showContactSupport) {
             ContactSupportView()
-                .environmentObject(authService)
         }
         .sheet(isPresented: $showAbout) {
             AboutView()
-                .environmentObject(authService)
+        }
+        .alert("Delete Account?", isPresented: $showDeleteConfirmation) {
+            Button("Delete Account", role: .destructive) {
+                deleteAccount()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("""
+            This permanently deletes your ArkadTrader sign-in and your profile (name, username and bio). It can't be undone.
+
+            Trades, posts, comments, images and community messages you created are not removed by this step. To have them removed too, email \(AppInfo.supportEmail).
+            """)
+        }
+        .alert("Couldn't Delete Account", isPresented: $showDeleteError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(deleteErrorMessage)
         }
     }
-    
+
     // MARK: - Profile Header Section
     private var profileHeaderSection: some View {
         VStack(spacing: 16) {
@@ -101,19 +111,19 @@ struct SettingsView: View {
                             .foregroundColor(.white)
                     )
                     .shadow(color: Color.arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
-                
+
                 // User info
                 VStack(alignment: .leading, spacing: 4) {
                     Text(authService.currentUser?.fullName ?? "Unknown User")
                         .font(.headline)
                         .fontWeight(.semibold)
                         .foregroundColor(.textPrimary)
-                    
+
                     Text("@\(authService.currentUser?.username ?? "username")")
                         .font(.subheadline)
                         .foregroundColor(.textSecondary)
                 }
-                
+
                 Spacer()
             }
             .padding(.horizontal, 20)
@@ -121,11 +131,10 @@ struct SettingsView: View {
         }
         .background(Color.backgroundSecondary)
     }
-    
+
     // MARK: - Settings List Section
     private var settingsListSection: some View {
         List {
-            // Account Settings
             Section("Account") {
                 SettingsRowView(
                     icon: "person.circle",
@@ -134,52 +143,16 @@ struct SettingsView: View {
                 ) {
                     showEditProfile = true
                 }
-                
+
                 SettingsRowView(
-                    icon: "bell",
-                    title: "Notifications",
-                    color: .blue
-                ) {
-                    showNotificationSettings = true
-                }
-                
-                SettingsRowView(
-                    icon: "lock.shield",
-                    title: "Privacy & Security",
-                    color: .purple
-                ) {
-                    showPrivacySettings = true
-                }
-            }
-            
-            // Trading Settings
-            Section("Trading") {
-                SettingsRowView(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "Trading Preferences",
-                    color: .marketGreen
-                ) {
-                    showTradingSettings = true
-                }
-                
-                SettingsRowView(
-                    icon: "link",
-                    title: "Connect Broker",
-                    color: .marketGreen
-                ) {
-                    showBrokerConnection = true
-                }
-                
-                SettingsRowView(
-                    icon: "doc.text",
+                    icon: "square.and.arrow.up",
                     title: "Export Data",
                     color: .marketGreen
                 ) {
                     showDataExport = true
                 }
             }
-            
-            // Support & About
+
             Section("Support") {
                 SettingsRowView(
                     icon: "questionmark.circle",
@@ -188,7 +161,7 @@ struct SettingsView: View {
                 ) {
                     showHelpCenter = true
                 }
-                
+
                 SettingsRowView(
                     icon: "envelope",
                     title: "Contact Support",
@@ -196,7 +169,7 @@ struct SettingsView: View {
                 ) {
                     showContactSupport = true
                 }
-                
+
                 SettingsRowView(
                     icon: "info.circle",
                     title: "About ArkadTrader",
@@ -205,8 +178,7 @@ struct SettingsView: View {
                     showAbout = true
                 }
             }
-            
-            // Account Actions
+
             Section {
                 SettingsRowView(
                     icon: "arrow.right.square",
@@ -218,17 +190,94 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Section {
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 18, weight: .medium))
+                            .frame(width: 24, height: 24)
+                        Text("Delete Account")
+                            .font(.body)
+                            .fontWeight(.semibold)
+                        Spacer()
+                    }
+                    .foregroundColor(.marketRed)
+                    .padding(.vertical, 4)
+                }
+                .disabled(isDeletingAccount)
+            } footer: {
+                Text("Permanently deletes your sign-in and profile. This can't be undone.")
+            }
         }
         .listStyle(InsetGroupedListStyle())
     }
-    
+
+    private var deletingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Deleting account...")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white)
+            )
+        }
+    }
+
+    // MARK: - Account Deletion
+
+    private func deleteAccount() {
+        // FirebaseAuthService.deleteAccount() removes the profile document before the
+        // sign-in. Check for a recent sign-in first so Firebase can't reject the second
+        // step after the first has already happened.
+        if let lastSignIn = Auth.auth().currentUser?.metadata.lastSignInDate,
+           Date().timeIntervalSince(lastSignIn) > Self.recentLoginWindow {
+            deleteErrorMessage = Self.recentLoginMessage
+            showDeleteError = true
+            return
+        }
+
+        isDeletingAccount = true
+        Task {
+            do {
+                try await authService.deleteAccount()
+                UserDefaults.standard.removeObject(forKey: "saved_email")
+                isDeletingAccount = false
+                // Signed out now: the app returns to the sign-in screen.
+            } catch {
+                isDeletingAccount = false
+                deleteErrorMessage = Self.message(for: error)
+                showDeleteError = true
+            }
+        }
+    }
+
+    private static let recentLoginMessage = "For your security, you need to have signed in recently to delete your account. Sign out, sign back in, then come back here and try again."
+
+    private static func message(for error: Error) -> String {
+        let nsError = error as NSError
+        if AuthErrorCode(rawValue: nsError.code) == .requiresRecentLogin {
+            return recentLoginMessage
+        }
+        return "Something went wrong: \(error.localizedDescription) Please try again."
+    }
+
     // MARK: - Helper Properties
     private var initials: String {
         guard let user = authService.currentUser else { return "U" }
         let names = user.fullName.split(separator: " ")
-        let firstInitial = names.first?.first ?? Character("U")
-        let lastInitial = names.count > 1 ? names.last?.first ?? Character("") : Character("")
-        return "\(firstInitial)\(lastInitial)".uppercased()
+        let first = names.first?.first.map(String.init) ?? "U"
+        let last = names.count > 1 ? (names.last?.first.map(String.init) ?? "") : ""
+        return (first + last).uppercased()
     }
 }
 
@@ -238,7 +287,7 @@ struct SettingsRowView: View {
     let title: String
     let color: Color
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -246,14 +295,14 @@ struct SettingsRowView: View {
                     .foregroundColor(color)
                     .font(.system(size: 18, weight: .medium))
                     .frame(width: 24, height: 24)
-                
+
                 Text(title)
                     .font(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.textPrimary)
-                
+
                 Spacer()
-                
+
                 Image(systemName: "chevron.right")
                     .foregroundColor(.textTertiary)
                     .font(.caption)
@@ -262,117 +311,5 @@ struct SettingsRowView: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - Privacy Settings View
-struct PrivacySettingsView: View {
-    @EnvironmentObject var authService: FirebaseAuthService
-    @Environment(\.dismiss) var dismiss
-    
-    // Privacy preferences stored in UserDefaults
-    @AppStorage("profile_visibility_public") private var profileVisibilityPublic = true
-    @AppStorage("allow_message_requests") private var allowMessageRequests = true
-    @AppStorage("show_trading_activity") private var showTradingActivity = true
-    @AppStorage("allow_community_invites") private var allowCommunityInvites = true
-    @AppStorage("data_analytics_enabled") private var dataAnalyticsEnabled = true
-    @AppStorage("marketing_emails_enabled") private var marketingEmailsEnabled = false
-    
-    var body: some View {
-        NavigationView {
-            List {
-                // Profile Privacy
-                Section("Profile Privacy") {
-                    privacyToggle(
-                        title: "Public Profile",
-                        description: "Allow others to find and view your profile",
-                        icon: "person.circle",
-                        color: .blue,
-                        isOn: $profileVisibilityPublic
-                    )
-                    
-                    privacyToggle(
-                        title: "Show Trading Activity",
-                        description: "Display your trades and performance publicly",
-                        icon: "chart.line.uptrend.xyaxis",
-                        color: .green,
-                        isOn: $showTradingActivity
-                    )
-                }
-                
-                // Communication Privacy
-                Section("Communication") {
-                    privacyToggle(
-                        title: "Allow Message Requests",
-                        description: "Let other users send you direct messages",
-                        icon: "message",
-                        color: .purple,
-                        isOn: $allowMessageRequests
-                    )
-                    
-                    privacyToggle(
-                        title: "Community Invites",
-                        description: "Allow invitations to join communities",
-                        icon: "person.3",
-                        color: .orange,
-                        isOn: $allowCommunityInvites
-                    )
-                }
-                
-                // Data & Analytics
-                Section("Data & Analytics") {
-                    privacyToggle(
-                        title: "Usage Analytics",
-                        description: "Help improve ArkadTrader with usage data",
-                        icon: "chart.bar",
-                        color: .gray,
-                        isOn: $dataAnalyticsEnabled
-                    )
-                    
-                    privacyToggle(
-                        title: "Marketing Emails",
-                        description: "Receive updates about new features",
-                        icon: "envelope",
-                        color: .gray,
-                        isOn: $marketingEmailsEnabled
-                    )
-                }
-            }
-            .navigationTitle("Privacy & Security")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Helper Views
-    
-    private func privacyToggle(
-        title: String,
-        description: String,
-        icon: String,
-        color: Color,
-        isOn: Binding<Bool>
-    ) -> some View {
-        Toggle(isOn: isOn) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .frame(width: 24)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .fontWeight(.medium)
-                    Text(description)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-            }
-        }
     }
 }

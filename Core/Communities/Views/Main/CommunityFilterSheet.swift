@@ -9,10 +9,8 @@ struct CommunityFilterSheet: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var tempSelectedCategory: CommunityType?
-    @State private var tempShowPrivate: Bool = true
     @State private var tempSortType: CommunitySortType = .memberCount
     @State private var tempMinMembers: Double = 0
-    @State private var tempActivityFilter: ActivityLevel?
     
     var body: some View {
         NavigationView {
@@ -32,43 +30,21 @@ struct CommunityFilterSheet: View {
                     .pickerStyle(MenuPickerStyle())
                 }
                 
-                // Privacy Filter Section
-                Section("Privacy") {
-                    Toggle("Include Private Communities", isOn: $tempShowPrivate)
-                }
-                
                 // Member Count Filter Section
                 Section("Minimum Members") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("At least \(Int(tempMinMembers)) members")
+                            Text(tempMinMembers > 0 ? "At least \(Int(tempMinMembers)) members" : "Any size")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             Spacer()
                         }
                         
-                        Slider(value: $tempMinMembers, in: 0...1000, step: 10) {
+                        Slider(value: $tempMinMembers, in: 0...500, step: 5) {
                             Text("Member Count")
                         }
                         .accentColor(.arkadGold)
                     }
-                }
-                
-                // Activity Filter Section
-                Section("Activity Level") {
-                    Picker("Activity", selection: $tempActivityFilter) {
-                        Text("Any Activity Level").tag(ActivityLevel?.none)
-                        ForEach(ActivityLevel.allCases, id: \.self) { level in
-                            HStack {
-                                Circle()
-                                    .fill(getActivityColor(for: level))
-                                    .frame(width: 8, height: 8)
-                                Text(level.displayName)
-                            }
-                            .tag(level as ActivityLevel?)
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
                 }
                 
                 // Sort Options Section
@@ -119,17 +95,15 @@ struct CommunityFilterSheet: View {
     
     private func loadCurrentFilters() {
         tempSelectedCategory = viewModel.selectedCategory
-        tempShowPrivate = viewModel.showPrivateCommunities
         tempSortType = viewModel.sortType
-        // Add other filters as needed
+        tempMinMembers = Double(viewModel.minimumMemberCount)
     }
     
     private func applyFilters() {
         viewModel.selectedCategory = tempSelectedCategory
-        viewModel.showPrivateCommunities = tempShowPrivate
         viewModel.sortType = tempSortType
+        viewModel.minimumMemberCount = Int(tempMinMembers)
         
-        // Apply other filters
         Task {
             await viewModel.loadDiscoveryCommunities()
         }
@@ -137,10 +111,8 @@ struct CommunityFilterSheet: View {
     
     private func resetFilters() {
         tempSelectedCategory = nil
-        tempShowPrivate = true
         tempSortType = .memberCount
         tempMinMembers = 0
-        tempActivityFilter = nil
     }
     
     private func getTypeIcon(for type: CommunityType) -> String {
@@ -151,14 +123,6 @@ struct CommunityFilterSheet: View {
         case .options: return "option"
         case .crypto: return "bitcoinsign.circle"
         case .stocks: return "building.columns"
-        }
-    }
-    
-    private func getActivityColor(for level: ActivityLevel) -> Color {
-        switch level {
-        case .low: return .gray
-        case .medium: return .orange
-        case .high: return .green
         }
     }
     

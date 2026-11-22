@@ -19,7 +19,6 @@ struct CommunityPreviewSheet: View {
     let onClose: () -> Void
     
     @Environment(\.dismiss) private var dismiss
-    @State private var showJoinConfirmation = false
     @State private var isJoining = false
     
     var body: some View {
@@ -31,20 +30,14 @@ struct CommunityPreviewSheet: View {
                     
                     // Content sections
                     VStack(spacing: 24) {
-                        // Basic info section
-                        basicInfoSection
+                        // Room for the avatar that overlaps the banner
+                        Color.clear.frame(height: 30)
                         
                         // Stats section
                         statsSection
                         
                         // Description section
                         descriptionSection
-                        
-                        // Activity section
-                        activitySection
-                        
-                        // Members preview section
-                        membersPreviewSection
                         
                         // Community features section
                         featuresSection
@@ -60,16 +53,6 @@ struct CommunityPreviewSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .alert("Join Community", isPresented: $showJoinConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button(community.isPrivate ? "Send Request" : "Join") {
-                joinCommunity()
-            }
-        } message: {
-            Text(community.isPrivate ? 
-                "Your request will be sent to the community admins for approval." :
-                "Are you sure you want to join \(community.name)?")
-        }
     }
     
     // MARK: - Header Section
@@ -249,58 +232,6 @@ struct CommunityPreviewSheet: View {
     }
     
     // MARK: - Content Sections
-    private var basicInfoSection: some View {
-        VStack(spacing: 16) {
-            // Add some top padding to account for profile overlap
-            Rectangle()
-                .fill(Color.clear)
-                .frame(height: 30)
-            
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Community")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.textSecondary)
-                        .textCase(.uppercase)
-                    
-                    Text(community.name)
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                }
-                
-                Spacer()
-                
-                // Activity indicator
-                activityIndicator
-            }
-        }
-    }
-    
-    private var activityIndicator: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(getActivityColor())
-                .frame(width: 8, height: 8)
-            
-            Text(community.calculatedActivityLevel.displayName)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(.textSecondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.borderPrimary.opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
-    
     private var statsSection: some View {
         HStack(spacing: 0) {
             statItem(
@@ -383,121 +314,6 @@ struct CommunityPreviewSheet: View {
         )
     }
     
-    private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(getActivityColor())
-                
-                Text("Activity Level")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
-                
-                Spacer()
-                
-                Text(community.calculatedActivityLevel.displayName)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(getActivityColor())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(getActivityColor().opacity(0.1))
-                    )
-            }
-            
-            Text(getActivityDescription())
-                .font(.subheadline)
-                .foregroundColor(.textSecondary)
-                .lineSpacing(2)
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.borderPrimary.opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
-    
-    private var membersPreviewSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "person.3.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(getCommunityColor())
-                
-                Text("Members")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
-                
-                Spacer()
-                
-                Text("\(community.memberCount)")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textSecondary)
-            }
-            
-            // Member avatars if available
-            if !community.memberAvatars.isEmpty {
-                memberAvatarStack
-            } else {
-                Text("Join to see community members")
-                    .font(.subheadline)
-                    .foregroundColor(.textSecondary)
-                    .italic()
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.borderPrimary.opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
-    
-    private var memberAvatarStack: some View {
-        HStack(spacing: -8) {
-            ForEach(Array(community.memberAvatars.prefix(5).enumerated()), id: \.offset) { index, avatarUrl in
-                AsyncImage(url: URL(string: avatarUrl)) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Circle()
-                        .fill(Color.gray.opacity(0.3))
-                }
-                .frame(width: 36, height: 36)
-                .clipShape(Circle())
-                .overlay(
-                    Circle()
-                        .stroke(Color.backgroundSecondary, lineWidth: 2)
-                )
-                .zIndex(Double(5 - index))
-            }
-            
-            if community.memberAvatars.count > 5 {
-                Text("+\(community.memberAvatars.count - 5)")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textSecondary)
-                    .padding(.leading, 12)
-            }
-            
-            Spacer()
-        }
-    }
-    
     private var featuresSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -516,9 +332,9 @@ struct CommunityPreviewSheet: View {
                 featureRow(icon: "megaphone.fill", text: "Trading callouts and signals")
                 featureRow(icon: "chart.bar.fill", text: "Performance leaderboards")
                 if !community.isPrivate {
-                    featureRow(icon: "globe", text: "Public community")
+                    featureRow(icon: "globe", text: "Public, listed in Discover")
                 } else {
-                    featureRow(icon: "lock.fill", text: "Private, approval required")
+                    featureRow(icon: "lock.fill", text: "Private, hidden from Discover")
                 }
             }
         }
@@ -582,25 +398,19 @@ struct CommunityPreviewSheet: View {
                 }
                 .disabled(isJoining)
             } else {
-                // Join/Request Button
-                Button(action: {
-                    if community.isPrivate {
-                        showJoinConfirmation = true
-                    } else {
-                        joinCommunity()
-                    }
-                }) {
+                // Join Button
+                Button(action: joinCommunity) {
                     HStack(spacing: 8) {
                         if isJoining {
                             ProgressView()
                                 .scaleEffect(0.8)
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         } else {
-                            Image(systemName: community.isPrivate ? "lock.fill" : "person.badge.plus")
+                            Image(systemName: "person.badge.plus")
                                 .font(.system(size: 18))
                         }
                         
-                        Text(isJoining ? "Joining..." : (community.isPrivate ? "Request to Join" : "Join Community"))
+                        Text(isJoining ? "Joining..." : "Join Community")
                             .font(.headline)
                             .fontWeight(.semibold)
                     }
@@ -637,40 +447,12 @@ struct CommunityPreviewSheet: View {
     // MARK: - Helper Methods
     private func joinCommunity() {
         isJoining = true
-        
-        // Add a slight delay for better UX
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            onJoin()
-            isJoining = false
-            
-            // Show success and auto-dismiss after a moment
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                dismiss()
-            }
-        }
+        onJoin()
+        dismiss()
     }
     
     private func getCommunityColor() -> Color {
         community.type.tint
-    }
-    
-    private func getActivityColor() -> Color {
-        switch community.calculatedActivityLevel {
-        case .low: return .gray
-        case .medium: return .orange
-        case .high: return .marketGreen
-        }
-    }
-    
-    private func getActivityDescription() -> String {
-        switch community.calculatedActivityLevel {
-        case .low:
-            return "This community has light activity with occasional discussions and updates."
-        case .medium:
-            return "This community has regular activity with daily discussions and member engagement."
-        case .high:
-            return "This community is very active with frequent discussions, callouts, and member participation."
-        }
     }
     
     private func formatDate(_ date: Date) -> String {

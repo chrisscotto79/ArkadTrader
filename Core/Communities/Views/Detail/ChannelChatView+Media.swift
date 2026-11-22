@@ -25,6 +25,8 @@ extension ChannelChatView {
             } catch {
                 await MainActor.run {
                     print("❌ Failed to upload image: \(error)")
+                    uploadErrorMessage = "Couldn't upload the photo: \(error.localizedDescription)"
+                    selectedImage = nil
                     isUploadingMedia = false
                 }
             }
@@ -47,6 +49,8 @@ extension ChannelChatView {
             } catch {
                 await MainActor.run {
                     print("❌ Failed to upload document: \(error)")
+                    uploadErrorMessage = "Couldn't upload the file: \(error.localizedDescription)"
+                    selectedDocumentURL = nil
                     isUploadingMedia = false
                 }
             }

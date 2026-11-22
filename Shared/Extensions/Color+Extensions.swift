@@ -164,15 +164,6 @@ extension Color {
         })
     }
     
-    // MARK: - Random Colors (for development/testing)
-    static var random: Color {
-        Color(
-            red: Double.random(in: 0...1),
-            green: Double.random(in: 0...1),
-            blue: Double.random(in: 0...1)
-        )
-    }
-    
     // MARK: - Color Manipulation (simplified to avoid blend mode issues)
     func lighten(by percentage: Double = 0.1) -> Color {
         return self.opacity(1.0 - percentage)

@@ -15,6 +15,12 @@ struct SearchResultView: View {
     @State private var isLoadingUser = false
     @State private var profileUser: User?
     
+    // Community sheet states
+    @State private var isJoiningCommunity = false
+    @State private var hasJoinedCommunity = false
+    @State private var joinErrorMessage: String?
+    @State private var showFullCommunity = false
+    
     var body: some View {
         Button(action: {
             handleResultTap()
@@ -314,19 +320,19 @@ struct SearchResultView: View {
     
     private func createMinimalUser() -> User {
         guard let user = result.user else {
-            return User(id: "unknown", email: "unknown@example.com", username: "unknown", fullName: "Unknown User")
+            return User(id: "", email: "", username: "", fullName: "")
         }
         
-        print("🔨 Creating minimal user for: \(user.username)")
-        
+        // Built only from the search result itself; no invented details.
         var minimalUser = User(
             id: user.id,
-            email: "\(user.username)@example.com",
+            email: "",
             username: user.username,
             fullName: user.fullName
         )
         
-        minimalUser.bio = "Trader on ArkadTrader"
+        minimalUser.bio = user.bio
+        minimalUser.profileImageUrl = user.profileImageUrl
         minimalUser.followersCount = user.followersCount
         minimalUser.followingCount = user.followingCount
         minimalUser.totalProfitLoss = user.totalProfitLoss
@@ -365,7 +371,6 @@ struct SearchResultView: View {
         NavigationView {
             VStack {
                 if let post = result.post {
-                    // Create a mock HomeViewModel for the post card
                     UserPostCard(post: post, homeViewModel: HomeViewModel())
                         .environmentObject(authService)
                         .padding()
@@ -449,26 +454,49 @@ struct SearchResultView: View {
                             }
                         }
                         
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(trade.tradeType == .option ? "Contracts" : "Shares")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("\(trade.quantity)")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                            }
+                            
+                            Spacer()
+                            
+                            VStack(alignment: .trailing) {
+                                Text("Entry Date")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(trade.entryDate.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.subheadline)
+                            }
+                        }
+                        
                         if !trade.isOpen {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text("P&L")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                    Text(String(format: "%.2f%%", trade.profitLossPercentage))
-                                        .font(.title2)
+                                    Text("\(trade.profitLoss.asCurrencyWithSign) (\(String(format: "%+.2f%%", trade.profitLossPercentage)))")
+                                        .font(.title3)
                                         .fontWeight(.bold)
-                                        .foregroundColor(trade.profitLossPercentage >= 0 ? .green : .red)
+                                        .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
                                 }
                                 
                                 Spacer()
                                 
-                                VStack(alignment: .trailing) {
-                                    Text("Entry Date")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text(DateFormatter().string(from: trade.entryDate))
-                                        .font(.subheadline)
+                                if let exitDate = trade.exitDate {
+                                    VStack(alignment: .trailing) {
+                                        Text("Exit Date")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text(exitDate.formatted(date: .abbreviated, time: .omitted))
+                                            .font(.subheadline)
+                                    }
                                 }
                             }
                         }
@@ -509,7 +537,7 @@ struct SearchResultView: View {
     
     @ViewBuilder
     private var communityDetailSheet: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 24) {
                 if let community = result.community {
                     // Community header
@@ -559,30 +587,60 @@ struct SearchResultView: View {
                     
                     // Action buttons
                     VStack(spacing: 12) {
-                        Button(action: {
-                            // TODO: Implement join community
-                            print("Join community: \(community.name)")
-                        }) {
-                            Text(community.isPrivate ? "Request to Join" : "Join Community")
+                        if isCommunityMember(community) {
+                            Label("You're a member", systemImage: "checkmark.circle.fill")
                                 .font(.headline)
-                                .foregroundColor(.white)
+                                .foregroundColor(.marketGreen)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.marketGreen.opacity(0.1))
+                                .cornerRadius(12)
+                        } else if community.isPrivate {
+                            Text("This community is private. Members can invite you.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Button(action: {
+                                Task { await join(community) }
+                            }) {
+                                HStack(spacing: 8) {
+                                    if isJoiningCommunity {
+                                        ProgressView()
+                                            .tint(.black)
+                                    }
+                                    Text("Join")
+                                        .font(.headline)
+                                }
+                                .foregroundColor(.black)
                                 .frame(maxWidth: .infinity)
                                 .padding()
                                 .background(Color.arkadGold)
                                 .cornerRadius(12)
+                            }
+                            .disabled(isJoiningCommunity)
                         }
                         
-                        Button(action: {
-                            // TODO: Implement view community details
-                            print("View community details: \(community.name)")
-                        }) {
-                            Text("View Details")
-                                .font(.headline)
-                                .foregroundColor(.arkadGold)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.arkadGold.opacity(0.1))
-                                .cornerRadius(12)
+                        if let joinErrorMessage {
+                            Text(joinErrorMessage)
+                                .font(.caption)
+                                .foregroundColor(.marketRed)
+                                .multilineTextAlignment(.center)
+                        }
+                        
+                        if !community.isPrivate || isCommunityMember(community) {
+                            Button(action: {
+                                showFullCommunity = true
+                            }) {
+                                Text("View Details")
+                                    .font(.headline)
+                                    .foregroundColor(.arkadGoldDark)
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color.arkadGold.opacity(0.1))
+                                    .cornerRadius(12)
+                            }
                         }
                     }
                     
@@ -613,7 +671,39 @@ struct SearchResultView: View {
                 }
                 .foregroundColor(.arkadGold)
             )
+            .navigationDestination(isPresented: $showFullCommunity) {
+                if let community = result.community {
+                    CommunityDetailView(community: community)
+                        .environmentObject(authService)
+                }
+            }
         }
+    }
+    
+    // MARK: - Community Actions
+    
+    private func isCommunityMember(_ community: Community) -> Bool {
+        hasJoinedCommunity || (authService.currentUser?.communityIds.contains(community.id) ?? false)
+    }
+    
+    @MainActor
+    private func join(_ community: Community) async {
+        guard let userId = authService.currentUser?.id else {
+            joinErrorMessage = "You need to be signed in to join."
+            return
+        }
+        guard !isCommunityMember(community) else { return }
+        
+        isJoiningCommunity = true
+        joinErrorMessage = nil
+        do {
+            try await authService.joinCommunity(communityId: community.id, userId: userId)
+            hasJoinedCommunity = true
+            await authService.refreshCurrentUser()
+        } catch {
+            joinErrorMessage = "Couldn't join: \(error.localizedDescription)"
+        }
+        isJoiningCommunity = false
     }
 }
 

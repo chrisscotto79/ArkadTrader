@@ -33,6 +33,8 @@ class ChannelChatViewModel: ObservableObject {
     private var listeners: [ListenerRegistration] = []
     /// Last time we told Firestore we're typing (throttles writes)
     private var lastTypingSent: Date?
+    /// People the current user has blocked; their messages are hidden
+    private var blockedUserIds: Set<String> = []
     
     // MARK: - Computed Properties
     var currentUserId: String? {
@@ -60,6 +62,7 @@ class ChannelChatViewModel: ObservableObject {
         
         // Load initial messages and start real-time listening
         Task {
+            await loadBlockedUsers()
             await loadMemberRoles()
             await loadInitialMessages()
             await loadAllMessageReactions()
@@ -305,6 +308,22 @@ class ChannelChatViewModel: ObservableObject {
         canUserManageChannel = isAdmin || role == .moderator
     }
     
+    /// Hide everything from a user the current user just blocked
+    func hideMessages(from userId: String) {
+        blockedUserIds.insert(userId)
+        messages.removeAll { $0.authorId == userId }
+    }
+    
+    /// Load the current user's block list so blocked people's messages stay hidden
+    private func loadBlockedUsers() async {
+        guard let currentUserId = currentUserId else { return }
+        do {
+            blockedUserIds = try await authService.getUserBlockedUsers(userId: currentUserId)
+        } catch {
+            print("⚠️ ChannelChatViewModel: Could not load blocked users: \(error)")
+        }
+    }
+    
     /// A member's role in this community (defaults to member)
     func role(for userId: String) -> CommunityRole {
         if let community = community, community.createdBy == userId { return .owner }
@@ -334,7 +353,7 @@ class ChannelChatViewModel: ObservableObject {
                 limit: 50
             )
             
-            messages = loadedMessages
+            messages = loadedMessages.filter { !blockedUserIds.contains($0.authorId) }
             print("✅ Loaded \(messages.count) messages for #\(channel.name)")
             
         } catch {
@@ -384,10 +403,11 @@ class ChannelChatViewModel: ObservableObject {
             channelId: channel.id
         ) { [weak self] newMessages in
             Task { @MainActor in
-                self?.messages = newMessages
+                guard let self else { return }
+                self.messages = newMessages.filter { !self.blockedUserIds.contains($0.authorId) }
                 
                 // Load reactions for any new messages
-                await self?.loadReactionsForNewMessages(newMessages)
+                await self.loadReactionsForNewMessages(self.messages)
             }
         }
         listeners.append(listener)

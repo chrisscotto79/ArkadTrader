@@ -1,36 +1,49 @@
-//
-//  HelpCenterView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/12/25.
-//
-
-
 // File: Core/Settings/Views/HelpCenterView.swift
+// Help Center: a searchable FAQ about features the app really has, plus a link to email support.
 
 import SwiftUI
 
 struct HelpCenterView: View {
-    @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
-    
     @State private var searchText = ""
-    @State private var selectedCategory: HelpCategory = .all
-    @State private var showingArticle = false
-    @State private var selectedArticle: HelpArticle?
-    
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Search bar
-                searchSection
-                
-                // Category filter
-                categoryFilterSection
-                
-                // Help content
-                helpContentSection
+            List {
+                if filteredTopics.isEmpty {
+                    Section {
+                        VStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.title2)
+                                .foregroundColor(.gray)
+                            Text("No answers match \"\(searchText)\"")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    }
+                } else {
+                    ForEach(filteredTopics) { topic in
+                        Section(topic.title) {
+                            ForEach(topic.questions) { item in
+                                FAQRow(item: item, startExpanded: !trimmedSearch.isEmpty)
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    EmailSupportButton(title: "Still need help? Email us", subject: "ArkadTrader Help")
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                } footer: {
+                    Text("Your app version and iOS version are added to the email for you.")
+                }
             }
+            .listStyle(InsetGroupedListStyle())
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search questions")
             .navigationTitle("Help Center")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -43,521 +56,181 @@ struct HelpCenterView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingArticle) {
-            if let article = selectedArticle {
-                HelpArticleDetailView(article: article)
-            }
-        }
     }
-    
-    // MARK: - Search Section
-    private var searchSection: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.gray)
-                
-                TextField("Search help articles...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.gray)
-                    }
-                }
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.gray.opacity(0.1))
-            )
-            .padding(.horizontal)
-        }
-        .padding(.vertical, 16)
-        .background(Color.backgroundSecondary)
-    }
-    
-    // MARK: - Category Filter Section
-    private var categoryFilterSection: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(HelpCategory.allCases, id: \.self) { category in
-                    Button(action: {
-                        selectedCategory = category
-                    }) {
-                        Text(category.displayName)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(selectedCategory == category ? Color.blue : Color.gray.opacity(0.2))
-                            )
-                            .foregroundColor(selectedCategory == category ? .white : .primary)
-                    }
-                }
-            }
-            .padding(.horizontal)
-        }
-        .padding(.vertical, 12)
-    }
-    
-    // MARK: - Help Content Section
-    private var helpContentSection: some View {
-        List {
-            // Quick Actions
-            if selectedCategory == .all {
-                quickActionsSection
-            }
-            
-            // Help Articles
-            helpArticlesSection
-            
-            // Contact Support
-            if selectedCategory == .all {
-                contactSupportSection
-            }
-        }
-        .listStyle(PlainListStyle())
-    }
-    
-    // MARK: - Quick Actions Section
-    private var quickActionsSection: some View {
-        Section("Quick Actions") {
-            QuickActionCard(
-                icon: "book.pages",
-                title: "Getting Started Guide",
-                description: "Learn the basics of ArkadTrader",
-                color: .blue
-            ) {
-                // TODO: Open getting started guide
-            }
-            
-            QuickActionCard(
-                icon: "play.circle",
-                title: "Video Tutorials",
-                description: "Watch step-by-step tutorials",
-                color: .green
-            ) {
-                // TODO: Open video tutorials
-            }
-            
-            QuickActionCard(
-                icon: "questionmark.circle",
-                title: "FAQ",
-                description: "Frequently asked questions",
-                color: .purple
-            ) {
-                // TODO: Open FAQ
-            }
-        }
-    }
-    
-    // MARK: - Help Articles Section
-    private var helpArticlesSection: some View {
-        Section("Help Articles") {
-            ForEach(filteredArticles, id: \.id) { article in
-                HelpArticleRow(article: article) {
-                    selectedArticle = article
-                    showingArticle = true
-                }
-            }
-            
-            if filteredArticles.isEmpty {
-                Text("No articles found")
-                    .foregroundColor(.gray)
-                    .padding(.vertical, 20)
-            }
-        }
-    }
-    
-    // MARK: - Contact Support Section
-    private var contactSupportSection: some View {
-        Section("Need More Help?") {
-            VStack(spacing: 16) {
-                HStack {
-                    Image(systemName: "envelope")
-                        .foregroundColor(.blue)
-                        .font(.title2)
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Contact Support")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Get personalized help from our support team")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    Spacer()
-                    
-                    Button("Contact") {
-                        // TODO: Open contact support
-                    }
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(Color.blue)
-                    .clipShape(Capsule())
-                }
-                
-                Divider()
-                
-                HStack {
-                    Image(systemName: "message")
-                        .foregroundColor(.green)
-                        .font(.title2)
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Live Chat")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Chat with our support team in real-time")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    Spacer()
-                    
-                    Button("Chat") {
-                        // TODO: Open live chat
-                    }
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(Color.green)
-                    .clipShape(Capsule())
-                }
-            }
-            .padding(.vertical, 8)
-        }
-    }
-    
-    // MARK: - Computed Properties
-    
-    private var filteredArticles: [HelpArticle] {
-        let categoryFiltered = selectedCategory == .all ? helpArticles : helpArticles.filter { $0.category == selectedCategory }
-        
-        if searchText.isEmpty {
-            return categoryFiltered
-        } else {
-            return categoryFiltered.filter { 
-                $0.title.localizedCaseInsensitiveContains(searchText) ||
-                $0.content.localizedCaseInsensitiveContains(searchText)
-            }
-        }
-    }
-    
-    private var helpArticles: [HelpArticle] {
-        [
-            // Trading Articles
-            HelpArticle(
-                id: "1",
-                title: "How to place your first trade",
-                content: "Learn the step-by-step process of placing trades in ArkadTrader...",
-                category: .trading,
-                tags: ["trading", "orders", "beginner"]
-            ),
-            HelpArticle(
-                id: "2",
-                title: "Understanding order types",
-                content: "Market orders, limit orders, stop-loss orders explained...",
-                category: .trading,
-                tags: ["orders", "market", "limit", "stop-loss"]
-            ),
-            HelpArticle(
-                id: "3",
-                title: "Setting up stop-loss and take-profit",
-                content: "Protect your investments with automatic order management...",
-                category: .trading,
-                tags: ["risk management", "stop-loss", "take-profit"]
-            ),
-            
-            // Account Articles
-            HelpArticle(
-                id: "4",
-                title: "Connecting your broker account",
-                content: "Step-by-step guide to securely connect your trading account...",
-                category: .account,
-                tags: ["broker", "connection", "security"]
-            ),
-            HelpArticle(
-                id: "5",
-                title: "Managing your profile settings",
-                content: "Customize your profile and privacy settings...",
-                category: .account,
-                tags: ["profile", "settings", "privacy"]
-            ),
-            HelpArticle(
-                id: "6",
-                title: "Account security best practices",
-                content: "Keep your trading account secure with these tips...",
-                category: .account,
-                tags: ["security", "password", "2fa"]
-            ),
-            
-            // Portfolio Articles
-            HelpArticle(
-                id: "7",
-                title: "Reading your portfolio dashboard",
-                content: "Understand your portfolio performance metrics...",
-                category: .portfolio,
-                tags: ["portfolio", "dashboard", "performance"]
-            ),
-            HelpArticle(
-                id: "8",
-                title: "Tracking portfolio performance",
-                content: "Monitor your investments and track gains/losses...",
-                category: .portfolio,
-                tags: ["tracking", "performance", "analytics"]
-            ),
-            
-            // Social Articles
-            HelpArticle(
-                id: "9",
-                title: "Sharing trades with the community",
-                content: "Connect with other traders and share your strategies...",
-                category: .social,
-                tags: ["social", "community", "sharing"]
-            ),
-            HelpArticle(
-                id: "10",
-                title: "Following other traders",
-                content: "Discover and follow successful traders...",
-                category: .social,
-                tags: ["following", "traders", "feed"]
-            ),
-            
-            // Technical Articles
-            HelpArticle(
-                id: "11",
-                title: "Troubleshooting connection issues",
-                content: "Resolve common connectivity problems...",
-                category: .technical,
-                tags: ["troubleshooting", "connection", "errors"]
-            ),
-            HelpArticle(
-                id: "12",
-                title: "Syncing data across devices",
-                content: "Keep your data synchronized across all your devices...",
-                category: .technical,
-                tags: ["sync", "devices", "cloud"]
-            )
-        ]
-    }
-}
 
-// MARK: - Help Category Enum
-enum HelpCategory: String, CaseIterable {
-    case all = "all"
-    case trading = "trading"
-    case account = "account"
-    case portfolio = "portfolio"
-    case social = "social"
-    case technical = "technical"
-    
-    var displayName: String {
-        switch self {
-        case .all: return "All"
-        case .trading: return "Trading"
-        case .account: return "Account"
-        case .portfolio: return "Portfolio"
-        case .social: return "Social"
-        case .technical: return "Technical"
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var filteredTopics: [FAQTopic] {
+        let query = trimmedSearch
+        guard !query.isEmpty else { return FAQTopic.all }
+        return FAQTopic.all.compactMap { topic in
+            let matches = topic.questions.filter {
+                $0.question.localizedCaseInsensitiveContains(query) ||
+                $0.answer.localizedCaseInsensitiveContains(query) ||
+                topic.title.localizedCaseInsensitiveContains(query)
+            }
+            return matches.isEmpty ? nil : FAQTopic(title: topic.title, questions: matches)
         }
     }
 }
 
-// MARK: - Help Article Model
-struct HelpArticle {
-    let id: String
+// MARK: - FAQ Row
+
+private struct FAQRow: View {
+    let item: FAQItem
+    let startExpanded: Bool
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            Text(item.answer)
+                .font(.subheadline)
+                .foregroundColor(.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 4)
+        } label: {
+            Text(item.question)
+                .font(.body)
+                .fontWeight(.medium)
+                .foregroundColor(.textPrimary)
+        }
+        .tint(.arkadGoldDark)
+        .onAppear { if startExpanded { isExpanded = true } }
+        .onChange(of: startExpanded) { _, newValue in isExpanded = newValue }
+    }
+}
+
+// MARK: - FAQ Content
+
+struct FAQItem: Identifiable {
+    let question: String
+    let answer: String
+    var id: String { question }
+}
+
+struct FAQTopic: Identifiable {
     let title: String
-    let content: String
-    let category: HelpCategory
-    let tags: [String]
-    let createdAt: Date = Date()
-    let updatedAt: Date = Date()
-}
+    let questions: [FAQItem]
+    var id: String { title }
 
-// MARK: - Supporting Views
-
-struct QuickActionCard: View {
-    let icon: String
-    let title: String
-    let description: String
-    let color: Color
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .font(.title2)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        Circle()
-                            .fill(color.opacity(0.1))
-                    )
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-                    
-                    Text(description)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
-                    .font(.caption)
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.backgroundSecondary)
+    static let all: [FAQTopic] = [
+        FAQTopic(title: "Portfolio", questions: [
+            FAQItem(
+                question: "How do I log a trade?",
+                answer: "Open the Portfolio tab and tap Add Trade. Choose the asset type, then enter the ticker, entry price, quantity and entry date. Notes are optional. ArkadTrader is a journal: trades are entered by you and nothing is placed with a broker."
+            ),
+            FAQItem(
+                question: "How do I close a trade?",
+                answer: "In Portfolio, tap an open trade and choose Close. Enter the exit price and exit date. The trade moves to Closed and its profit or loss counts toward your realized P&L."
+            ),
+            FAQItem(
+                question: "Can I edit or delete a trade?",
+                answer: "Yes. Tap any trade in Portfolio to edit its details or delete it. Some fields are read-only once a position is closed. Deleting a trade cannot be undone."
+            ),
+            FAQItem(
+                question: "What is the starting balance?",
+                answer: "It is the cash you started with. Portfolio uses it to work out your account value and available cash. Set it the first time you open Portfolio, or later with Set balance."
+            ),
+            FAQItem(
+                question: "How do I record a deposit or withdrawal?",
+                answer: "In Portfolio, tap Deposit / Withdraw and enter the amount. Your account balance is adjusted by that amount."
+            ),
+            FAQItem(
+                question: "What does the Realized P&L chart show?",
+                answer: "It shows the running total of profit and loss from your closed trades over time. Use 1W, 1M, 1Y or All to change the range. Open trades are not included until you close them."
+            ),
+            FAQItem(
+                question: "Where do the prices of open positions come from?",
+                answer: "Open stock positions are revalued with market quotes from Finnhub when quotes are available. Other positions, or any stock without a quote, are valued at your entry price."
             )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-struct HelpArticleRow: View {
-    let article: HelpArticle
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(article.title)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.leading)
-                
-                Text(article.content.prefix(100) + "...")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .lineLimit(2)
-                
-                HStack {
-                    Text(article.category.displayName.uppercased())
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.2))
-                        .foregroundColor(.blue)
-                        .clipShape(Capsule())
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                        .font(.caption)
-                }
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.backgroundSecondary)
+        ]),
+        FAQTopic(title: "Feed & Posts", questions: [
+            FAQItem(
+                question: "How do I post?",
+                answer: "On the Home tab, tap New Post. Write up to 500 characters, add $TICKERS and hashtags, and attach up to 6 images such as charts or screenshots, then tap Post."
+            ),
+            FAQItem(
+                question: "How do I share a trade result?",
+                answer: "When creating a post, choose the Trade Result post type and fill in the ticker, entry price, exit price and position size. The numbers show as a trade card on your post. Leave P&L blank to have it worked out for you."
+            ),
+            FAQItem(
+                question: "How do I delete one of my posts?",
+                answer: "Tap the ••• (More) menu on your post and choose Delete Post. This cannot be undone."
+            ),
+            FAQItem(
+                question: "What are the For You, Following and News tabs?",
+                answer: "For You shows recent posts from everyone. Following shows posts from people you follow. News shows general market news from Finnhub."
             )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - Help Article Detail View
-struct HelpArticleDetailView: View {
-    let article: HelpArticle
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Article Header
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(article.title)
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        HStack {
-                            Text(article.category.displayName.uppercased())
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.2))
-                                .foregroundColor(.blue)
-                                .clipShape(Capsule())
-                            
-                            Spacer()
-                            
-                            Text(article.createdAt, style: .date)
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    
-                    Divider()
-                    
-                    // Article Content
-                    Text(article.content)
-                        .font(.body)
-                        .lineSpacing(4)
-                    
-                    // Tags
-                    if !article.tags.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Related Topics")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                            
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
-                                ForEach(article.tags, id: \.self) { tag in
-                                    Text(tag)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.gray.opacity(0.2))
-                                        .clipShape(Capsule())
-                                }
-                            }
-                        }
-                    }
-                    
-                    Spacer(minLength: 50)
-                }
-                .padding()
-            }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
+        ]),
+        FAQTopic(title: "People", questions: [
+            FAQItem(
+                question: "How do I follow someone?",
+                answer: "Open their profile by tapping their name or avatar, or find them with Search, then tap Follow. Their posts appear in your Following feed. Tap the button again to unfollow."
+            ),
+            FAQItem(
+                question: "What can I search for?",
+                answer: "Use the Search tab to find people, posts, trades by ticker, and communities. Filter the results by type with the buttons under the search bar."
+            ),
+            FAQItem(
+                question: "How do I edit my profile?",
+                answer: "Go to the Profile tab, tap the gear icon to open Settings, and tap Edit Profile. You can change your profile photo, full name, username and bio (up to 150 characters)."
+            )
+        ]),
+        FAQTopic(title: "Communities", questions: [
+            FAQItem(
+                question: "How do I join or create a community?",
+                answer: "Open the Communities tab. Browse Discover to find and join a community, or tap Create to start your own with a name, description and optional avatar and banner. Communities you belong to are listed under Joined."
+            ),
+            FAQItem(
+                question: "What are channels?",
+                answer: "Each community has channels for different topics. Open a channel to chat with members, reply to and react to messages, and share images and documents."
+            ),
+            FAQItem(
+                question: "What is a trade callout?",
+                answer: "A callout is a trade idea posted in a channel with a ticker, direction, entry price and, optionally, a stop and target. Members can tap Track in Portfolio to log it as their own trade, and its status can be updated as the trade plays out."
+            ),
+            FAQItem(
+                question: "What is a private community?",
+                answer: "Private communities are hidden from Discover and search for anyone who isn't a member."
+            ),
+            FAQItem(
+                question: "How do I leave a community?",
+                answer: "Open the community, tap its menu and choose Leave Community. Community owners can't leave their own community."
+            )
+        ]),
+        FAQTopic(title: "Leaderboards", questions: [
+            FAQItem(
+                question: "How are leaderboards ranked?",
+                answer: "Leaderboards rank traders by their closed trades in Portfolio: highest win rate, highest total realized P&L, most closed trades, and best profit factor. Win rate and profit factor need at least 3 closed trades. Choose Week, Month, Year or All Time to change the period."
+            ),
+            FAQItem(
+                question: "Where can I see leaderboards?",
+                answer: "In the Communities tab, open Leaderboard to see top communities and top traders across Arkad. Each community also has its own leaderboard of its members."
+            )
+        ]),
+        FAQTopic(title: "Account & Data", questions: [
+            FAQItem(
+                question: "How do I export my data?",
+                answer: "Open Settings (the gear icon on your Profile) and tap Export Data. ArkadTrader creates CSV files of your trades and posts on your device. Use the share sheet to save them to Files or send them to another app."
+            ),
+            FAQItem(
+                question: "How do I reset my password?",
+                answer: "On the sign-in screen, tap Forgot Password? and enter your email address. We'll email you a link to set a new password."
+            ),
+            FAQItem(
+                question: "How do I delete my account?",
+                answer: "Open Settings and tap Delete Account at the bottom. This permanently deletes your sign-in and your profile and cannot be undone. Trades, posts and messages you created are not removed by this step; email us if you want them removed too. If you are asked to sign in again first, sign out, sign back in, and try again right away."
+            ),
+            FAQItem(
+                question: "Who can see my information?",
+                answer: "Other signed-in users can see your profile, posts and comments. Members of a community can see its channel messages. Your trades can appear in search results, and your closed trades are used for leaderboards. See the Privacy Policy in Settings > About ArkadTrader for details."
+            )
+        ])
+    ]
 }
 
 #Preview {
     HelpCenterView()
-        .environmentObject(FirebaseAuthService.shared)
 }

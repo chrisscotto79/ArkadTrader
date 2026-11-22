@@ -1,40 +1,33 @@
-//
-//  Untitled.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/16/25.
-//
+// File: Core/Home/Views/Feeds/FollowingFeedView.swift
+// Posts, public trades and activity from people the user follows.
 
 import SwiftUI
 
+/// The Home tab's Following feed. HomeView owns the view models and the
+/// surrounding ScrollView / pull-to-refresh.
 struct FollowingFeedView: View {
-    @StateObject private var viewModel = FollowingFeedViewModel()
-    @StateObject private var homeViewModel = HomeViewModel()  // ADD THIS LINE
+    @ObservedObject var viewModel: FollowingFeedViewModel
+    @ObservedObject var homeViewModel: HomeViewModel
     @EnvironmentObject var authService: FirebaseAuthService
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                if viewModel.isLoading {
-                    ProgressView("Loading following content...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.top, 50)
-                } else if viewModel.followingPosts.isEmpty && viewModel.followingTrades.isEmpty {
-                    EmptyFollowingView()
-                } else {
-                    // Mixed content feed
-                    ForEach(combinedFeedItems, id: \.id) { item in
-                        FeedItemView(item: item)
-                    }
+        LazyVStack(spacing: 16) {
+            if viewModel.isLoading && !viewModel.hasLoaded {
+                ProgressView("Loading following content...")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 50)
+            } else if viewModel.followingPosts.isEmpty && viewModel.followingTrades.isEmpty && viewModel.followingActivity.isEmpty {
+                EmptyFollowingView()
+            } else {
+                // Mixed content feed
+                ForEach(combinedFeedItems, id: \.id) { item in
+                    FeedItemView(item: item, homeViewModel: homeViewModel)
                 }
             }
-            .padding(.horizontal)
         }
-        .refreshable {
-            await viewModel.refreshContent()
-        }
-        .onAppear {
-            Task {
+        .padding(.horizontal)
+        .task {
+            if !viewModel.hasLoaded {
                 await viewModel.loadFollowingContent()
             }
         }
@@ -86,11 +79,12 @@ enum FeedItem: Identifiable {
 
 struct FeedItemView: View {
     let item: FeedItem
+    @ObservedObject var homeViewModel: HomeViewModel
     
     var body: some View {
         switch item {
         case .post(let post):
-            UserPostCard(post: post, homeViewModel:HomeViewModel())  // CHANGE THIS LINE
+            UserPostCard(post: post, homeViewModel: homeViewModel)
         case .trade(let trade):
             TradeCardView(trade: trade)
         case .activity(let activity):

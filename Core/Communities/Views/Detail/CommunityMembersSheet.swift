@@ -204,29 +204,19 @@ struct MembersListRow: View {
                         .font(.subheadline)
                         .foregroundColor(getRoleColor(member.role))
                     
-                    Text("@\(member.username)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    if !member.username.isEmpty {
+                        Text("@\(member.username)")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
-                // Removed unnecessary nil check since joinedAt is non-optional
                 Text("Joined \(member.joinedAt, style: .date)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             
             Spacer()
-            
-            // Status Indicator
-            VStack(spacing: 4) {
-                Circle()
-                    .fill(member.isOnline ? Color.green : Color.gray.opacity(0.3))
-                    .frame(width: 8, height: 8)
-                
-                Text(member.isOnline ? "Online" : "Offline")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -349,9 +339,11 @@ struct MemberRow: View {
                         .font(.caption)
                         .foregroundColor(getRoleColor(member.role))
                     
-                    Text("@\(member.username)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if !member.username.isEmpty {
+                        Text("@\(member.username)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             

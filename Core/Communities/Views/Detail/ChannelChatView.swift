@@ -186,10 +186,15 @@ struct ChannelChatView: View {
         // Smart Chat Features
         @State var lastTypingTime: Date = Date()
         @State var typingTimer: Timer?
-        @State var readReceipts: [String: Set<String>] = [:] // messageId: [userIds who read it]
         @State var showingMessageSearch = false
         @State var searchText = ""
         @State var searchResults: [CommunityMessage] = []
+        /// Message picked in search, held until the search sheet finishes closing
+        @State var searchSelectionId: String?
+        /// Message the list should scroll to
+        @State var scrollTargetMessageId: String?
+        /// Message briefly highlighted after jumping to it from search
+        @State var highlightedMessageId: String?
         
         // Animation and Timer properties
         @State var animatingDot = 0
@@ -200,7 +205,6 @@ struct ChannelChatView: View {
         @State var showingMentionSuggestions = false
         @State var currentMentionQuery = ""
         @State var mentionRange: Range<String.Index>?
-        @State var unreadMentions: Set<String> = [] // Message IDs with unread mentions
         
         // Media sharing state
         @State var showingImagePicker = false
@@ -212,6 +216,7 @@ struct ChannelChatView: View {
         @State var selectedImage: UIImage?
         @State var selectedDocumentURL: URL?
         @State var isUploadingMedia = false
+        @State var uploadErrorMessage: String?
         
         // Profile functionality
         @State var selectedUserForProfile: User?
@@ -260,8 +265,10 @@ struct ChannelChatView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $showUserProfile) {
             if let user = selectedUserForProfile {
-                UserProfileSheet(user: user, community: community)
-                    .environmentObject(authService)
+                UserProfileSheet(user: user, community: community, onBlocked: { blockedId in
+                    viewModel.hideMessages(from: blockedId)
+                })
+                .environmentObject(authService)
             }
         }
         .sheet(isPresented: $showCreateCallout) {
@@ -288,15 +295,21 @@ struct ChannelChatView: View {
         .sheet(isPresented: $showingDocumentPicker) {
             DocumentPicker(selectedURL: $selectedDocumentURL)
         }
-        .sheet(isPresented: $showingMessageSearch) {
+        .sheet(isPresented: $showingMessageSearch, onDismiss: {
+            // Scroll after the sheet has gone so the jump is visible
+            if let target = searchSelectionId {
+                searchSelectionId = nil
+                scrollTargetMessageId = target
+            }
+        }) {
             MessageSearchSheet(
                 messages: viewModel.messages,
                 userCache: userCache,
                 searchText: $searchText,
                 searchResults: $searchResults,
                 onMessageSelected: { message in
+                    searchSelectionId = message.id
                     showingMessageSearch = false
-                    // TODO: Scroll to selected message
                 }
             )
         }
@@ -313,6 +326,14 @@ struct ChannelChatView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Choose what you'd like to share")
+        }
+        .alert(
+            "Upload failed",
+            isPresented: Binding(get: { uploadErrorMessage != nil }, set: { if !$0 { uploadErrorMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(uploadErrorMessage ?? "")
         }
         .alert("Delete Message", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
@@ -439,17 +460,15 @@ extension ChannelChatView {
     
     var channelColor: Color {
         switch channel.type {
-        case .text: return .blue
+        case .text, .voice: return .blue
         case .callouts: return .orange
-        case .voice: return .green
         }
     }
     
     var channelIcon: String {
         switch channel.type {
-        case .text: return "number"
+        case .text, .voice: return "number"
         case .callouts: return "megaphone.fill"
-        case .voice: return "speaker.wave.2.fill"
         }
     }
 }
@@ -488,14 +507,20 @@ extension ChannelChatView {
                                     selectedUserForProfile = user
                                     showUserProfile = true
                                 },
-                                readReceipts: readReceipts[message.id] ?? [],
                                 currentUserId: authService.currentUser?.id ?? "",
+                                currentUsername: authService.currentUser?.username ?? "",
                                 canManageCallout: viewModel.canManageCallout(message),
                                 onTrackCallout: { calloutToTrack = message },
                                 onUpdateCalloutStatus: { status in
                                     viewModel.updateCalloutStatus(message, to: status)
                                 }
                             )
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.arkadGold.opacity(highlightedMessageId == message.id ? 0.18 : 0))
+                                    .padding(.horizontal, -8)
+                            )
+                            .animation(.easeInOut(duration: 0.3), value: highlightedMessageId)
                             .id(message.id)
                         }
                     }
@@ -512,6 +537,19 @@ extension ChannelChatView {
                 }
                 // Load users for any new messages
                 loadUsersForNewMessages()
+            }
+            .onChange(of: scrollTargetMessageId) { _, target in
+                guard let target else { return }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                highlightedMessageId = target
+                scrollTargetMessageId = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                    if highlightedMessageId == target {
+                        highlightedMessageId = nil
+                    }
+                }
             }
             .onTapGesture {
                 // Dismiss emoji picker when tapping outside
@@ -557,12 +595,12 @@ extension ChannelChatView {
     
     var channelDescription: String {
         switch channel.type {
-        case .text:
+        case .text, .voice:
             return "This is the start of the #\(channel.name) channel."
         case .callouts:
-            return "Trading callouts and signals will be posted here by admins."
-        case .voice:
-            return "Join the voice channel to chat with other members."
+            return channel.adminOnly
+                ? "Admins post trade callouts here. Use \"Track in Portfolio\" on a callout to add it to your trades."
+                : "Post trade callouts here with the megaphone button. Use \"Track in Portfolio\" on a callout to add it to your trades."
         }
     }
 }

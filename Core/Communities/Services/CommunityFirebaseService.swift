@@ -149,27 +149,11 @@ class CommunityFirebaseService: ObservableObject {
                     print("✅ Added member: \(user.fullName) (\(user.username)) as \(role.displayName)")
                 } else {
                     print("⚠️ Could not find user details for \(userId)")
-                    // Fallback to basic info
-                    let member = CommunityMemberWithRole(
-                        userId: userId,
-                        username: "user\(userId.suffix(4))",
-                        fullName: "User \(userId.suffix(4))",
-                        role: role,
-                        joinedAt: joinedAt
-                    )
-                    members.append(member)
+                    members.append(Self.unknownMember(userId: userId, role: role, joinedAt: joinedAt))
                 }
             } catch {
                 print("❌ Error getting user details for member \(userId): \(error)")
-                // Fallback to basic info
-                let member = CommunityMemberWithRole(
-                    userId: userId,
-                    username: "user\(userId.suffix(4))",
-                    fullName: "User \(userId.suffix(4))",
-                    role: role,
-                    joinedAt: joinedAt
-                )
-                members.append(member)
+                members.append(Self.unknownMember(userId: userId, role: role, joinedAt: joinedAt))
             }
         }
         
@@ -183,6 +167,17 @@ class CommunityFirebaseService: ObservableObject {
             return lhs.fullName < rhs.fullName
         }
     }
+    /// Placeholder for a member whose user document can't be loaded (deleted account, permissions)
+    private static func unknownMember(userId: String, role: CommunityRole, joinedAt: Date) -> CommunityMemberWithRole {
+        CommunityMemberWithRole(
+            userId: userId,
+            username: "",
+            fullName: "Unknown member",
+            role: role,
+            joinedAt: joinedAt
+        )
+    }
+    
     // MARK: - Community Guidelines
     
     /// Check if community name is available
@@ -372,24 +367,25 @@ class CommunityFirebaseService: ObservableObject {
     
     // MARK: - Community Management
     
-    /// Update community member role
+    /// Change a member's role. Only the owner can do this, and the owner's own role can't change.
     func updateMemberRole(communityId: String, userId: String, newRole: CommunityRole) async throws {
-        // For now, we'll just validate the action
-        // Later we can store roles in Firestore subcollection
-        
         guard let currentUser = authService.currentUser else {
-            throw FirestoreError.invalidData
+            throw CommunityError.noPermission
         }
         
-        // Check if current user can manage this community
-        let canManage = try await canUserManageCommunity(communityId: communityId, userId: currentUser.id)
-        guard canManage else {
-            throw FirestoreError.invalidData
+        let community = try await getSingleCommunity(communityId: communityId)
+        guard community.createdBy == currentUser.id else {
+            throw CommunityError.noPermission
+        }
+        guard userId != community.createdBy, newRole != .owner else {
+            throw CommunityError.noPermission
         }
         
-        // TODO: Implement role storage in Firestore
-        // For now, we'll just simulate success
-        print("Would update user \(userId) to role \(newRole.rawValue) in community \(communityId)")
+        try await firebaseService.updateCommunityMemberRole(
+            communityId: communityId,
+            userId: userId,
+            role: newRole.rawValue
+        )
     }
     
     /// Check if user can manage community
@@ -496,23 +492,22 @@ class CommunityFirebaseService: ObservableObject {
         // Also remove community from user's communityIds array
         try await leaveCommunity(communityId: communityId, userId: userId)
     }
-    /// Get single community (helper method)
+    /// Get single community (helper method). Reads the document directly so private communities work too.
     private func getSingleCommunity(communityId: String) async throws -> Community {
-        let communities = try await firebaseService.getCommunities(limit: 1000)
-        guard let community = communities.first(where: { $0.id == communityId }) else {
-            throw FirestoreError.invalidData
+        let snapshot = try await Firestore.firestore().collection("communities").document(communityId).getDocument()
+        guard let data = snapshot.data() else {
+            throw CommunityError.noCommunity
         }
-        return community
+        return try Community.fromFirestore(data: data, id: communityId)
     }
     
     
     /// Get user's role in community
     func getUserRole(communityId: String, userId: String) async throws -> CommunityRole {
         let community = try await getSingleCommunity(communityId: communityId)
-        
-        // For now, simple logic: creator is owner, everyone else is member
-        // Later we'll check stored roles
-        return userId == community.createdBy ? .owner : .member
+        return try await firebaseService.getMemberRole(
+            communityId: communityId, userId: userId, createdBy: community.createdBy
+        ) ?? .member
     }
     
     

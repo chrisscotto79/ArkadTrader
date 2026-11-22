@@ -297,7 +297,7 @@ struct CreateCommunityView: View {
                 
                 privacyOption(
                     title: "Private Community",
-                    subtitle: "Users must request to join your community",
+                    subtitle: "Hidden from Discover and search for anyone who isn't a member",
                     icon: "lock.fill",
                     isSelected: viewModel.isPrivate,
                     action: { viewModel.isPrivate = true }
@@ -393,7 +393,7 @@ struct CreateCommunityView: View {
                     .font(.headline)
                     .fontWeight(.semibold)
                 
-                // Mock Community Card
+                // Preview of how the community card will look
                 HStack(spacing: 16) {
                     Circle()
                         .fill(getCommunityTypeColor(for: viewModel.type))

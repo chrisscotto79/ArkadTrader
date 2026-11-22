@@ -313,7 +313,7 @@ extension CommunitiesView {
     // Check if any filters are active
     var hasActiveFilters: Bool {
         viewModel.selectedCategory != nil ||
-        !viewModel.showPrivateCommunities ||
+        viewModel.minimumMemberCount > 0 ||
         viewModel.sortType != .memberCount
 
     }

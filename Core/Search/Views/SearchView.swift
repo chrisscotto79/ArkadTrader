@@ -12,11 +12,6 @@ struct SearchView: View {
     @FocusState private var isSearchFocused: Bool
     @EnvironmentObject private var authService: FirebaseAuthService
 
-    
-    // Sheet states for future features
-    @State private var showAdvancedFilters = false
-    @State private var showSearchSettings = false
-    @State private var showSearchAnalytics = false
     @State private var pressedTab: SearchType?
     
     // Animation states
@@ -69,15 +64,6 @@ struct SearchView: View {
             }
             .navigationBarHidden(true)
         }
-        .sheet(isPresented: $showAdvancedFilters) {
-            advancedFiltersSheet
-        }
-        .sheet(isPresented: $showSearchSettings) {
-            searchSettingsSheet
-        }
-        .sheet(isPresented: $showSearchAnalytics) {
-            searchAnalyticsSheet
-        }
         .alert("Search Error", isPresented: $searchViewModel.showError) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -127,7 +113,7 @@ struct SearchView: View {
             // Text field with placeholder animation
             ZStack(alignment: .leading) {
                 if searchText.isEmpty && !isSearchFocused {
-                    Text("Search traders, posts, stocks...")
+                    Text("Search traders, posts, trades, groups")
                         .foregroundColor(.secondary)
                         .font(.system(size: 16))
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
@@ -163,15 +149,6 @@ struct SearchView: View {
                         .tint(.arkadGold)
                         .transition(.scale.combined(with: .opacity))
                 }
-                
-                // Microphone button (future voice search)
-                Button(action: { showSearchHint.toggle() }) {
-                    Image(systemName: "mic.fill")
-                        .foregroundColor(.secondary.opacity(0.6))
-                        .font(.system(size: 16))
-                }
-                .opacity(searchText.isEmpty ? 1 : 0)
-                .animation(.easeInOut, value: searchText.isEmpty)
             }
         }
         .padding(.horizontal, 16)
@@ -230,7 +207,7 @@ struct SearchView: View {
                 Image(systemName: type.icon)
                     .font(.system(size: 13, weight: .semibold))
                 
-                Text(type.displayName)
+                Text(pillTitle(for: type))
                     .font(.system(size: 14, weight: .semibold))
             }
             .foregroundColor(selectedSearchType == type ? .white : .primary.opacity(0.7))
@@ -317,7 +294,7 @@ struct SearchView: View {
                     .onAppear { showSearchHint = true }
                     
                     VStack(spacing: 12) {
-                        Text("Discover ArkadTrader")
+                        Text("Discover Arkad")
                             .font(.system(size: 30, weight: .bold, design: .rounded))
                             .foregroundColor(.primary)
                         
@@ -599,7 +576,7 @@ struct SearchView: View {
     private var enhancedResultsHeader: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("\(filteredResults.count) Results")
+                Text("\(filteredResults.count) \(filteredResults.count == 1 ? "Result" : "Results")")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
                 
@@ -617,28 +594,6 @@ struct SearchView: View {
             }
             
             Spacer()
-            
-            // Sort/Filter button
-            Button(action: { showAdvancedFilters = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "line.3.horizontal.decrease")
-                        .font(.system(size: 14))
-                    
-                    Text("Filter")
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundColor(.arkadGold)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(Color.arkadGold.opacity(0.1))
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Color.arkadGold.opacity(0.3), lineWidth: 1)
-                        )
-                )
-            }
         }
     }
     
@@ -660,6 +615,11 @@ struct SearchView: View {
     }
     
     // MARK: - Helper Methods
+    
+    /// Pill label. The `.stocks` filter matches traders' logged trades, so call it "Trades".
+    private func pillTitle(for type: SearchType) -> String {
+        type == .stocks ? "Trades" : type.displayName
+    }
     
     private func handleSearchTextChange(_ newValue: String) {
         searchTask?.cancel()
@@ -703,56 +663,6 @@ struct SearchView: View {
             isSearching = false
             searchViewModel.clearResults()
             isSearchFocused = false
-        }
-    }
-    
-    // MARK: - Sheet Views
-    
-    private var advancedFiltersSheet: some View {
-        NavigationView {
-            VStack {
-                Text("Advanced Filters")
-                    .font(.largeTitle.bold())
-                    .padding()
-                
-                Text("Coming Soon")
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            .navigationBarItems(trailing: Button("Done") { showAdvancedFilters = false })
-        }
-    }
-    
-    private var searchSettingsSheet: some View {
-        NavigationView {
-            VStack {
-                Text("Search Settings")
-                    .font(.largeTitle.bold())
-                    .padding()
-                
-                Text("Coming Soon")
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            .navigationBarItems(trailing: Button("Done") { showSearchSettings = false })
-        }
-    }
-    
-    private var searchAnalyticsSheet: some View {
-        NavigationView {
-            VStack {
-                Text("Search Analytics")
-                    .font(.largeTitle.bold())
-                    .padding()
-                
-                Text("Coming Soon")
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            .navigationBarItems(trailing: Button("Done") { showSearchAnalytics = false })
         }
     }
 }

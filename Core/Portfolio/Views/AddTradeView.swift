@@ -1,5 +1,5 @@
 // File: Core/Portfolio/Views/AddTradeView.swift
-// Enhanced Add Trade View - Compatible with Existing Code
+// Step-by-step form for logging a stock or options trade.
 
 import SwiftUI
 
@@ -27,19 +27,11 @@ struct AddTradeView: View {
     @State private var premium = ""
     @State private var contracts = ""
     
-    // Crypto-specific fields
-    @State private var baseCurrency = ""
-    @State private var quoteCurrency = "USD"
-    @State private var exchange = ""
-    
-    // Forex-specific fields
-    @State private var currencyPair = ""
-    @State private var lotSize = ""
-    @State private var leverage = "1:1"
-    
     // Additional Info
     @State private var strategy = ""
     @State private var notes = ""
+    /// Public trades appear on the user's profile and in followers' Following feed.
+    @State private var isPublic = true
     
     // UI State
     @State private var showAlert = false
@@ -154,14 +146,20 @@ struct AddTradeView: View {
                 
                 Spacer()
                 
-                // Skip/Next Button
-                Button(action: nextStep) {
-                    Text(currentStep == maxSteps ? "Done" : "Next")
+                // Next / Add Button
+                Button(action: {
+                    if currentStep == maxSteps {
+                        Task { await addTrade() }
+                    } else {
+                        nextStep()
+                    }
+                }) {
+                    Text(currentStep == maxSteps ? "Add" : "Next")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(canProceed ? .arkadGold : .gray)
                 }
-                .disabled(!canProceed)
+                .disabled(!canProceed || isLoading)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -223,7 +221,7 @@ struct AddTradeView: View {
             }
             
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2), spacing: 16) {
-                ForEach(TradeType.allCases, id: \.self) { type in
+                ForEach(supportedTradeTypes, id: \.self) { type in
                     modernTradeTypeCard(for: type)
                 }
             }
@@ -287,14 +285,10 @@ struct AddTradeView: View {
     @ViewBuilder
     private var tradeSpecificDetailsForm: some View {
         switch tradeType {
-        case .stock:
-            stockDetailsForm
         case .option:
             optionDetailsForm
-        case .crypto:
-            cryptoDetailsForm
-        case .forex:
-            forexDetailsForm
+        default:
+            stockDetailsForm
         }
     }
     
@@ -343,6 +337,10 @@ struct AddTradeView: View {
                     placeholder: "Technology, Healthcare, etc.",
                     icon: "building.2"
                 )
+                
+                entryDateField
+                
+                validationMessageView
             }
         }
     }
@@ -377,14 +375,19 @@ struct AddTradeView: View {
                     )
                     
                     modernTextField(
-                        title: "Premium",
+                        title: "Cost per Contract",
                         text: $premium,
-                        placeholder: "5.50",
+                        placeholder: "550.00",
                         icon: "dollarsign.circle",
                         keyboardType: .decimalPad,
                         prefix: "$"
                     )
                 }
+                
+                Text("Enter what one contract cost (quoted premium × 100, e.g. 5.50 → 550). Use the same basis when you close the trade.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
                 modernTextField(
                     title: "Contracts",
@@ -394,124 +397,39 @@ struct AddTradeView: View {
                     keyboardType: .numberPad
                 )
                 
-                modernDateCard(
+                modernDatePickerField(
                     title: "Expiration Date",
-                    date: expirationDate,
+                    date: $expirationDate,
                     icon: "timer.circle.fill"
-                ) {
-                    // Date picker can be implemented later
-                }
+                )
+                
+                entryDateField
+                
+                validationMessageView
             }
         }
     }
     
-    // MARK: - Crypto Details Form
-    private var cryptoDetailsForm: some View {
-        VStack(spacing: 24) {
-            formHeader(
-                title: "Cryptocurrency",
-                subtitle: "Enter your crypto trade details"
-            )
-            
-            VStack(spacing: 20) {
-                HStack(spacing: 16) {
-                    modernTextField(
-                        title: "Base Currency",
-                        text: $baseCurrency,
-                        placeholder: "BTC",
-                        icon: "bitcoinsign.circle",
-                        textCase: .uppercase
-                    )
-                    
-                    modernTextField(
-                        title: "Quote Currency",
-                        text: $quoteCurrency,
-                        placeholder: "USD",
-                        icon: "dollarsign.circle",
-                        textCase: .uppercase
-                    )
-                }
-                
-                Text("\(baseCurrency.isEmpty ? "BASE" : baseCurrency)/\(quoteCurrency)")
-                    .font(.headline)
-                    .foregroundColor(.arkadGold)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.arkadGold.opacity(0.1))
-                    .cornerRadius(12)
-                
-                modernTextField(
-                    title: "Exchange",
-                    text: $exchange,
-                    placeholder: "Coinbase Pro, Binance, etc.",
-                    icon: "building.columns"
-                )
-                
-                HStack(spacing: 16) {
-                    modernTextField(
-                        title: "Amount",
-                        text: $quantity,
-                        placeholder: "0.5",
-                        icon: "bitcoinsign.circle",
-                        keyboardType: .decimalPad
-                    )
-                    
-                    modernTextField(
-                        title: "Entry Price",
-                        text: $entryPrice,
-                        placeholder: "50,000",
-                        icon: "dollarsign.circle",
-                        keyboardType: .decimalPad,
-                        prefix: "$"
-                    )
-                }
-            }
-        }
+    // MARK: - Entry Date & Validation
+    private var entryDateField: some View {
+        modernDatePickerField(
+            title: "Entry Date",
+            date: $entryDate,
+            icon: "calendar",
+            range: ...Date()
+        )
     }
     
-    // MARK: - Forex Details Form
-    private var forexDetailsForm: some View {
-        VStack(spacing: 24) {
-            formHeader(
-                title: "Currency Pair",
-                subtitle: "Enter your forex trade details"
-            )
-            
-            VStack(spacing: 20) {
-                modernPickerField(
-                    title: "Currency Pair",
-                    selection: $currencyPair,
-                    options: ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "USD/CAD", "NZD/USD"],
-                    placeholder: "Select Currency Pair",
-                    icon: "globe"
-                )
-                
-                HStack(spacing: 16) {
-                    modernTextField(
-                        title: "Lot Size",
-                        text: $lotSize,
-                        placeholder: "1.0",
-                        icon: "scale.3d",
-                        keyboardType: .decimalPad
-                    )
-                    
-                    modernTextField(
-                        title: "Entry Rate",
-                        text: $entryPrice,
-                        placeholder: "1.2850",
-                        icon: "dollarsign.circle",
-                        keyboardType: .decimalPad
-                    )
-                }
-                
-                modernPickerField(
-                    title: "Leverage",
-                    selection: $leverage,
-                    options: ["1:1", "1:10", "1:25", "1:50", "1:100", "1:200", "1:500"],
-                    placeholder: "1:1",
-                    icon: "slider.horizontal.3"
-                )
+    @ViewBuilder
+    private var validationMessageView: some View {
+        if let message = detailsValidationMessage {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                Text(message)
+                    .font(.caption)
+                Spacer(minLength: 0)
             }
+            .foregroundColor(.marketRed)
         }
     }
     
@@ -544,7 +462,7 @@ struct AddTradeView: View {
                     )
                 }
                 
-                if let entryPriceValue = Double(entryPrice),
+                if let entryPriceValue = parsedEntryPrice,
                    let stopLossValue = Double(stopLossPrice),
                    let takeProfitValue = Double(takeProfitPrice) {
                     riskRewardCalculator(
@@ -578,6 +496,29 @@ struct AddTradeView: View {
                     text: $notes,
                     placeholder: "Add any notes about this trade...",
                     icon: "note.text"
+                )
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle(isOn: $isPublic) {
+                        HStack {
+                            Image(systemName: "eye")
+                                .foregroundColor(.arkadGold)
+                            Text("Show on my profile")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .tint(.arkadGold)
+                    
+                    Text("Public trades appear on your profile and in your followers' Following feed.")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.gray.opacity(0.05))
+                        .stroke(Color.gray.opacity(0.1), lineWidth: 1)
                 )
             }
         }
@@ -643,14 +584,16 @@ struct AddTradeView: View {
         VStack(spacing: 16) {
             tradeSummaryRow("Symbol", displayTicker, tradeType.icon)
             tradeSummaryRow("Type", tradeType.displayName, "tag")
-            tradeSummaryRow("Price", "$\(entryPrice)", "dollarsign.circle")
-            tradeSummaryRow(quantityLabel, displayQuantity, "number.circle")
+            tradeSummaryRow(tradeType == .option ? "Cost per Contract" : "Price", "$\(entryPriceText)", "dollarsign.circle")
+            tradeSummaryRow(quantityLabel, quantityText, "number.circle")
+            tradeSummaryRow("Entry Date", formatDate(entryDate), "calendar")
             
             if tradeType == .option {
                 tradeSummaryRow("Option Type", optionType.displayName, optionType.icon)
                 if !strikePrice.isEmpty {
                     tradeSummaryRow("Strike", "$\(strikePrice)", "target")
                 }
+                tradeSummaryRow("Expires", formatDate(expirationDate), "timer")
             }
             
             if !stopLossPrice.isEmpty {
@@ -664,6 +607,8 @@ struct AddTradeView: View {
             if !strategy.isEmpty {
                 tradeSummaryRow("Strategy", strategy, "lightbulb.circle")
             }
+            
+            tradeSummaryRow("Visibility", isPublic ? "On your profile" : "Only you", isPublic ? "eye" : "eye.slash")
         }
         .padding(20)
         .background(
@@ -816,49 +761,6 @@ struct AddTradeView: View {
         }
     }
     
-    private func modernPickerField(
-        title: String,
-        selection: Binding<String>,
-        options: [String],
-        placeholder: String,
-        icon: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.arkadGold)
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-            }
-            
-            Menu {
-                ForEach(options, id: \.self) { option in
-                    Button(option) {
-                        selection.wrappedValue = option
-                    }
-                }
-            } label: {
-                HStack {
-                    Text(selection.wrappedValue.isEmpty ? placeholder : selection.wrappedValue)
-                        .foregroundColor(selection.wrappedValue.isEmpty ? .gray : .primary)
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.down")
-                        .foregroundColor(.gray)
-                        .font(.caption)
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.gray.opacity(0.05))
-                        .stroke(Color.gray.opacity(0.1), lineWidth: 1)
-                )
-            }
-        }
-    }
-    
     private func modernSegmentedControl(
         title: String,
         selection: Binding<String>,
@@ -899,36 +801,37 @@ struct AddTradeView: View {
         }
     }
     
-    private func modernDateCard(title: String, date: Date, icon: String, action: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.arkadGold)
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-            }
+    private func modernDatePickerField(
+        title: String,
+        date: Binding<Date>,
+        icon: String,
+        range: PartialRangeThrough<Date>? = nil
+    ) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundColor(.arkadGold)
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
             
-            Button(action: action) {
-                HStack {
-                    Text(formatDate(date))
-                        .foregroundColor(.primary)
-                        .font(.subheadline)
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                        .font(.caption)
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.gray.opacity(0.05))
-                        .stroke(Color.gray.opacity(0.1), lineWidth: 1)
-                )
+            Spacer()
+            
+            if let range = range {
+                DatePicker("", selection: date, in: range, displayedComponents: .date)
+                    .labelsHidden()
+                    .tint(.arkadGold)
+            } else {
+                DatePicker("", selection: date, displayedComponents: .date)
+                    .labelsHidden()
+                    .tint(.arkadGold)
             }
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.gray.opacity(0.05))
+                .stroke(Color.gray.opacity(0.1), lineWidth: 1)
+        )
     }
     
     // MARK: - Bottom Action Area
@@ -1004,53 +907,77 @@ struct AddTradeView: View {
 extension AddTradeView {
     private var maxSteps: Int { 5 }
     
+    /// Asset types that can be saved correctly. Crypto and forex are left out:
+    /// Trade.quantity is an Int, so fractional coin amounts and lot sizes can't be stored.
+    private var supportedTradeTypes: [TradeType] { [.stock, .option] }
+    
     private var canProceed: Bool {
         switch currentStep {
-        case 1: return true
-        case 2: return !ticker.isEmpty && !entryPrice.isEmpty && !primaryQuantityField.isEmpty &&
-                       Double(entryPrice) != nil && (Double(primaryQuantityField) != nil || Int(primaryQuantityField) != nil)
-        case 3: return true // Risk management is optional
-        case 4: return true // Additional details are optional
-        case 5: return true // Confirmation
-        default: return false
+        case 1: return supportedTradeTypes.contains(tradeType)
+        default: return detailsValidationMessage == nil
         }
     }
     
-    private var primaryQuantityField: String {
-        switch tradeType {
-        case .option: return contracts.isEmpty ? quantity : contracts
-        case .forex: return lotSize.isEmpty ? quantity : lotSize
-        default: return quantity
+    /// Raw entry-price text for the current asset type (options use the cost per contract).
+    private var entryPriceText: String {
+        tradeType == .option ? premium : entryPrice
+    }
+    
+    /// Raw quantity text for the current asset type (options use contracts).
+    private var quantityText: String {
+        tradeType == .option ? contracts : quantity
+    }
+    
+    private var parsedEntryPrice: Double? {
+        let cleaned = entryPriceText
+            .replacingOccurrences(of: ",", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        guard let value = Double(cleaned), value > 0 else { return nil }
+        return value
+    }
+    
+    private var parsedQuantity: Int? {
+        guard let value = Int(quantityText.trimmingCharacters(in: .whitespaces)), value > 0 else { return nil }
+        return value
+    }
+    
+    /// Why the step-2 details can't be saved yet, or nil when they're valid.
+    private var detailsValidationMessage: String? {
+        let symbol = ticker.trimmingCharacters(in: .whitespaces)
+        let isOption = tradeType == .option
+        if symbol.isEmpty {
+            return isOption ? "Enter the underlying symbol." : "Enter a stock symbol."
         }
+        if quantityText.isEmpty {
+            return isOption ? "Enter the number of contracts." : "Enter the number of shares."
+        }
+        if parsedQuantity == nil {
+            return isOption ? "Contracts must be a whole number above 0." : "Shares must be a whole number above 0."
+        }
+        if entryPriceText.isEmpty {
+            return isOption ? "Enter the cost per contract." : "Enter the entry price."
+        }
+        if parsedEntryPrice == nil {
+            return "Price must be a number above 0."
+        }
+        if isOption {
+            if !strikePrice.isEmpty && (Double(strikePrice) ?? 0) <= 0 {
+                return "Strike price must be a number above 0."
+            }
+        }
+        return nil
     }
     
     private var quantityLabel: String {
-        switch tradeType {
-        case .stock: return "Shares"
-        case .option: return "Contracts"
-        case .crypto: return "Amount"
-        case .forex: return "Lot Size"
-        }
+        tradeType == .option ? "Contracts" : "Shares"
     }
     
     private var displayTicker: String {
-        switch tradeType {
-        case .crypto: return "\(baseCurrency)/\(quoteCurrency)"
-        case .forex: return currencyPair.isEmpty ? ticker : currencyPair
-        default: return ticker.uppercased()
-        }
-    }
-    
-    private var displayQuantity: String {
-        switch tradeType {
-        case .option: return contracts.isEmpty ? quantity : contracts
-        case .forex: return lotSize.isEmpty ? quantity : lotSize
-        default: return quantity
-        }
+        ticker.trimmingCharacters(in: .whitespaces).uppercased()
     }
     
     private func entryPriceHint(_ percentage: Double) -> String {
-        guard let price = Double(entryPrice), price > 0 else { return "" }
+        guard let price = parsedEntryPrice else { return "" }
         let adjustedPrice = price * (1 + percentage / 100)
         return String(format: "%.2f", adjustedPrice)
     }
@@ -1065,12 +992,6 @@ extension AddTradeView {
         strikePrice = ""
         premium = ""
         contracts = ""
-        baseCurrency = ""
-        quoteCurrency = "USD"
-        exchange = ""
-        currencyPair = ""
-        lotSize = ""
-        leverage = "1:1"
     }
     
     private func nextStep() {
@@ -1093,20 +1014,22 @@ extension AddTradeView {
     
     @MainActor
     private func addTrade() async {
-        guard let userId = authService.currentUser?.id,
-              let price = Double(entryPrice) else { return }
-        
-        let finalQuantity: Int
-        switch tradeType {
-        case .option:
-            finalQuantity = Int(contracts) ?? Int(quantity) ?? 0
-        case .forex:
-            finalQuantity = Int(Double(lotSize) ?? Double(quantity) ?? 0)
-        default:
-            finalQuantity = Int(quantity) ?? 0
+        guard !isLoading else { return }
+        guard let userId = authService.currentUser?.id else {
+            alertMessage = "You need to be signed in to add a trade."
+            showAlert = true
+            return
         }
-        
-        guard finalQuantity > 0 else { return }
+        if let problem = detailsValidationMessage {
+            alertMessage = problem
+            showAlert = true
+            return
+        }
+        guard let price = parsedEntryPrice, let finalQuantity = parsedQuantity else {
+            alertMessage = "Check the price and quantity and try again."
+            showAlert = true
+            return
+        }
         
         isLoading = true
         
@@ -1119,8 +1042,22 @@ extension AddTradeView {
         )
         
         newTrade.entryDate = entryDate
+        newTrade.isPublic = isPublic
         if !strategy.isEmpty { newTrade.strategy = strategy }
-        if !notes.isEmpty { newTrade.notes = notes }
+        
+        // Options keep their contract details in the notes
+        var noteParts: [String] = []
+        if tradeType == .option {
+            var contractLine = optionType.displayName.uppercased()
+            if let strike = Double(strikePrice), strike > 0 {
+                contractLine += " · Strike \(strike.asCurrency)"
+            }
+            contractLine += " · Expires \(formatDate(expirationDate))"
+            noteParts.append(contractLine)
+        }
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedNotes.isEmpty { noteParts.append(trimmedNotes) }
+        if !noteParts.isEmpty { newTrade.notes = noteParts.joined(separator: "\n\n") }
         
         // Add stop loss and take profit if provided
         if let stopLoss = Double(stopLossPrice), stopLoss > 0 {
@@ -1137,7 +1074,7 @@ extension AddTradeView {
         
         do {
             try await authService.addTrade(newTrade)
-            alertMessage = "Trade added successfully! 🎉"
+            alertMessage = "Trade added successfully."
             showAlert = true
             portfolioViewModel.loadPortfolioData()
         } catch {

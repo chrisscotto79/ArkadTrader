@@ -16,6 +16,8 @@ struct LoginView: View {
     
     @FocusState private var emailFieldFocused: Bool
     @FocusState private var passwordFieldFocused: Bool
+
+    private static let savedEmailKey = "saved_email"
     
     var body: some View {
         NavigationView {
@@ -53,6 +55,7 @@ struct LoginView: View {
                 hideKeyboard()
             }
         }
+        .onAppear(perform: loadSavedEmail)
         .alert("Login Error", isPresented: $showError) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -192,7 +195,7 @@ struct LoginView: View {
             
             // Remember Me & Forgot Password
             HStack {
-                Button(action: { rememberMe.toggle() }) {
+                Button(action: toggleRememberMe) {
                     HStack(spacing: 8) {
                         Image(systemName: rememberMe ? "checkmark.square.fill" : "square")
                             .foregroundColor(rememberMe ? .arkadGold : .gray)
@@ -251,43 +254,6 @@ struct LoginView: View {
     // MARK: - Bottom Actions Section
     private var bottomActionsSection: some View {
         VStack(spacing: 20) {
-            // Divider with "or"
-            HStack {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(height: 1)
-                
-                Text("or")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .padding(.horizontal, 16)
-                
-                Rectangle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(height: 1)
-            }
-            
-            // Social Login Buttons (Placeholder for future implementation)
-            VStack(spacing: 12) {
-                socialLoginButton(
-                    title: "Continue with Apple",
-                    icon: "applelogo",
-                    backgroundColor: .black,
-                    foregroundColor: .white
-                ) {
-                    // TODO: Implement Apple Sign In
-                }
-                
-                socialLoginButton(
-                    title: "Continue with Google",
-                    icon: "globe",
-                    backgroundColor: .white,
-                    foregroundColor: .primary
-                ) {
-                    // TODO: Implement Google Sign In
-                }
-            }
-            
             // Register Link
             HStack {
                 Text("Don't have an account?")
@@ -302,34 +268,6 @@ struct LoginView: View {
                 }
             }
             .padding(.top, 10)
-        }
-    }
-    
-    // MARK: - Helper Views
-    private func socialLoginButton(
-        title: String,
-        icon: String,
-        backgroundColor: Color,
-        foregroundColor: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.title3)
-                
-                Text(title)
-                    .fontWeight(.medium)
-            }
-            .foregroundColor(foregroundColor)
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(backgroundColor)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-            )
         }
     }
     
@@ -351,9 +289,11 @@ struct LoginView: View {
             do {
                 try await authService.login(email: email, password: password)
                 
-                // Save credentials if remember me is checked
+                // Remember only the email address (never the password)
                 if rememberMe {
-                    UserDefaults.standard.set(email, forKey: "saved_email")
+                    UserDefaults.standard.set(email, forKey: Self.savedEmailKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: Self.savedEmailKey)
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -362,6 +302,23 @@ struct LoginView: View {
         }
     }
     
+    private func toggleRememberMe() {
+        rememberMe.toggle()
+        if !rememberMe {
+            UserDefaults.standard.removeObject(forKey: Self.savedEmailKey)
+        }
+    }
+
+    /// Prefills the email field when "Remember me" was used on a previous sign-in.
+    private func loadSavedEmail() {
+        guard let saved = UserDefaults.standard.string(forKey: Self.savedEmailKey),
+              !saved.isEmpty else { return }
+        if email.isEmpty {
+            email = saved
+        }
+        rememberMe = true
+    }
+
     private func hideKeyboard() {
         emailFieldFocused = false
         passwordFieldFocused = false

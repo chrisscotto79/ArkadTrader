@@ -204,23 +204,10 @@ struct OtherUserProfileHeader: View {
                             }
                         }
                         
-                        HStack {
-                            Text("@\(user.username)")
-                                .font(.title3)
-                                .foregroundColor(.arkadGold)
-                                .fontWeight(.medium)
-                            
-                            Text("•")
-                                .foregroundColor(.arkadGold.opacity(0.6))
-                            
-                            Text(user.subscriptionTier.displayName)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(tierColor.opacity(0.2))
-                                .foregroundColor(tierColor)
-                                .cornerRadius(6)
-                        }
+                        Text("@\(user.username)")
+                            .font(.title3)
+                            .foregroundColor(.arkadGold)
+                            .fontWeight(.medium)
                     }
                     
                     // Stats with interactive followers/following
@@ -257,7 +244,7 @@ struct OtherUserProfileHeader: View {
                         Spacer()
                         
                         statColumn(
-                            number: String(format: "%.1f%%", portfolioSummary.winRate),
+                            number: String(format: "%.0f%%", portfolioSummary.winRate),
                             label: "Win Rate"
                         )
                         
@@ -380,7 +367,7 @@ struct OtherUserPortfolioBanner: View {
                         .font(.caption)
                         .foregroundColor(.textSecondary)
                     
-                    Text(String(format: "%.1f%%", portfolioSummary.winRate))
+                    Text(String(format: "%.0f%%", portfolioSummary.winRate))
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundColor(.textPrimary)

@@ -53,6 +53,14 @@ struct ProfileView: View {
             PortfolioDetailsSheet()
                 .environmentObject(portfolioViewModel)
         }
+        .sheet(isPresented: $showFollowersList) {
+            SimpleFollowListView(userId: authService.currentUser?.id ?? "", listType: .followers)
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showFollowingList) {
+            SimpleFollowListView(userId: authService.currentUser?.id ?? "", listType: .following)
+                .environmentObject(authService)
+        }
         .onAppear {
             portfolioViewModel.loadPortfolioData()
             postsViewModel.loadUserPosts(userId: authService.currentUser?.id ?? "")
@@ -89,13 +97,6 @@ struct ProfileView: View {
                 VStack(spacing: 0) {
                     // Top Bar with Safe Area
                     HStack {
-                        Button(action: {}) {
-                            Image(systemName: "chevron.left")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                        .opacity(0) // Hidden for main profile
-                        
                         Spacer()
                         
                         Button(action: { showSettings = true }) {
@@ -141,10 +142,17 @@ struct ProfileView: View {
                                         )
                                     )
                                     .overlay(
-                                        Text(String(authService.currentUser?.username.prefix(2) ?? "LA").uppercased())
-                                            .font(.largeTitle)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.white)
+                                        Group {
+                                            if let username = authService.currentUser?.username, !username.isEmpty {
+                                                Text(String(username.prefix(2)).uppercased())
+                                                    .font(.largeTitle)
+                                                    .fontWeight(.bold)
+                                            } else {
+                                                Image(systemName: "person.fill")
+                                                    .font(.largeTitle)
+                                            }
+                                        }
+                                        .foregroundColor(.white)
                                     )
                             }
                         }
@@ -158,13 +166,13 @@ struct ProfileView: View {
                         
                         // User Info
                         VStack(spacing: 8) {
-                            Text(authService.currentUser?.fullName ?? "User Name")
+                            Text(authService.currentUser?.fullName ?? "")
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                             
                             HStack(spacing: 16) {
-                                Text("@\(authService.currentUser?.username ?? "username")")
+                                Text(authService.currentUser.map { "@\($0.username)" } ?? "")
                                     .font(.subheadline)
                                     .foregroundColor(.white.opacity(0.9))
                                 
@@ -223,13 +231,13 @@ struct ProfileView: View {
             HStack(spacing: 16) {
                 statItem(
                     title: "Followers",
-                    value: "0",
+                    value: "\(authService.currentUser?.followersCount ?? 0)",
                     action: { showFollowersList = true }
                 )
                 
                 statItem(
                     title: "Following",
-                    value: "2",
+                    value: "\(authService.currentUser?.followingCount ?? 0)",
                     action: { showFollowingList = true }
                 )
                 
@@ -241,7 +249,7 @@ struct ProfileView: View {
                 
                 statItem(
                     title: "Win Rate",
-                    value: String(format: "%.1f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
+                    value: String(format: "%.0f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
                     action: nil
                 )
             }
@@ -302,7 +310,7 @@ struct ProfileView: View {
                     
                     performanceMetric(
                         title: "Win Rate",
-                        value: String(format: "%.1f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
+                        value: String(format: "%.0f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
                         color: portfolioViewModel.getPortfolioSummaryForProfile().winRate >= 50 ? .marketGreen : .marketRed,
                         icon: "target"
                     )
@@ -426,4 +434,5 @@ struct ProfileView: View {
 #Preview {
     ProfileView()
         .environmentObject(FirebaseAuthService.shared)
+        .environmentObject(TabRouter())
 }

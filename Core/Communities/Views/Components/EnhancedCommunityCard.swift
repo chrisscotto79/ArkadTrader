@@ -143,12 +143,6 @@ struct EnhancedCommunityCard: View {
                 }
                 
                 Spacer()
-                
-                // Activity indicator
-                HStack {
-                    Spacer()
-                    activityIndicator
-                }
             }
             .padding(12)
         }
@@ -174,35 +168,17 @@ struct EnhancedCommunityCard: View {
         .overlay(
             // Subtle pattern overlay
             GeometryReader { geometry in
-                ForEach(0..<6, id: \.self) { _ in
+                ForEach(0..<6, id: \.self) { index in
                     Circle()
                         .fill(Color.white.opacity(0.1))
-                        .frame(width: CGFloat.random(in: 20...60))
+                        .frame(width: 20 + 40 * patternValue(index, salt: 0))
                         .position(
-                            x: CGFloat.random(in: 0...geometry.size.width),
-                            y: CGFloat.random(in: 0...geometry.size.height)
+                            x: patternValue(index, salt: 1) * geometry.size.width,
+                            y: patternValue(index, salt: 2) * geometry.size.height
                         )
                         .blur(radius: 1)
                 }
             }
-        )
-    }
-    
-    private var activityIndicator: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(getActivityColor())
-                .frame(width: 6, height: 6)
-            
-            Text(community.calculatedActivityLevel.displayName)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(.black.opacity(0.4))
         )
     }
     
@@ -422,10 +398,10 @@ struct EnhancedCommunityCard: View {
             } else {
                 Button(action: onJoin) {
                     HStack(spacing: 6) {
-                        Image(systemName: community.isPrivate ? "lock.fill" : "person.badge.plus")
+                        Image(systemName: "person.badge.plus")
                             .font(.system(size: 14))
                         
-                        Text(community.isPrivate ? "Request" : "Join")
+                        Text("Join")
                             .font(.system(size: 14, weight: .semibold))
                     }
                     .foregroundColor(.arkadBlack)
@@ -452,57 +428,16 @@ struct EnhancedCommunityCard: View {
         community.type.tint
     }
     
-    private func getActivityColor() -> Color {
-        switch community.calculatedActivityLevel {
-        case .low: return .gray
-        case .medium: return .orange
-        case .high: return .marketGreen
+    /// A 0...1 value derived from the community id (FNV-1a), so the banner pattern is the same on every redraw
+    private func patternValue(_ index: Int, salt: Int) -> CGFloat {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in community.id.utf8 {
+            hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
         }
+        hash = (hash ^ UInt64(index * 31 + salt)) &* 1_099_511_628_211
+        return CGFloat(hash % 1000) / 1000
     }
 }
-
-// MARK: - Backward Compatible CommunityCard
-struct CommunityCard: View {
-    let community: Community
-    let isUserMember: Bool
-    let onTap: () -> Void
-    let onJoin: () -> Void
-    
-    var body: some View {
-        EnhancedCommunityCard(
-            community: community,
-            style: .regular(),
-            isUserMember: isUserMember,
-            onTap: onTap,
-            onJoin: onJoin,
-            onInfo: {
-                // Default empty action for info button
-            }
-        )
-    }
-}
-
-// MARK: - Backward Compatible CommunityCard
-
-
-// MARK: - Helper Functions for Backward Compatibility
-func featuredCommunityCard(
-    community: Community,
-    isUserMember: Bool = false,
-    onTap: @escaping () -> Void = {},
-    onJoin: @escaping () -> Void = {}
-) -> some View {
-    EnhancedCommunityCard(
-        community: community,
-        style: .featured(),
-        isUserMember: isUserMember,
-        onTap: onTap,
-        onJoin: onJoin,
-        onInfo: {}
-    )
-}
-
-
 
 // MARK: - Custom Shape for Rounded Corners (for backward compatibility)
 struct RoundedCorner: Shape {

@@ -24,9 +24,18 @@ class HapticManager {
 
 // MARK: - Supporting Types
 enum CommunityMainTab: CaseIterable {
-    case discover
     case myCommunities
+    case discover
     case leaderboard
+
+    /// Label for the section switcher
+    var shortName: String {
+        switch self {
+        case .myCommunities: return "Joined"
+        case .discover: return "Discover"
+        case .leaderboard: return "Leaderboard"
+        }
+    }
     
     var displayName: String {
         switch self {

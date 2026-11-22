@@ -63,28 +63,27 @@ struct ChannelInfoSheet: View {
     
     private var channelColor: Color {
         switch channel.type {
-        case .text: return .blue
+        case .text, .voice: return .blue
         case .callouts: return .orange
-        case .voice: return .green
         }
     }
     
     private var channelIcon: String {
         switch channel.type {
-        case .text: return "number"
+        case .text, .voice: return "number"
         case .callouts: return "megaphone.fill"
-        case .voice: return "speaker.wave.2.fill"
         }
     }
     
     private var channelDescription: String {
+        let posting = channel.adminOnly
+            ? "Only admins can post here; everyone can read and react."
+            : "Every member can post here."
         switch channel.type {
-        case .text:
-            return "A text channel for general discussions and conversations between community members."
+        case .text, .voice:
+            return "A text channel for conversation in \(community.name). \(posting)"
         case .callouts:
-            return "An admin-only channel for posting trading callouts, market signals, and important announcements."
-        case .voice:
-            return "A voice channel for real-time audio conversations and live discussions."
+            return "A channel for structured trade callouts in \(community.name). \(posting)"
         }
     }
 }

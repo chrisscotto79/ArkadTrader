@@ -18,6 +18,7 @@ struct RegisterView: View {
     @State private var isPasswordVisible = false
     @State private var isConfirmPasswordVisible = false
     @State private var currentStep = 1
+    @State private var legalDocument: LegalDocumentType?
     
     @FocusState private var fullNameFieldFocused: Bool
     @FocusState private var usernameFieldFocused: Bool
@@ -77,6 +78,9 @@ struct RegisterView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(errorMessage)
+        }
+        .sheet(item: $legalDocument) { document in
+            LegalDocumentView(documentType: document)
         }
     }
     
@@ -285,25 +289,36 @@ struct RegisterView: View {
         VStack(spacing: 20) {
             if currentStep == 2 {
                 // Terms and Conditions
-                Button(action: { agreeToTerms.toggle() }) {
-                    HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Button(action: { agreeToTerms.toggle() }) {
                         Image(systemName: agreeToTerms ? "checkmark.square.fill" : "square")
                             .foregroundColor(agreeToTerms ? .arkadGold : .gray)
                             .font(.title3)
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("I agree to the Terms of Service and Privacy Policy")
-                                .font(.subheadline)
-                                .foregroundColor(.primary)
-                                .multilineTextAlignment(.leading)
-                            
-                            Text("By creating an account, you agree to our terms and conditions.")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        
-                        Spacer()
                     }
+                    .accessibilityLabel("Agree to the Terms of Service and Privacy Policy")
+                    .accessibilityValue(agreeToTerms ? "Checked" : "Unchecked")
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        // The links open the in-app documents (see LegalDocumentView in AboutView.swift)
+                        Text("I agree to the [Terms of Service](arkad-legal://terms) and [Privacy Policy](arkad-legal://privacy)")
+                            .font(.subheadline)
+                            .tint(.arkadGoldDark)
+                            .multilineTextAlignment(.leading)
+                            .environment(\.openURL, OpenURLAction { url in
+                                switch url.host {
+                                case "terms": legalDocument = .terms
+                                case "privacy": legalDocument = .privacy
+                                default: break
+                                }
+                                return .handled
+                            })
+
+                        Text("By creating an account, you agree to these terms.")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+
+                    Spacer()
                 }
                 
                 // Register Button

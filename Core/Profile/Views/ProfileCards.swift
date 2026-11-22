@@ -495,16 +495,19 @@ struct ProfileUserTradeCard: View {
                     Spacer()
                 }
                 
-                Text("\(trade.quantity) shares @ \(trade.entryPrice.asCurrency)")
+                Text("\(trade.quantity) \(unitLabel) @ \(trade.entryPrice.asCurrency)")
                     .font(.caption)
                     .foregroundColor(.textSecondary)
             }
             
             VStack(alignment: .trailing, spacing: 4) {
-                Text(trade.profitLoss.asCurrencyWithSign)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                // Open trades show unrealized P&L only once a live price is known
+                if let pl = displayedPL {
+                    Text(pl.asCurrencyWithSign)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(pl >= 0 ? .marketGreen : .marketRed)
+                }
                 
                 Text(formatShortDate(trade.entryDate))
                     .font(.caption)
@@ -520,6 +523,16 @@ struct ProfileUserTradeCard: View {
                         .stroke(Color.arkadGold.opacity(0.1), lineWidth: 1)
                 )
         )
+    }
+    
+    private var unitLabel: String {
+        trade.tradeType == .option ? "contracts" : "shares"
+    }
+    
+    private var displayedPL: Double? {
+        if !trade.isOpen { return trade.profitLoss }
+        guard let current = trade.currentPrice, current > 0, current != trade.entryPrice else { return nil }
+        return trade.unrealizedPL
     }
     
     private func formatShortDate(_ date: Date) -> String {
@@ -562,7 +575,7 @@ struct TopPositionCard: View {
                     .fontWeight(.bold)
                     .foregroundColor(.marketGreen)
                 
-                Text("\(trade.quantity) shares")
+                Text("\(trade.quantity) \(trade.tradeType == .option ? "contracts" : "shares")")
                     .font(.caption)
                     .foregroundColor(.textSecondary)
             }

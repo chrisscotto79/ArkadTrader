@@ -172,7 +172,7 @@ class SearchViewModel: ObservableObject {
             print("📈 SearchViewModel: Searching trades...")
             let trades = try await authService.searchTrades(query: query, limit: 10)
             print("✅ SearchViewModel: Found \(trades.count) trades")
-            return trades.map { SearchResult(trade: $0) }
+            return visibleTrades(trades).map { SearchResult(trade: $0) }
         } catch {
             print("❌ SearchViewModel: Trades search failed: \(error)")
             return []
@@ -205,7 +205,13 @@ class SearchViewModel: ObservableObject {
     
     private func searchTrades(query: String) async throws -> [SearchResult] {
         let trades = try await authService.searchTrades(query: query)
-        return trades.map { SearchResult(trade: $0) }
+        return visibleTrades(trades).map { SearchResult(trade: $0) }
+    }
+    
+    /// Only trades their owners marked "Show on my profile", plus the user's own.
+    private func visibleTrades(_ trades: [Trade]) -> [Trade] {
+        let currentUserId = authService.currentUser?.id
+        return trades.filter { $0.isPublic || $0.userId == currentUserId }
     }
     
     private func searchCommunities(query: String) async throws -> [SearchResult] {

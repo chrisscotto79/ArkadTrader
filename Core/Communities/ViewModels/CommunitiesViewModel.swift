@@ -24,6 +24,8 @@ class CommunitiesViewModel: ObservableObject {
     @Published var selectedCategory: CommunityType? = nil
     @Published var showPrivateCommunities = false
     @Published var sortType: CommunitySortType = .memberCount
+    /// Discovery filter: hide communities with fewer members than this
+    @Published var minimumMemberCount = 0
     
     // MARK: - Private Properties
     private let communityService = CommunityFirebaseService.shared
@@ -128,6 +130,11 @@ class CommunitiesViewModel: ObservableObject {
                 communities,
                 showPrivate: showPrivateCommunities
             )
+            
+            // Apply member count filter
+            if minimumMemberCount > 0 {
+                communities = communities.filter { $0.memberCount >= minimumMemberCount }
+            }
             
             // Apply sorting
             communities = communityService.sortCommunities(communities, by: sortType)
@@ -259,6 +266,10 @@ class CommunitiesViewModel: ObservableObject {
             
             if !showPrivateCommunities {
                 results = results.filter { !$0.isPrivate }
+            }
+            
+            if minimumMemberCount > 0 {
+                results = results.filter { $0.memberCount >= minimumMemberCount }
             }
             
             discoveryCommunities = communityService.sortCommunities(results, by: sortType)

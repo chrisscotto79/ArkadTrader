@@ -9,6 +9,8 @@ class FollowingFeedViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage = ""
     @Published var showError = false
+    /// True once the first load has finished, so switching tabs doesn't reload every time.
+    @Published var hasLoaded = false
     
     private let authService = FirebaseAuthService.shared
     
@@ -32,6 +34,7 @@ class FollowingFeedViewModel: ObservableObject {
         }
         
         isLoading = false
+        hasLoaded = true
     }
     
     func refreshContent() async {

@@ -1,96 +1,44 @@
-// Fixed HomeView.swift - Only modifying existing file, no new files
-import SwiftUI
+// File: Core/Home/Views/HomeView.swift
+// The Home tab: header with compose button, Feed / Following / News tabs, and the post list.
 
-// Colors are already defined elsewhere in the project
+import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @StateObject private var homeViewModel = HomeViewModel()
+    @StateObject private var followingViewModel = FollowingFeedViewModel()
     @State private var selectedTab: HomeFeedTab = .feed
     @State private var showCreatePost = false
-    @State private var scrollOffset: CGFloat = 0
-    @State private var lastScrollOffset: CGFloat = 0
-    @State private var showScrollToTop = false
-    
+    @Namespace private var tabUnderline
+
     enum HomeFeedTab: CaseIterable {
         case feed, following, marketNews
-        
+
         var title: String {
             switch self {
-            case .feed: return "Feed"
+            case .feed: return "For You"
             case .following: return "Following"
-            case .marketNews: return "Market News"
-            }
-        }
-        
-        var icon: String {
-            switch self {
-            case .feed: return "house.fill"
-            case .following: return "person.2.fill"
-            case .marketNews: return "newspaper.fill"
-            }
-        }
-        
-        var activeIcon: String {
-            switch self {
-            case .feed: return "house.fill"
-            case .following: return "person.2.fill"
-            case .marketNews: return "newspaper.fill"
+            case .marketNews: return "News"
             }
         }
     }
-    
+
     var body: some View {
-        NavigationView {
-            ZStack {
-                // Background
-                Color.gray.opacity(0.05)
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                    // Enhanced Tab Selector
-                    enhancedTabSelector
-                        .background(Color.white)
-                        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-                    
-                    // Content with scroll detection
-                    GeometryReader { geometry in
-                        ScrollViewReader { proxy in
-                            ScrollView(showsIndicators: false) {
-                                LazyVStack(spacing: 0) {
-                                    // Top anchor for scroll to top
-                                    Rectangle()
-                                        .fill(Color.clear)
-                                        .frame(height: 1)
-                                        .id("scrollTop")
-                                    
-                                    // Content based on selected tab
-                                    contentForSelectedTab
-                                        .padding(.top, 16)
-                                        .padding(.bottom, 100) // Space for floating button
-                                }
-                                .background(
-                                    GeometryReader { contentGeometry in
-                                        Color.clear
-                                            .preference(key: ScrollOffsetPreferenceKey.self, value: contentGeometry.frame(in: .named("scroll")).minY)
-                                    }
-                                )
-                                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                                    handleScrollOffset(value)
-                                }
-                            }
-                            .coordinateSpace(name: "scroll")
-                            .refreshable {
-                                await refreshContent()
-                            }
-                        }
-                    }
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                tabSelector
+                Divider()
+
+                ScrollView {
+                    contentForSelectedTab
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
                 }
-                
-                // FIXED: Floating Action Button - properly positioned at bottom right
-                floatingActionButton
+                .refreshable { await refreshContent() }
             }
-            .navigationBarHidden(true)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $showCreatePost) {
             CreatePostView { draft in
@@ -98,229 +46,134 @@ struct HomeView: View {
                     await homeViewModel.createPost(draft)
                 }
             }
+            .environmentObject(authService)
         }
-        .onAppear {
-            Task {
+        .task {
+            if homeViewModel.posts.isEmpty {
                 await homeViewModel.loadPosts()
             }
         }
-        .alert("Error", isPresented: $homeViewModel.showError) {
+        .alert("Something went wrong", isPresented: $homeViewModel.showError) {
             Button("OK") { homeViewModel.showError = false }
         } message: {
             Text(homeViewModel.errorMessage)
         }
     }
-    
-    // MARK: - Enhanced Tab Selector
-    private var enhancedTabSelector: some View {
-        HStack(spacing: 0) {
-            ForEach(HomeFeedTab.allCases, id: \.self) { tab in
-                Button(action: {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                        selectedTab = tab
-                    }
-                }) {
-                    VStack(spacing: 8) {
-                        Text(tab.title)
-                            .font(.subheadline)
-                            .fontWeight(selectedTab == tab ? .bold : .medium)
-                            .foregroundColor(selectedTab == tab ? .white : .gray)
-                            .padding(.horizontal, selectedTab == tab ? 16 : 8)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
-                                    .shadow(color: selectedTab == tab ? Color.arkadGold.opacity(0.3) : Color.clear, radius: 4, x: 0, y: 2)
-                            )
-                        
-                        // Indicator dot
-                        Circle()
-                            .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
-                            .frame(width: 4, height: 4)
-                            .scaleEffect(selectedTab == tab ? 1.0 : 0.0)
-                            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selectedTab == tab)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image("arkad_logo")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(height: 28)
+                .accessibilityLabel("Arkad")
+
+            Spacer()
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showCreatePost = true
+            } label: {
+                Label("New Post", systemImage: "square.and.pencil")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.arkadGold))
             }
+            .accessibilityHint("Write a post")
         }
         .padding(.horizontal, 16)
-        .background(Color.white)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(Color(.systemBackground))
     }
-    
-    // MARK: - Content for Selected Tab
+
+    // MARK: - Tabs
+
+    private var tabSelector: some View {
+        HStack(spacing: 24) {
+            ForEach(HomeFeedTab.allCases, id: \.self) { tab in
+                Button {
+                    withAnimation(.snappy(duration: 0.25)) { selectedTab = tab }
+                } label: {
+                    VStack(spacing: 8) {
+                        Text(tab.title)
+                            .font(.subheadline.weight(selectedTab == tab ? .bold : .medium))
+                            .foregroundColor(selectedTab == tab ? .primary : .secondary)
+                        ZStack {
+                            Capsule().fill(Color.clear).frame(height: 3)
+                            if selectedTab == tab {
+                                Capsule()
+                                    .fill(Color.arkadGold)
+                                    .frame(height: 3)
+                                    .matchedGeometryEffect(id: "underline", in: tabUnderline)
+                            }
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .background(Color(.systemBackground))
+    }
+
+    // MARK: - Content
+
     @ViewBuilder
     private var contentForSelectedTab: some View {
         switch selectedTab {
         case .feed:
             feedContent
         case .following:
-            FollowingFeedView()
+            FollowingFeedView(viewModel: followingViewModel, homeViewModel: homeViewModel)
                 .environmentObject(authService)
         case .marketNews:
-            MarketNewsFeedView()
+            MarketNewsFeedView(homeViewModel: homeViewModel)
         }
     }
-    
-    // MARK: - Feed Content
+
     private var feedContent: some View {
-        LazyVStack(spacing: 16) {
-            if homeViewModel.isLoading {
-                EnhancedLoadingView(message: "Loading latest posts...")
+        LazyVStack(spacing: 12) {
+            if homeViewModel.isLoading && homeViewModel.posts.isEmpty {
+                EnhancedLoadingView(message: "Loading posts…")
             } else if homeViewModel.posts.isEmpty {
-                EnhancedEmptyFeedView {
-                    withAnimation(.spring()) {
-                        showCreatePost = true
-                    }
-                }
+                EnhancedEmptyFeedView { showCreatePost = true }
             } else {
-                // Welcome banner for new users
-                if homeViewModel.posts.count < 5 {
-                    WelcomeBanner()
-                }
-                
                 ForEach(homeViewModel.posts, id: \.id) { post in
                     UserPostCard(post: post, homeViewModel: homeViewModel)
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.9).combined(with: .opacity),
-                            removal: .scale(scale: 0.9).combined(with: .opacity)
-                        ))
                 }
-                
-                // Load more indicator
+
                 if homeViewModel.hasMorePosts && !homeViewModel.isLoadingMore {
                     LoadMoreButton {
-                        Task {
-                            await homeViewModel.loadMorePosts()
-                        }
+                        Task { await homeViewModel.loadMorePosts() }
                     }
                 }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
     }
-    
-    // MARK: - Following Content
-    /*
-    private var followingContent: some View {
-        //FollowingFeedView()
-          //  .environmentObject(authService)
-    }
-     */
-    
-    // MARK: - FIXED: Floating Action Button - Properly positioned at bottom right
-    private var floatingActionButton: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                
-                Button(action: {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        showCreatePost = true
-                    }
-                    
-                    // Add haptic feedback
-                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                    impactFeedback.impactOccurred()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                        
-                        Text("Post")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.arkadBlack)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.arkadGold, Color.arkadGold.opacity(0.8)]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .clipShape(Capsule())
-                    .shadow(color: .arkadGold.opacity(0.4), radius: 12, x: 0, y: 6)
-                    .scaleEffect(showCreatePost ? 0.95 : 1.0)
-                }
-                .padding(.trailing, 20)
-                .padding(.bottom, 35) // Closer to tab bar
-            }
-        }
-    }
-    
-    // MARK: - Helper Methods
-    private func handleScrollOffset(_ offset: CGFloat) {
-        let currentOffset = offset
-        let threshold: CGFloat = 100
-        
-        // Show/hide scroll to top button
-        DispatchQueue.main.async {
-            showScrollToTop = currentOffset < -threshold
-            lastScrollOffset = currentOffset
-        }
-    }
-    
+
     @MainActor
     private func refreshContent() async {
-        // Add haptic feedback
-        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-        impactFeedback.impactOccurred()
-        
-        await homeViewModel.refreshPosts()
-        
-        if selectedTab == .marketNews {
+        switch selectedTab {
+        case .feed:
+            await homeViewModel.refreshPosts()
+        case .following:
+            await followingViewModel.refreshContent()
+        case .marketNews:
             await homeViewModel.loadMarketNews()
         }
     }
 }
-
-// MARK: - Enhanced Components (added to existing file instead of creating new ones)
-
-struct WelcomeBanner: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Welcome to ArkadTrader! 🎉")
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                    
-                    Text("Share your trading insights and connect with the community")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.title)
-                    .foregroundColor(.arkadGold)
-            }
-        }
-        .padding(20)
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [Color.arkadGold.opacity(0.1), Color.arkadGold.opacity(0.05)]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .cornerRadius(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.arkadGold.opacity(0.2), lineWidth: 1)
-        )
-    }
-}
-
-
 
 struct EnhancedLoadingView: View {
     let message: String
@@ -350,12 +203,12 @@ struct EnhancedEmptyFeedView: View {
                     .font(.system(size: 64))
                     .foregroundColor(.arkadGold.opacity(0.7))
                 
-                Text("Welcome to Your Feed!")
+                Text("No posts yet")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
                 
-                Text("Share your trading insights and connect with other traders in the community.")
+                Text("Be the first to share a trade, a chart or a market take.")
                     .font(.subheadline)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)
@@ -365,7 +218,7 @@ struct EnhancedEmptyFeedView: View {
             Button(action: onCreatePost) {
                 HStack {
                     Image(systemName: "plus.circle.fill")
-                    Text("Create Your First Post")
+                    Text("Write a Post")
                 }
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -407,15 +260,8 @@ struct LoadMoreButton: View {
     }
 }
 
-// MARK: - Scroll Offset Preference Key
-struct ScrollOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 #Preview {
     HomeView()
         .environmentObject(FirebaseAuthService.shared)
+        .environmentObject(TabRouter())
 }
