@@ -4,6 +4,7 @@
 import Foundation
 import Combine
 import FirebaseCore
+import FirebaseFirestore
 
 @MainActor
 class ChannelChatViewModel: ObservableObject {
@@ -15,6 +16,8 @@ class ChannelChatViewModel: ObservableObject {
     @Published var canUserManageChannel = false
     /// Roles of community members, keyed by user id (used for badges and permissions)
     @Published var memberRoles: [String: CommunityRole] = [:]
+    /// Usernames of other people currently typing in this channel
+    @Published var typingUsernames: [String] = []
     
     // Firebase-backed Message Reactions
     @Published var messageReactions: [String: [MessageReaction]] = [:] // messageId -> reactions
@@ -26,8 +29,10 @@ class ChannelChatViewModel: ObservableObject {
     private let firebaseService = FirebaseServices.shared
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
-    private var messagesListener: (() -> Void)?
-    private var reactionsListener: (() -> Void)?
+    /// Active Firestore listeners; removed in cleanup()
+    private var listeners: [ListenerRegistration] = []
+    /// Last time we told Firestore we're typing (throttles writes)
+    private var lastTypingSent: Date?
     
     // MARK: - Computed Properties
     var currentUserId: String? {
@@ -212,10 +217,9 @@ class ChannelChatViewModel: ObservableObject {
     /// Cleanup when view disappears
     func cleanup() {
         print("🧹 ChannelChatViewModel: Cleaning up listeners")
-        messagesListener?()
-        reactionsListener?()
-        messagesListener = nil
-        reactionsListener = nil
+        listeners.forEach { $0.remove() }
+        listeners.removeAll()
+        setTyping(false)
     }
     
     // MARK: - Private Methods
@@ -314,7 +318,7 @@ class ChannelChatViewModel: ObservableObject {
         guard let community = community,
               let channel = channel else { return }
         
-        firebaseService.listenToChannelMessages(
+        let listener = firebaseService.listenToChannelMessages(
             communityId: community.id,
             channelId: channel.id
         ) { [weak self] newMessages in
@@ -325,6 +329,35 @@ class ChannelChatViewModel: ObservableObject {
                 await self?.loadReactionsForNewMessages(newMessages)
             }
         }
+        listeners.append(listener)
+        
+        let typingListener = firebaseService.listenToTyping(
+            communityId: community.id,
+            channelId: channel.id
+        ) { [weak self] typing in
+            Task { @MainActor in
+                guard let self else { return }
+                self.typingUsernames = typing
+                    .filter { $0.userId != self.currentUserId }
+                    .map(\.username)
+            }
+        }
+        listeners.append(typingListener)
+    }
+    
+    /// Tell other members we're typing (or stopped). Writes at most every 3 seconds while typing.
+    func setTyping(_ isTyping: Bool) {
+        guard let community = community, let channel = channel,
+              let user = authService.currentUser else { return }
+        if isTyping, let last = lastTypingSent, Date().timeIntervalSince(last) < 3 { return }
+        if !isTyping && lastTypingSent == nil { return }
+        lastTypingSent = isTyping ? Date() : nil
+        Task {
+            try? await firebaseService.setUserTyping(
+                userId: user.id, username: user.username,
+                channelId: channel.id, communityId: community.id, isTyping: isTyping
+            )
+        }
     }
     
     /// Start listening for real-time reactions
@@ -334,7 +367,7 @@ class ChannelChatViewModel: ObservableObject {
         
         print("🎭 Starting real-time reactions listener for #\(channel.name)")
         
-        firebaseService.listenToChannelReactions(
+        let listener = firebaseService.listenToChannelReactions(
             communityId: community.id,
             channelId: channel.id
         ) { [weak self] reactions in
@@ -342,6 +375,7 @@ class ChannelChatViewModel: ObservableObject {
                 await self?.updateReactionsFromListener(reactions)
             }
         }
+        listeners.append(listener)
     }
     
     /// Load reactions for new messages that came from real-time listener

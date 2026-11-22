@@ -55,11 +55,12 @@ extension FirebaseServices {
         }
         
         /// Listen to real-time reactions for all messages in a channel
-    func listenToChannelReactions(communityId: String, channelId: String, completion: @escaping @Sendable ([String: [MessageReaction]]) -> Void) {
+    @discardableResult
+    func listenToChannelReactions(communityId: String, channelId: String, completion: @escaping @Sendable ([String: [MessageReaction]]) -> Void) -> ListenerRegistration {
         print("👂 Setting up real-time reactions listener for channel \(channelId)")
         
         // Listen to all messages in the channel
-        db.collection("communities").document(communityId)
+        return db.collection("communities").document(communityId)
             .collection("channels").document(channelId)
             .collection("messages")
             .addSnapshotListener { [weak self] messagesSnapshot, error in
@@ -609,8 +610,9 @@ extension FirebaseServices {
         return messages.reversed() // Return in chronological order
     }
     
-    func listenToChannelMessages(communityId: String, channelId: String, completion: @escaping ([CommunityMessage]) -> Void) {
-        db.collection("communities").document(communityId)
+    @discardableResult
+    func listenToChannelMessages(communityId: String, channelId: String, completion: @escaping ([CommunityMessage]) -> Void) -> ListenerRegistration {
+        return db.collection("communities").document(communityId)
             .collection("channels").document(channelId)
             .collection("messages")
             .order(by: "createdAt", descending: false)
@@ -678,6 +680,24 @@ extension FirebaseServices {
     }
     
     // MARK: - Typing Indicators
+    
+    /// Live list of people typing in a channel: (userId, username), excluding stale entries older than 8 seconds.
+    func listenToTyping(communityId: String, channelId: String, completion: @escaping ([(userId: String, username: String)]) -> Void) -> ListenerRegistration {
+        db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("typing")
+            .addSnapshotListener { snapshot, _ in
+                let cutoff = Date().addingTimeInterval(-8)
+                let typing = (snapshot?.documents ?? []).compactMap { doc -> (userId: String, username: String)? in
+                    let data = doc.data()
+                    guard let username = data["username"] as? String,
+                          let lastSeen = (data["lastSeen"] as? Timestamp)?.dateValue(),
+                          lastSeen > cutoff else { return nil }
+                    return (doc.documentID, username)
+                }
+                completion(typing)
+            }
+    }
     
     func setUserTyping(userId: String, username: String, channelId: String, communityId: String, isTyping: Bool) async throws {
         let typingRef = db.collection("communities").document(communityId)

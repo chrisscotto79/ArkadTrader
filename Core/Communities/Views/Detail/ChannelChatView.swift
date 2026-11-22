@@ -187,22 +187,21 @@ extension ChannelChatView {
     private var typingIndicatorView: some View {
         HStack(spacing: 8) {
             HStack(spacing: 4) {
-                ForEach(Array(typingUsers.prefix(3)), id: \.self) { userId in
-                    if let user = userCache[userId] {
-                        Text(user.username)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                ForEach(Array(viewModel.typingUsernames.prefix(3)), id: \.self) { name in
+                    Text(name)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
                 }
                 
-                if typingUsers.count > 3 {
-                    Text("and \(typingUsers.count - 3) more")
+                if viewModel.typingUsernames.count > 3 {
+                    Text("and \(viewModel.typingUsernames.count - 3) more")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
             
-            Text(typingUsers.count == 1 ? "is typing" : "are typing")
+            Text(viewModel.typingUsernames.count == 1 ? "is typing" : "are typing")
                 .font(.caption)
                 .foregroundColor(.secondary)
             
@@ -268,22 +267,9 @@ extension ChannelChatView {
     }
     
     private func sendTypingIndicator(isTyping: Bool) {
-        // TODO: Implement Firebase real-time typing indicators
-        // For now, simulate with local state
-        if isTyping {
-            // In real implementation, send to Firebase that current user is typing
-            print("💬 \(authService.currentUser?.username ?? "User") is typing...")
-        } else {
-            // In real implementation, remove current user from typing list in Firebase
-            print("💬 \(authService.currentUser?.username ?? "User") stopped typing")
-        }
+        viewModel.setTyping(isTyping)
     }
 
-    private func cleanupTypingIndicators() {
-        // Remove users who haven't typed in 5+ seconds
-        _ = Date().addingTimeInterval(-5)
-        // In real implementation, clean up Firebase typing indicators based on timestamp
-    }
 }
 
 // MARK: - Message Search Sheet
@@ -617,7 +603,6 @@ struct ChannelChatView: View {
         @FocusState private var isMessageFieldFocused: Bool
         
         // Smart Chat Features
-        @State private var typingUsers: Set<String> = []
         @State private var lastTypingTime: Date = Date()
         @State private var typingTimer: Timer?
         @State private var readReceipts: [String: Set<String>] = [:] // messageId: [userIds who read it]
@@ -660,7 +645,7 @@ struct ChannelChatView: View {
                 messagesScrollView
                 
                 // NEW: Typing Indicators
-                if !typingUsers.isEmpty {
+                if !viewModel.typingUsernames.isEmpty {
                     typingIndicatorView
                 }
                 
@@ -748,11 +733,6 @@ struct ChannelChatView: View {
             print("🗨️ ChannelChatView appeared for #\(channel.name)")
             viewModel.loadChannelData(community: community, channel: channel)
             loadUsersForMessages()
-            
-            // Demo: Simulate some users typing (remove in production)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                simulateTypingUsers()
-            }
         }
         .onDisappear {
             viewModel.cleanup()
@@ -772,9 +752,6 @@ struct ChannelChatView: View {
         .onChange(of: messageText) {
             handleTypingIndicator()
             detectMentions()
-        }
-        .onReceive(Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()) { _ in
-            cleanupTypingIndicators()
         }
     }
 }
@@ -1786,34 +1763,6 @@ extension ChannelChatView {
         viewModel.sendMessage(content: finalMessage)
         messageText = ""
         replyingTo = nil
-        
-        // Simulate read receipts for demo (in real app, this would come from Firebase)
-        if let lastMessage = viewModel.messages.last {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                simulateReadReceipts(for: lastMessage.id)
-            }
-        }
-    }
-    
-    // MARK: - Simulate Read Receipts (Demo Only)
-    private func simulateReadReceipts(for messageId: String) {
-        // In real implementation, this would come from Firebase real-time listeners
-        let simulatedReaders = Set(["user1", "user2", "user3"]) // Simulate some users reading
-        readReceipts[messageId] = simulatedReaders
-    }
-    
-    // MARK: - Demo Typing Users (Remove in Production)
-    private func simulateTypingUsers() {
-        // Simulate other users typing for demo purposes
-        typingUsers.insert("demoUser1")
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            typingUsers.insert("demoUser2")
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-            typingUsers.removeAll()
-        }
     }
     
     // MARK: - @Mentions Detection
