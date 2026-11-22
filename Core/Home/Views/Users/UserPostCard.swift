@@ -98,7 +98,7 @@ struct UserPostCard: View {
                                 Spacer()
                             }
                             
-                            Text(post.content)
+                            Text(post.displayContent)
                                 .font(.caption)
                                 .lineLimit(2)
                                 .foregroundColor(.secondary)
@@ -364,8 +364,8 @@ struct UserPostCard: View {
     @ViewBuilder
     private var contentSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !post.content.isEmpty {
-                Text(post.content)
+            if !post.displayContent.isEmpty {
+                Text(post.displayContent)
                     .font(.body)
                     .lineSpacing(6)
                     .foregroundColor(.primary)
@@ -401,30 +401,8 @@ struct UserPostCard: View {
                 }
             }
             
-            if let tradingData = post.tradingData {
-                HStack(spacing: 12) {
-                    Text(tradingData.profitLossEmoji)
-                        .font(.title3)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tradingData.formattedProfitLoss)
-                            .font(.subheadline)
-                            .fontWeight(.bold)
-                            .foregroundColor(tradingData.isProfitable ? .green : .red)
-                        
-                        if let positionSize = tradingData.positionSize {
-                            Text("Position: \(positionSize)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .background(Color.gray.opacity(0.05))
-                .cornerRadius(10)
+            if let trade = post.tradeSummary {
+                TradeSummaryCard(trade: trade)
             }
         }
         .padding(.horizontal, 20)
@@ -985,4 +963,62 @@ struct UserPostCard: View {
     UserPostCard(post: samplePost, homeViewModel: HomeViewModel())
         .padding()
         .environmentObject(FirebaseAuthService.shared)
+}
+
+/// The numbers from a trade post: P&L, ticker, entry → exit and size
+struct TradeSummaryCard: View {
+    let trade: TradingData
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: trade.isProfitable ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
+                .font(.title3)
+                .foregroundColor(trade.isProfitable ? .marketGreen : .marketRed)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(trade.formattedProfitLoss)
+                        .font(.headline.monospacedDigit())
+                        .foregroundColor(trade.isProfitable ? .marketGreen : .marketRed)
+                    if let ticker = trade.ticker, !ticker.isEmpty {
+                        Text("$\(ticker)")
+                            .font(.caption.weight(.bold))
+                            .foregroundColor(.secondary)
+                    }
+                    if let type = trade.tradeType {
+                        Text(type.displayName)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                if let details {
+                    Text(details)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill((trade.isProfitable ? Color.marketGreen : Color.marketRed).opacity(0.08))
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "Entry $200.00 → Exit $250.00 · 10 shares"
+    private var details: String? {
+        var parts: [String] = []
+        if let entry = trade.entryPrice, let exit = trade.exitPrice {
+            parts.append("\(entry.formatted(.currency(code: "USD"))) → \(exit.formatted(.currency(code: "USD")))")
+        }
+        if let size = trade.positionSize, !size.isEmpty {
+            parts.append(size)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }

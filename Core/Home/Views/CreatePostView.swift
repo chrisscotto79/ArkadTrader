@@ -4,9 +4,19 @@
 import SwiftUI
 import PhotosUI
 
+/// What the composer hands back when the user taps Post
+struct PostDraft {
+    var content: String
+    var tickers: [String]
+    var images: [UIImage]
+    var postType: PostType
+    /// The Trade Details fields, for trade result posts that filled any in
+    var tradingData: TradingData?
+}
+
 struct CreatePostView: View {
     // MARK: - Properties
-    let onPost: (String, [String], [UIImage]) -> Void
+    let onPost: (PostDraft) -> Void
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var authService: FirebaseAuthService
     
@@ -24,7 +34,9 @@ struct CreatePostView: View {
     @State private var positionSize: String = ""
     @State private var entryPrice: String = ""
     @State private var exitPrice: String = ""
-    @State private var showTradeTemplate = false
+    @State private var tradeTicker: String = ""
+    @State private var tradeType: TradingData.TradeType?
+    @State private var lastTemplate: TemplateType?
     
     // Media State
     @State private var selectedImages: [PhotosPickerItem] = []
@@ -313,6 +325,27 @@ struct CreatePostView: View {
             
             // Input fields with proper layout
             VStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Ticker")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+
+                    HStack {
+                        Image(systemName: "dollarsign")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+
+                        TextField(detectedTickers.first ?? "AAPL", text: $tradeTicker)
+                            .font(.body)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                    }
+                    .padding(12)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(10)
+                }
+
                 // First row: Profit/Loss and Position Size
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -326,7 +359,7 @@ struct CreatePostView: View {
                                 .foregroundColor(.green)
                                 .font(.caption)
                             
-                            TextField("0.00", text: $profitLoss)
+                            TextField(computedProfitLoss.map { String(format: "%.2f", $0) } ?? "0.00", text: $profitLoss)
                                 .font(.body)
                                 .keyboardType(.decimalPad)
                         }
@@ -346,7 +379,7 @@ struct CreatePostView: View {
                                 .foregroundColor(.blue)
                                 .font(.caption)
                             
-                            TextField("100 shares", text: $positionSize)
+                            TextField(tradeType == .options ? "2 contracts" : "100 shares", text: $positionSize)
                                 .font(.body)
                         }
                         .padding(12)
@@ -398,6 +431,11 @@ struct CreatePostView: View {
                     }
                 }
             }
+
+            Text("These numbers show as a trade card on your post. Leave P&L blank to work it out from entry, exit and size; use a minus sign for a loss.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .createPostCardStyle()
     }
@@ -554,7 +592,8 @@ struct CreatePostView: View {
                 content: content,
                 user: authService.currentUser,
                 images: selectedUIImages,
-                postType: selectedPostType
+                postType: selectedPostType,
+                tradingData: buildTradingData()
             )
         }
         .createPostCardStyle()
@@ -783,49 +822,62 @@ struct CreatePostView: View {
         case profit, loss, options
     }
     
+    /// Starts the post text. The numbers go in the Trade Details fields, not the text, so nothing
+    /// is left as "$[Entry]" if someone types inside a placeholder.
     private func insertTemplate(_ type: TemplateType) {
-        let template: String
-        
         switch type {
         case .profit:
-            template = """
-            🎉 Just closed a profitable trade!
-            
-            📈 $[TICKER]
-            💰 Entry: $[Entry]
-            🎯 Exit: $[Exit]
-            📊 Size: [Shares/Contracts]
-            💵 P&L: +$[Profit]
-            
-            Key lesson: [What worked well?]
-            """
+            content = "🎉 Just closed a profitable trade!\n\nWhat worked: "
+            if tradeType == .options { tradeType = nil }
         case .loss:
-            template = """
-            📉 Closed position with a loss
-            
-            📊 $[TICKER]
-            💰 Entry: $[Entry]
-            🎯 Exit: $[Exit]
-            📊 Size: [Shares/Contracts]
-            💸 P&L: -$[Loss]
-            
-            Lesson learned: [What went wrong and how to improve?]
-            """
+            content = "📉 Closed a position for a loss.\n\nLesson learned: "
+            if tradeType == .options { tradeType = nil }
         case .options:
-            template = """
-            📈 Options trade update
-            
-            🎯 $[TICKER] [Call/Put] [Strike] [Expiry]
-            💰 Entry: $[Entry]
-            🎯 Exit: $[Exit]
-            📊 Contracts: [Number]
-            💵 P&L: $[P&L]
-            
-            Strategy: [Why this trade?]
-            """
+            content = "⚡ Options trade update\n\nStrategy: "
+            tradeType = .options
         }
-        
-        content = template
+        lastTemplate = type
+    }
+
+    /// P&L worked out from entry, exit and size, used when the P&L field is blank
+    private var computedProfitLoss: Double? {
+        guard let entry = TradingData.parseAmount(entryPrice),
+              let exit = TradingData.parseAmount(exitPrice),
+              let firstWord = positionSize.split(separator: " ").first,
+              let quantity = TradingData.parseAmount(String(firstWord)), quantity > 0
+        else { return nil }
+        let multiplier: Double = tradeType == .options ? 100 : 1
+        return (exit - entry) * quantity * multiplier
+    }
+
+    /// The Trade Details fields as TradingData, or nil when it isn't a trade post or nothing was filled in
+    private func buildTradingData() -> TradingData? {
+        guard selectedPostType == .tradeResult else { return nil }
+
+        var pnl = TradingData.parseAmount(profitLoss)
+        if let typed = pnl, lastTemplate == .loss, typed > 0, !profitLoss.contains("+") {
+            pnl = -typed   // "50" on a loss post means -$50
+        }
+        if pnl == nil { pnl = computedProfitLoss }
+
+        let ticker = (tradeTicker.isEmpty ? detectedTickers.first ?? "" : tradeTicker)
+            .replacingOccurrences(of: "$", with: "")
+            .trimmingCharacters(in: .whitespaces)
+            .uppercased()
+        let size = positionSize.trimmingCharacters(in: .whitespaces)
+        let entry = TradingData.parseAmount(entryPrice)
+        let exit = TradingData.parseAmount(exitPrice)
+
+        guard pnl != nil || entry != nil || exit != nil || !size.isEmpty || !ticker.isEmpty else { return nil }
+
+        var data = TradingData()
+        data.profitLoss = pnl
+        data.entryPrice = entry
+        data.exitPrice = exit
+        data.positionSize = size.isEmpty ? nil : size
+        data.ticker = ticker.isEmpty ? nil : ticker
+        data.tradeType = tradeType
+        return data
     }
     
     private func insertTradeTemplate() {
@@ -865,7 +917,18 @@ struct CreatePostView: View {
         
         // Add some processing delay for better UX
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            onPost(content, detectedTickers, selectedUIImages)
+            let tradingData = buildTradingData()
+            var tickers = detectedTickers
+            if let ticker = tradingData?.ticker, !tickers.contains(ticker) {
+                tickers.insert(ticker, at: 0)
+            }
+            onPost(PostDraft(
+                content: content,
+                tickers: tickers,
+                images: selectedUIImages,
+                postType: selectedPostType,
+                tradingData: tradingData
+            ))
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 dismiss()
@@ -947,6 +1010,7 @@ struct PostPreviewCard: View {
     let user: User?
     let images: [UIImage]
     let postType: PostType
+    var tradingData: TradingData? = nil
     
     @State private var imageLoadError = false
     
@@ -986,6 +1050,10 @@ struct PostPreviewCard: View {
                 Text(content)
                     .font(.body)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let tradingData, tradingData.profitLossValue != nil {
+                TradeSummaryCard(trade: tradingData)
             }
             
             if !images.isEmpty {
@@ -1098,10 +1166,8 @@ extension View {
 }
 
 #Preview {
-    CreatePostView { content, tickers, images in
-        print("Content: \(content)")
-        print("Tickers: \(tickers)")
-        print("Images: \(images.count)")
+    CreatePostView { draft in
+        print("Draft: \(draft.content), tickers \(draft.tickers), \(draft.images.count) images")
     }
     .environmentObject(FirebaseAuthService.shared)
 }

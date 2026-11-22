@@ -288,10 +288,7 @@ struct ProfileView: View {
                         .font(.title)
                         .fontWeight(.bold)
                         .foregroundColor(portfolioViewModel.getPortfolioSummaryForProfile().totalProfitLoss >= 0 ? .marketGreen : .marketRed)
-                    
-                    Text("+12% better than last month")
-                        .font(.caption)
-                        .foregroundColor(.marketGreen)
+
                 }
                 
                 // Performance Metrics

@@ -199,13 +199,20 @@ class HomeViewModel: ObservableObject {
         isLoadingMore = false
     }
     
-    func createPost(content: String, tickers: [String] = [], images: [UIImage] = []) async {
+    func createPost(_ draft: PostDraft) async {
+        await createPost(content: draft.content, tickers: draft.tickers, images: draft.images,
+                         postType: draft.postType, tradingData: draft.tradingData)
+    }
+
+    /// Without a postType, it's guessed from the text (for callers that don't have the composer's choice)
+    func createPost(content: String, tickers: [String] = [], images: [UIImage] = [],
+                    postType chosenType: PostType? = nil, tradingData: TradingData? = nil) async {
         guard let userId = authService.currentUser?.id,
               let username = authService.currentUser?.username else { return }
         
         print("🔄 Creating post with \(images.count) images")
         
-        let postType = determinePostType(from: content)
+        let postType = chosenType ?? determinePostType(from: content)
         
         // ✅ FIXED: Upload images if they exist
         var imageUrls: [String] = []
@@ -243,9 +250,9 @@ class HomeViewModel: ObservableObject {
             imageUrls: imageUrls // ✅ FIXED: Use actual uploaded URLs
         )
         
-        // Add trading data if it's a trade result
+        // Trade numbers come from the composer's Trade Details; fall back to a "P&L: $50" line in the text
         if postType == .tradeResult {
-            newPost.tradingData = extractTradingDataFromContent(content)
+            newPost.tradingData = tradingData ?? extractTradingDataFromContent(content)
         }
         
         do {
@@ -262,15 +269,10 @@ class HomeViewModel: ObservableObject {
 
     // ✅ Add this helper method
     private func extractTradingDataFromContent(_ content: String) -> TradingData? {
-        var tradingData = TradingData()
-        
-        // Extract profit/loss patterns like "$500", "+$1,200", "-$200"
-        let profitPattern = "[+-]?\\$[0-9,]+\\.?[0-9]*"
-        if let profitMatch = content.range(of: profitPattern, options: .regularExpression) {
-            tradingData.profitLossString = String(content[profitMatch])
-        }
-        
-        return tradingData
+        // Only an explicit P&L line counts; any other dollar amount (an entry price, say) isn't a P&L
+        var probe = Post(content: content, authorId: "", authorUsername: "")
+        probe.postType = .tradeResult
+        return probe.tradeSummary
     }
 
     // ✅ Add image upload method

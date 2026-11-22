@@ -31,7 +31,7 @@ struct ProfileUserPostCard: View {
                 // Content section (flexible width)
                 VStack(alignment: .leading, spacing: 12) {
                     // Post content
-                    Text(post.content)
+                    Text(post.displayContent)
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .lineLimit(3)
@@ -358,10 +358,15 @@ struct ProfilePostDetailView: View {
                     .padding(.horizontal)
                     
                     // Post content
-                    if !post.content.isEmpty {
-                        Text(post.content)
+                    if !post.displayContent.isEmpty {
+                        Text(post.displayContent)
                             .font(.body)
                             .lineSpacing(6)
+                            .padding(.horizontal)
+                    }
+
+                    if let trade = post.tradeSummary {
+                        TradeSummaryCard(trade: trade)
                             .padding(.horizontal)
                     }
                     

@@ -20,9 +20,9 @@ struct SocialFeedView: View {
             .navigationBarHidden(true)
         }
         .sheet(isPresented: $showCreatePost) {
-            CreatePostView { content, tickers, images in
+            CreatePostView { draft in
                 Task {
-                    await homeViewModel.createPost(content: content, tickers: tickers, images: images)
+                    await homeViewModel.createPost(draft)
                 }
             }
             .environmentObject(authService) // Pass environment object to sheets

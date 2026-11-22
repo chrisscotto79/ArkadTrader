@@ -219,40 +219,31 @@ struct TradingData: Codable {
     
     // ✅ Computed properties for display
     var formattedProfitLoss: String {
-        if let profitLossString = profitLossString, !profitLossString.isEmpty {
-            return profitLossString
-        }
-        
-        if let profitLoss = profitLoss {
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .currency
-            formatter.currencySymbol = "$"
-            return formatter.string(from: NSNumber(value: profitLoss)) ?? "$0.00"
-        }
-        
-        return "$0.00"
+        guard let value = profitLossValue else { return profitLossString ?? "" }
+        let formatted = abs(value).formatted(.currency(code: "USD"))
+        return (value < 0 ? "-" : "+") + formatted
     }
-    
+
     var isProfitable: Bool {
-        if let profitLoss = profitLoss {
-            return profitLoss > 0
-        }
-        
-        if let profitLossString = profitLossString {
-            // Try to parse profit/loss from string
-            let cleanString = profitLossString.replacingOccurrences(of: "$", with: "")
-                .replacingOccurrences(of: ",", with: "")
-            
-            if let value = Double(cleanString) {
-                return value > 0
-            }
-        }
-        
-        return false
+        (profitLossValue ?? 0) >= 0
     }
     
     var profitLossEmoji: String {
         return isProfitable ? "💰" : "📉"
+    }
+
+    /// The P&L as a number, from the stored value or the stored text ("+$1,200", "-$50")
+    var profitLossValue: Double? {
+        if let profitLoss { return profitLoss }
+        guard let text = profitLossString else { return nil }
+        return TradingData.parseAmount(text)
+    }
+
+    /// "$12.50", "+$1,200", "-50" -> number. Nil when there's no digit to read.
+    static func parseAmount(_ text: String) -> Double? {
+        let cleaned = text.filter { "0123456789.-".contains($0) }
+        guard cleaned.contains(where: \.isNumber) else { return nil }
+        return Double(cleaned)
     }
 }
 
@@ -337,6 +328,37 @@ extension Post {
     
     var hasTradingData: Bool {
         return tradingData != nil
+    }
+
+    /// Post text for display. Older trade posts were written from a template with "$[Entry]"-style
+    /// placeholders that people typed inside, leaving "$[200]"; this drops those brackets.
+    var displayContent: String {
+        guard content.contains("[") else { return content }
+        let unbracketed = content.replacingOccurrences(
+            of: #"\[([^\[\]\n]{1,60})\]"#, with: "$1", options: .regularExpression)
+        // "$aapl" -> "$AAPL"
+        let ns = unbracketed as NSString
+        var result = unbracketed
+        let regex = try! NSRegularExpression(pattern: #"\$([a-z]{1,5})\b"#)
+        for match in regex.matches(in: unbracketed, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let ticker = ns.substring(with: match.range(at: 1)).uppercased()
+            result = (result as NSString).replacingCharacters(in: match.range, with: "$" + ticker)
+        }
+        return result
+    }
+
+    /// Trade numbers to show on the card. Nil unless there's an actual P&L, so a trade post
+    /// without numbers no longer shows a "$0.00" card. Falls back to the "P&L:" line in older posts.
+    var tradeSummary: TradingData? {
+        if let tradingData, tradingData.profitLossValue != nil { return tradingData }
+        guard postType == .tradeResult,
+              let range = displayContent.range(of: #"P&L:\s*[+-]?\$?-?[0-9][0-9,]*(\.[0-9]+)?"#, options: .regularExpression),
+              let amount = TradingData.parseAmount(String(displayContent[range].dropFirst(4)))
+        else { return nil }
+        var summary = tradingData ?? TradingData()
+        summary.profitLoss = displayContent[range].contains("-") ? -abs(amount) : amount
+        summary.profitLossString = nil
+        return summary
     }
     
     var formattedContent: String {
