@@ -726,39 +726,3 @@ struct CommunityModerationSettings: Codable {
         return settings
     }
 }
-
-// MARK: - Image Upload States (for UI feedback)
-enum ImageUploadState: Equatable {
-    case idle
-    case uploading(progress: Double)
-    case success(url: String)
-    case failed(error: String)
-    
-    var isUploading: Bool {
-        if case .uploading = self {
-            return true
-        }
-        return false
-    }
-    
-    var uploadProgress: Double {
-        if case .uploading(let progress) = self {
-            return progress
-        }
-        return 0.0
-    }
-    
-    var errorMessage: String? {
-        if case .failed(let error) = self {
-            return error
-        }
-        return nil
-    }
-    
-    var uploadedURL: String? {
-        if case .success(let url) = self {
-            return url
-        }
-        return nil
-    }
-}

@@ -535,27 +535,7 @@ struct UserCommunityStats {
     let communitiesOwned: Int
     let communitiesModerated: Int
 }
-/// Community activity item
-struct CommunityActivity: Identifiable {
-    let id: String
-    let communityId: String
-    let communityName: String
-    let activityType: CommunityActivityType
-    let description: String
-    let timestamp: Date
-    let userId: String?
-    let username: String?
-}
 
-/// Types of community activities
-enum CommunityActivityType {
-    case created
-    case memberJoined
-    case memberLeft
-    case messagePosted
-    case calloutMade
-    case settingsChanged
-}
 enum CommunitySortType: CaseIterable {
     case memberCount
     case newest

@@ -210,35 +210,6 @@ extension ProfileImageView {
 
 // MARK: - Clickable Profile Image Variant
 
-struct ClickableProfileImageView: View {
-    let user: User?
-    let size: CGFloat
-    let onTap: (() -> Void)?
-    
-    @State private var isPressed = false
-    
-    init(user: User?, size: CGFloat = 40, onTap: (() -> Void)? = nil) {
-        self.user = user
-        self.size = size
-        self.onTap = onTap
-    }
-    
-    var body: some View {
-        Button(action: {
-            onTap?()
-        }) {
-            ProfileImageView.custom(user: user, size: size)
-                .scaleEffect(isPressed ? 0.95 : 1.0)
-                .animation(.easeInOut(duration: 0.1), value: isPressed)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { pressing in
-            isPressed = pressing
-        }, perform: {})
-        .disabled(onTap == nil)
-    }
-}
-
 // MARK: - Preview Helpers
 
 #if DEBUG
@@ -257,38 +228,3 @@ extension User {
     }()
 }
 #endif
-
-#Preview("Profile Image Sizes") {
-    VStack(spacing: 20) {
-        HStack(spacing: 20) {
-            VStack {
-                ProfileImageView.small(user: .previewUser)
-                Text("Small")
-                    .font(.caption)
-            }
-            
-            VStack {
-                ProfileImageView.medium(user: .previewUser)
-                Text("Medium")
-                    .font(.caption)
-            }
-            
-            VStack {
-                ProfileImageView.large(user: .previewUser)
-                Text("Large")
-                    .font(.caption)
-            }
-            
-            VStack {
-                ProfileImageView.extraLarge(user: .previewUser)
-                Text("Extra Large")
-                    .font(.caption)
-            }
-        }
-        
-        ClickableProfileImageView(user: .previewUser, size: 60) {
-            print("Profile tapped!")
-        }
-    }
-    .padding()
-}

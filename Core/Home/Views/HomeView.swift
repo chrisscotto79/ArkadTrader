@@ -322,29 +322,6 @@ struct WelcomeBanner: View {
 
 
 
-struct EnhancedPostTypeLabel: View {
-    let type: PostType
-    
-    var body: some View {
-        Text(type.displayName)
-            .font(.caption2)
-            .fontWeight(.bold)
-            .foregroundColor(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(typeColor)
-            .cornerRadius(8)
-    }
-    
-    private var typeColor: Color {
-        switch type {
-        case .text: return .clear
-        case .tradeResult: return .green
-        case .marketAnalysis: return .blue
-        }
-    }
-}
-
 struct EnhancedLoadingView: View {
     let message: String
     
@@ -398,44 +375,6 @@ struct EnhancedEmptyFeedView: View {
                 .background(Color.arkadGold)
                 .cornerRadius(25)
                 .shadow(color: .arkadGold.opacity(0.3), radius: 8, x: 0, y: 4)
-            }
-        }
-        .padding(.vertical, 60)
-    }
-}
-
-struct EnhancedEmptyFollowingView: View {
-    var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "person.2")
-                .font(.system(size: 64))
-                .foregroundColor(.gray.opacity(0.7))
-            
-            VStack(spacing: 8) {
-                Text("No Posts from Following")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Text("Follow other traders to see their posts here. Discover traders in the search tab.")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
-            }
-            
-            Button(action: {}) {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                    Text("Discover Traders")
-                }
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundColor(.arkadBlack)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(Color.arkadGold)
-                .cornerRadius(25)
             }
         }
         .padding(.vertical, 60)

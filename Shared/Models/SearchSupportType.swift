@@ -53,49 +53,6 @@ enum SearchType: String, CaseIterable {
     }
 }
 
-// MARK: - Search Filters
-enum SearchFilter: String, CaseIterable {
-    case recent = "recent"
-    case popular = "popular"
-    case verified = "verified"
-    case trending = "trending"
-    case nearby = "nearby"
-    case followed = "followed"
-    
-    var displayName: String {
-        switch self {
-        case .recent: return "Recent"
-        case .popular: return "Popular"
-        case .verified: return "Verified"
-        case .trending: return "Trending"
-        case .nearby: return "Nearby"
-        case .followed: return "Followed"
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .recent: return "clock"
-        case .popular: return "flame"
-        case .verified: return "checkmark.seal"
-        case .trending: return "arrow.up.right"
-        case .nearby: return "location"
-        case .followed: return "person.badge.plus"
-        }
-    }
-    
-    var description: String {
-        switch self {
-        case .recent: return "Recently created or updated"
-        case .popular: return "Most liked and engaged"
-        case .verified: return "Verified users and content"
-        case .trending: return "Currently trending topics"
-        case .nearby: return "Based on your location"
-        case .followed: return "From people you follow"
-        }
-    }
-}
-
 // MARK: - Search Sort Options (defined in SearchViewModel.swift)
 // SearchSortOption enum is defined in SearchViewModel.swift to avoid duplication
 
@@ -224,75 +181,6 @@ struct SearchSuggestion: Identifiable, Codable, Hashable {
     }
 }
 
-// MARK: - Search Context
-enum SearchContext: String, CaseIterable {
-    case global = "global"
-    case following = "following"
-    case community = "community"
-    case portfolio = "portfolio"
-    case watchlist = "watchlist"
-    
-    var displayName: String {
-        switch self {
-        case .global: return "Global"
-        case .following: return "Following"
-        case .community: return "Community"
-        case .portfolio: return "Portfolio"
-        case .watchlist: return "Watchlist"
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .global: return "globe"
-        case .following: return "person.2"
-        case .community: return "person.3"
-        case .portfolio: return "chart.pie"
-        case .watchlist: return "eye"
-        }
-    }
-    
-    var description: String {
-        switch self {
-        case .global: return "Search across all content"
-        case .following: return "Search within people you follow"
-        case .community: return "Search within your communities"
-        case .portfolio: return "Search your portfolio and trades"
-        case .watchlist: return "Search your watchlist"
-        }
-    }
-}
-
-// MARK: - Search Query Builder
-struct SearchQuery {
-    var text: String
-    var type: SearchType
-    var filters: [SearchFilter]
-    var sortOption: SearchSortOption
-    var context: SearchContext
-    var dateRange: DateRange?
-    var priceRange: PriceRange?
-    
-    init(text: String, type: SearchType = .all, filters: [SearchFilter] = [], sortOption: SearchSortOption = .relevance, context: SearchContext = .global) {
-        self.text = text
-        self.type = type
-        self.filters = filters
-        self.sortOption = sortOption
-        self.context = context
-    }
-    
-    var hasFilters: Bool {
-        return !filters.isEmpty || dateRange != nil || priceRange != nil
-    }
-    
-    var filterCount: Int {
-        var count = filters.count
-        if dateRange != nil { count += 1 }
-        if priceRange != nil { count += 1 }
-        return count
-    }
-}
-
 // MARK: - Date Range Filter
 struct DateRange: Codable, Hashable {
     let startDate: Date
@@ -371,42 +259,5 @@ struct SearchAnalytics: Codable {
             searchSessionDuration: 0,
             cacheHitRate: 0
         )
-    }
-}
-
-// MARK: - Search State
-enum SearchState {
-    case idle
-    case loading
-    case loaded([SearchResult])
-    case error(String)
-    case empty
-    
-    var isLoading: Bool {
-        if case .loading = self {
-            return true
-        }
-        return false
-    }
-    
-    var hasResults: Bool {
-        if case .loaded(let results) = self {
-            return !results.isEmpty
-        }
-        return false
-    }
-    
-    var results: [SearchResult] {
-        if case .loaded(let results) = self {
-            return results
-        }
-        return []
-    }
-    
-    var errorMessage: String? {
-        if case .error(let message) = self {
-            return message
-        }
-        return nil
     }
 }

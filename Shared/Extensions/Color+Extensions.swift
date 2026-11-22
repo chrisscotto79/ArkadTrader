@@ -257,33 +257,6 @@ struct BrandColors {
     let onSurface = Color.textPrimary
 }
 
-// MARK: - Color Palette for Design System
-struct ArkadColorPalette {
-    // Primary palette
-    static let primary50 = Color(hex: "FFFBEB")
-    static let primary100 = Color(hex: "FEF3C7")
-    static let primary200 = Color(hex: "FDE68A")
-    static let primary300 = Color(hex: "FCD34D")
-    static let primary400 = Color(hex: "FBBF24")
-    static let primary500 = Color.arkadGold // Main brand color
-    static let primary600 = Color(hex: "D97706")
-    static let primary700 = Color(hex: "B45309")
-    static let primary800 = Color(hex: "92400E")
-    static let primary900 = Color(hex: "78350F")
-    
-    // Gray palette
-    static let gray50 = Color(hex: "F9FAFB")
-    static let gray100 = Color(hex: "F3F4F6")
-    static let gray200 = Color(hex: "E5E7EB")
-    static let gray300 = Color(hex: "D1D5DB")
-    static let gray400 = Color(hex: "9CA3AF")
-    static let gray500 = Color(hex: "6B7280")
-    static let gray600 = Color(hex: "4B5563")
-    static let gray700 = Color(hex: "374151")
-    static let gray800 = Color(hex: "1F2937")
-    static let gray900 = Color(hex: "111827")
-}
-
 extension Color {
     // MARK: - Additional Colors Needed for Follow Feature
     static let arkadDark = Color(red: 20/255, green: 20/255, blue: 30/255)

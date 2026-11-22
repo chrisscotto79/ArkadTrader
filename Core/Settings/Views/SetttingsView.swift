@@ -265,17 +265,6 @@ struct SettingsRowView: View {
     }
 }
 
-// MARK: - Broker Model
-struct BrokerModel {
-    let id: String
-    let name: String
-    let description: String
-    let icon: String
-    let color: Color
-    let isAPISupported: Bool
-    let features: [String]
-}
-
 // MARK: - Privacy Settings View
 struct PrivacySettingsView: View {
     @EnvironmentObject var authService: FirebaseAuthService

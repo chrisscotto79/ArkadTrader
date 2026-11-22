@@ -759,64 +759,6 @@ struct SearchView: View {
 
 // MARK: - Supporting Views
 
-struct EnhancedSearchResultView: View {
-    let result: SearchResult
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            // Avatar/Icon with gradient border
-            ZStack {
-                Circle()
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.orange],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 2
-                    )
-                    .frame(width: 52, height: 52)
-                
-                Circle()
-                    .fill(Color(.systemGray5))
-                    .frame(width: 48, height: 48)
-                
-                Image(systemName: getResultIcon(for: result.type))
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(.arkadGold)
-            }
-            
-            // Content
-            
-            Spacer()
-            
-            // Action indicator
-            Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.secondary.opacity(0.5))
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-                )
-        )
-    }
-    
-    private func getResultIcon(for type: SearchResultType) -> String {
-        switch type {
-        case .user: return "person.fill"
-        case .post: return "text.bubble.fill"
-        case .trade: return "chart.line.uptrend.xyaxis"
-        case .group: return "person.3.fill"
-        }
-    }
-}
-
 // MARK: - Custom Button Style
 
 struct ScaleButtonStyle: ButtonStyle {
