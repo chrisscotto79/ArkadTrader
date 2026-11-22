@@ -477,13 +477,17 @@ extension FirebaseServices {
         let userIds = snapshot.documents.map { $0.documentID }
         guard !userIds.isEmpty else { return [] }
         
-        let usersSnapshot = try await db.collection("users")
-            .whereField(FieldPath.documentID(), in: userIds)
-            .getDocuments()
-        
-        return usersSnapshot.documents.compactMap { document in
-            try? User.fromFirestore(data: document.data(), id: document.documentID)
+        // Firestore `in` filters accept at most 30 values
+        var users: [User] = []
+        for chunk in userIds.chunked(into: 30) {
+            let usersSnapshot = try await db.collection("users")
+                .whereField(FieldPath.documentID(), in: chunk)
+                .getDocuments()
+            users += usersSnapshot.documents.compactMap { document in
+                try? User.fromFirestore(data: document.data(), id: document.documentID)
+            }
         }
+        return users
     }
     
     /// Every member's role in a community, keyed by user id. The creator is always the owner.

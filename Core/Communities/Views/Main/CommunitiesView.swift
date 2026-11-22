@@ -28,6 +28,7 @@ struct CommunitiesView: View {
     // Enhanced leaderboard state
     @State private var selectedLeaderboardMode: LeaderboardMode = .communities
     @StateObject private var globalLeaderboardViewModel = GlobalLeaderboardViewModel()
+    @State private var globalProfileUser: User?
     
     var body: some View {
         NavigationStack {
@@ -78,7 +79,7 @@ struct CommunitiesView: View {
             .navigationBarHidden(true)
             .navigationDestination(isPresented: $navigateToLeaderboard) {
                 if let community = selectedLeaderboardCommunity {
-                    SimpleConsistencyLeaderboardView(community: community)
+                    CommunityLeaderboardView(community: community)
                         .environmentObject(authService)
                 }
             }
@@ -1487,289 +1488,61 @@ extension CommunitiesView {
     }
     
     private var globalTradersContent: some View {
-        VStack(spacing: 20) {
-            // Enhanced header with category selector
-            VStack(spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Top Traders Worldwide")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
-                            .foregroundColor(.textPrimary)
-                        
-                        Text("Global rankings across all communities")
-                            .font(.system(size: 12))
-                            .foregroundColor(.textSecondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        Task {
-                            await globalLeaderboardViewModel.refresh()
-                        }
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.arkadGold.opacity(0.1))
-                                .frame(width: 36, height: 36)
-                            
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.arkadGold)
-                        }
-                    }
-                }
-                
-                // Enhanced category selector
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(LeaderboardCategory.allCases, id: \.self) { category in
-                            categoryChip(category)
-                        }
-                    }
-                }
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Top Traders")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("Everyone on Arkad, ranked by their closed trades")
+                    .font(.system(size: 12))
+                    .foregroundColor(.textSecondary)
             }
-            
-            // Content
+
+            LeaderboardFilterBar(
+                category: $globalLeaderboardViewModel.category,
+                timeframe: $globalLeaderboardViewModel.timeframe,
+                horizontalPadding: 0
+            )
+
             if globalLeaderboardViewModel.isLoading {
                 loadingView
             } else if !globalLeaderboardViewModel.errorMessage.isEmpty {
                 errorView
-            } else if globalLeaderboardViewModel.globalTraders.isEmpty {
+            } else if globalLeaderboardViewModel.entries.isEmpty {
                 emptyGlobalTradersView
             } else {
-                LazyVStack(spacing: 14) {
-                    ForEach(globalLeaderboardViewModel.globalTraders) { trader in
-                        globalTraderCard(trader: trader)
+                LazyVStack(spacing: 8) {
+                    ForEach(globalLeaderboardViewModel.entries) { entry in
+                        Button {
+                            openGlobalProfile(userId: entry.userId)
+                        } label: {
+                            LeaderboardRow(
+                                entry: entry,
+                                category: globalLeaderboardViewModel.category,
+                                isCurrentUser: entry.userId == authService.currentUser?.id
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
         }
+        .onChange(of: globalLeaderboardViewModel.category) { _, _ in globalLeaderboardViewModel.reload() }
+        .onChange(of: globalLeaderboardViewModel.timeframe) { _, _ in globalLeaderboardViewModel.reload() }
         .onAppear {
-            if globalLeaderboardViewModel.globalTraders.isEmpty && !globalLeaderboardViewModel.isLoading {
-                Task {
-                    await globalLeaderboardViewModel.loadGlobalLeaderboard()
-                }
+            if globalLeaderboardViewModel.entries.isEmpty && !globalLeaderboardViewModel.isLoading {
+                Task { await globalLeaderboardViewModel.loadGlobalLeaderboard() }
             }
+        }
+        .sheet(item: $globalProfileUser) { user in
+            OtherUserProfileView(user: user)
+                .environmentObject(authService)
         }
     }
-    
-    private func categoryChip(_ category: LeaderboardCategory) -> some View {
-        Button(action: {
-            Task {
-                await globalLeaderboardViewModel.changeCategory(category)
-            }
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: category.icon)
-                    .font(.system(size: 13, weight: .medium))
-                
-                Text(category.displayName)
-                    .font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundColor(globalLeaderboardViewModel.selectedCategory == category ? .arkadBlack : .arkadGold)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                Capsule()
-                    .fill(globalLeaderboardViewModel.selectedCategory == category ?
-                          LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.9)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                          ) : LinearGradient(
-                            colors: [Color.arkadGold.opacity(0.1), Color.arkadGold.opacity(0.1)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                          ))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(
-                                globalLeaderboardViewModel.selectedCategory == category ?
-                                Color.clear : Color.arkadGold.opacity(0.3),
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .shadow(
-                color: globalLeaderboardViewModel.selectedCategory == category ?
-                    .arkadGold.opacity(0.2) : .clear,
-                radius: 8,
-                x: 0,
-                y: 4
-            )
-        }
-    }
-    
-    private func globalTraderCard(trader: GlobalTrader) -> some View {
-        HStack(spacing: 14) {
-            // Enhanced rank badge
-            rankBadge(for: trader.rank)
-            
-            // Avatar with gradient border
-            ZStack {
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: trader.rank <= 3 ?
-                                [getRankColor(for: trader.rank), getRankColor(for: trader.rank).opacity(0.5)] :
-                                [Color.borderPrimary, Color.borderPrimary.opacity(0.5)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 2
-                    )
-                    .frame(width: 44, height: 44)
-                
-                AsyncImage(url: URL(string: "https://avatar.iran.liara.run/username?username=\(trader.username)")) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.arkadGold, Color.arkadGold.opacity(0.7)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay(
-                            Text(getInitials(from: trader.username))
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.white)
-                        )
-                }
-                .frame(width: 40, height: 40)
-                .clipShape(Circle())
-            }
-            
-            // User info
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(trader.username)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                    
-                    if trader.isVerified {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [Color.blue, Color.blue.opacity(0.8)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                    }
-                }
-                
-                HStack(spacing: 10) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chart.bar.fill")
-                            .font(.system(size: 10))
-                        Text("\(trader.totalTrades)")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(.textSecondary)
-                    
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(trader.winRate >= 60 ? Color.marketGreen : Color.textSecondary)
-                            .frame(width: 4, height: 4)
-                        Text("\(String(format: "%.1f", trader.winRate))%")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(trader.winRate >= 60 ? .marketGreen : .textSecondary)
-                    }
-                }
-            }
-            
-            Spacer()
-            
-            // Stats
-            VStack(alignment: .trailing, spacing: 6) {
-                Text(formatProfitLoss(trader.totalProfitLoss))
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: trader.totalProfitLoss >= 0 ?
-                                [Color.marketGreen, Color.marketGreen.opacity(0.8)] :
-                                [Color.marketRed, Color.marketRed.opacity(0.8)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                
-                SimpleFollowButton(
-                    targetUserId: trader.userId,
-                    targetUsername: trader.username
-                )
-                .scaleEffect(0.85)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(trader.rank <= 3 ? Color.backgroundSecondary : Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(
-                            trader.rank <= 3 ?
-                                LinearGradient(
-                                    colors: [getRankColor(for: trader.rank).opacity(0.3), getRankColor(for: trader.rank).opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ) :
-                                LinearGradient(
-                                    colors: [Color.borderPrimary.opacity(0.3), Color.borderPrimary.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: trader.rank <= 3 ? getRankColor(for: trader.rank).opacity(0.1) : .black.opacity(0.03),
-                    radius: 8,
-                    x: 0,
-                    y: 4
-                )
-        )
-    }
-    
-    private func rankBadge(for rank: Int) -> some View {
-        ZStack {
-            if rank <= 3 {
-                // Special design for top 3
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [getRankColor(for: rank), getRankColor(for: rank).opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 32, height: 32)
-                    .shadow(color: getRankColor(for: rank).opacity(0.4), radius: 4, x: 0, y: 2)
-                
-                Image(systemName: getRankIcon(for: rank))
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white)
-            } else {
-                // Regular rank badge
-                Circle()
-                    .fill(Color.backgroundSecondary)
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.borderPrimary, lineWidth: 1)
-                    )
-                
-                Text("\(rank)")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-            }
-        }
+
+    private func openGlobalProfile(userId: String) {
+        guard userId != authService.currentUser?.id else { return }
+        Task { globalProfileUser = try? await authService.getUserById(userId: userId) }
     }
 }
 
@@ -2036,43 +1809,6 @@ extension CommunitiesView {
             return String(name.prefix(2)).uppercased()
         }
     }
-    
-    private func getInitials(from name: String) -> String {
-        let components = name.components(separatedBy: " ")
-        if components.count >= 2 {
-            let first = String(components[0].prefix(1))
-            let last = String(components[1].prefix(1))
-            return (first + last).uppercased()
-        } else {
-            return String(name.prefix(2)).uppercased()
-        }
-    }
-    
-    private func formatProfitLoss(_ amount: Double) -> String {
-        if amount >= 0 {
-            return "+$\(String(format: "%.0f", amount))"
-        } else {
-            return "-$\(String(format: "%.0f", abs(amount)))"
-        }
-    }
-    
-    private func getRankColor(for rank: Int) -> Color {
-        switch rank {
-        case 1: return .yellow
-        case 2: return .gray
-        case 3: return .orange
-        default: return .blue
-        }
-    }
-    
-    private func getRankIcon(for rank: Int) -> String {
-        switch rank {
-        case 1: return "crown.fill"
-        case 2: return "medal.fill"
-        case 3: return "medal"
-        default: return ""
-        }
-    }
 }
 
 // MARK: - Filter Sheet
@@ -2296,152 +2032,39 @@ enum LeaderboardMode: CaseIterable {
     }
 }
 
-struct GlobalTrader: Identifiable {
-    let id = UUID()
-    let userId: String
-    let username: String
-    var rank: Int
-    let totalProfitLoss: Double
-    let winRate: Double
-    let totalTrades: Int
-    let communities: [String]
-    let isVerified: Bool
-    
-    init(userId: String, username: String, rank: Int, totalProfitLoss: Double, winRate: Double, totalTrades: Int, communities: [String] = [], isVerified: Bool = false) {
-        self.userId = userId
-        self.username = username
-        self.rank = rank
-        self.totalProfitLoss = totalProfitLoss
-        self.winRate = winRate
-        self.totalTrades = totalTrades
-        self.communities = communities
-        self.isVerified = isVerified
-    }
-}
-
 // MARK: - Global Leaderboard ViewModel
 @MainActor
 class GlobalLeaderboardViewModel: ObservableObject {
-    @Published var globalTraders: [GlobalTrader] = []
+    @Published var entries: [CommunityLeaderboardEntry] = []
+    @Published var category: LeaderboardCategory = .profitKings
+    @Published var timeframe: LeaderboardTimeframe = .monthly
     @Published var isLoading = false
     @Published var errorMessage = ""
-    @Published var selectedCategory: LeaderboardCategory = .consistencyMasters
-    
-    private let leaderboardService = CommunityLeaderboardService.shared
-    
-    func loadGlobalLeaderboard(category: LeaderboardCategory = .consistencyMasters) async {
-        isLoading = true
+
+    private let service = CommunityLeaderboardService.shared
+    private var loadTask: Task<Void, Never>?
+
+    func loadGlobalLeaderboard(forceRefresh: Bool = false) async {
+        if forceRefresh { service.invalidate(communityId: "global") }
+        isLoading = entries.isEmpty
         errorMessage = ""
-        selectedCategory = category
-        
         do {
-            guard let currentUser = leaderboardService.authService.currentUser else {
-                throw LeaderboardError.noCurrentUser
-            }
-            
-            var allTraders: [GlobalTrader] = []
-            var processedUserIds: Set<String> = []
-            
-            for communityId in currentUser.communityIds {
-                do {
-                    let communityEntries = try await leaderboardService.getLeaderboard(
-                        communityId: communityId,
-                        category: category,
-                        timeframe: .allTime,
-                        limit: 50
-                    )
-                    
-                    for entry in communityEntries {
-                        if processedUserIds.contains(entry.userId) {
-                            continue
-                        }
-                        
-                        let trader = await createSimpleGlobalTrader(from: entry, communityId: communityId)
-                        allTraders.append(trader)
-                        processedUserIds.insert(entry.userId)
-                    }
-                    
-                } catch {
-                    print("⚠️ Could not load leaderboard for community \(communityId): \(error)")
-                }
-            }
-            
-            allTraders = sortTraders(allTraders, by: category)
-            
-            for i in 0..<allTraders.count {
-                allTraders[i].rank = i + 1
-            }
-            
-            globalTraders = Array(allTraders.prefix(50))
-            
+            entries = try await service.getGlobalLeaderboard(category: category, timeframe: timeframe, limit: 50)
         } catch {
-            errorMessage = "Failed to load global leaderboard"
+            errorMessage = error.localizedDescription
         }
-        
         isLoading = false
     }
-    
-    private func createSimpleGlobalTrader(from entry: CommunityLeaderboardEntry, communityId: String) async -> GlobalTrader {
-        var isVerified = false
-        var userCommunities: [String] = []
-        
-        do {
-            if let user = try await leaderboardService.authService.getUserById(userId: entry.userId) {
-                isVerified = user.isVerified
-                userCommunities = user.communityIds.map { "Community \($0.suffix(8))" }
-            }
-        } catch {
-            userCommunities = ["Community \(communityId.suffix(8))"]
-        }
-        
-        if userCommunities.isEmpty {
-            userCommunities = ["Community \(communityId.suffix(8))"]
-        }
-        
-        return GlobalTrader(
-            userId: entry.userId,
-            username: entry.username,
-            rank: entry.rank,
-            totalProfitLoss: entry.totalProfitLoss,
-            winRate: entry.winRate,
-            totalTrades: entry.totalTrades,
-            communities: userCommunities,
-            isVerified: isVerified
-        )
-    }
-    
-    private func sortTraders(_ traders: [GlobalTrader], by category: LeaderboardCategory) -> [GlobalTrader] {
-        switch category {
-        case .consistencyMasters:
-            return traders
-                .filter { $0.totalTrades >= 5 }
-                .sorted { lhs, rhs in
-                    if lhs.winRate == rhs.winRate {
-                        return lhs.totalTrades > rhs.totalTrades
-                    }
-                    return lhs.winRate > rhs.winRate
-                }
-        case .profitKings:
-            return traders.sorted { $0.totalProfitLoss > $1.totalProfitLoss }
-        case .volumeTraders:
-            return traders.sorted { $0.totalTrades > $1.totalTrades }
-        case .riskMasters:
-            return traders
-                .filter { $0.totalTrades >= 3 }
-                .sorted { lhs, rhs in
-                    let lhsScore = lhs.winRate * 0.7 + Double(min(lhs.totalTrades, 100)) * 0.3
-                    let rhsScore = rhs.winRate * 0.7 + Double(min(rhs.totalTrades, 100)) * 0.3
-                    return lhsScore > rhsScore
-                }
-        }
-    }
-    
+
     func refresh() async {
-        await loadGlobalLeaderboard(category: selectedCategory)
+        await loadGlobalLeaderboard(forceRefresh: true)
     }
-    
-    func changeCategory(_ category: LeaderboardCategory) async {
-        await loadGlobalLeaderboard(category: category)
+
+    /// Reload after the category or timeframe changes
+    func reload() {
+        loadTask?.cancel()
+        entries = []
+        loadTask = Task { await loadGlobalLeaderboard() }
     }
 }
 

@@ -1,5 +1,5 @@
 // File: Core/Communities/Models/LeaderboardCategory.swift
-// Complete Leaderboard Category with All Types
+// The ways a leaderboard can be ranked.
 
 import Foundation
 
@@ -20,10 +20,10 @@ enum LeaderboardCategory: String, CaseIterable {
     
     var description: String {
         switch self {
-        case .consistencyMasters: return "Highest win rates with minimum 5 trades"
-        case .profitKings: return "Highest total profit & loss"
-        case .volumeTraders: return "Most active traders by trade count"
-        case .riskMasters: return "Best risk management and consistency"
+        case .consistencyMasters: return "Highest win rate (3+ closed trades)"
+        case .profitKings: return "Highest total realized P&L"
+        case .volumeTraders: return "Most closed trades"
+        case .riskMasters: return "Best profit factor: gross wins ÷ gross losses (3+ trades)"
         }
     }
     

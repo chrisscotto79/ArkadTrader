@@ -1,547 +1,237 @@
 // File: Core/Communities/Services/CommunityLeaderboardService.swift
-// Complete Community Leaderboard Service with Global Support - Fixed Access Levels
+// Ranks traders by their closed trades, either within one community or across the whole app.
 
 import Foundation
 import FirebaseFirestore
 
 @MainActor
 class CommunityLeaderboardService: ObservableObject {
-    
+
     static let shared = CommunityLeaderboardService()
-    
-    private let calculationService = LeaderboardCalculationService.shared
-    
-    // ✅ Made internal for access from GlobalLeaderboardViewModel
+
     let authService = FirebaseAuthService.shared
-    
+    private var db: Firestore { FirebaseServices.shared.db }
+
     @Published var isLoading = false
     @Published var errorMessage = ""
     @Published var lastUpdated: Date?
-    
-    // Cache for performance
-    private var leaderboardCache: [String: [CommunityLeaderboardEntry]] = [:]
-    private var globalLeaderboardCache: [CommunityLeaderboardEntry] = []
-    private var cacheExpiry: [String: Date] = [:]
-    private let cacheTimeout: TimeInterval = 300 // 5 minutes
-    
+
+    /// Minimum closed trades to appear in the win-rate and risk boards
+    static let minimumTradesForRatios = 3
+
+    /// Firestore allows at most 30 values in an `in` filter
+    private let inQueryLimit = 30
+    /// Upper bound on closed trades read for the global board
+    private let globalTradeScanLimit = 2000
+
+    private var cache: [String: (entries: [CommunityLeaderboardEntry], expires: Date)] = [:]
+    private let cacheTimeout: TimeInterval = 300
+
     private init() {}
-    
-    // MARK: - Community Leaderboards
-    
-    /// Get leaderboard for a specific community
+
+    // MARK: - Public API
+
+    /// Leaderboard for one community's members
     func getLeaderboard(
         communityId: String,
         category: LeaderboardCategory,
         timeframe: LeaderboardTimeframe = .allTime,
         limit: Int = 50
     ) async throws -> [CommunityLeaderboardEntry] {
-        print("📊 Getting leaderboard for community: \(communityId)")
-        
-        // Check cache first
-        let cacheKey = "\(communityId)_\(category.rawValue)_\(timeframe.rawValue)"
-        if let cachedEntries = getCachedLeaderboard(key: cacheKey) {
-            print("✅ Using cached leaderboard data")
-            return cachedEntries
-        }
-        
+        let key = "\(communityId)_\(category.rawValue)_\(timeframe.rawValue)"
+        if let cached = cachedEntries(for: key) { return cached }
+
         isLoading = true
         errorMessage = ""
-        
-        defer {
-            isLoading = false
-            lastUpdated = Date()
-        }
-        
+        defer { isLoading = false; lastUpdated = Date() }
+
         do {
-            let entries: [CommunityLeaderboardEntry]
-            
-            switch category {
-            case .consistencyMasters:
-                entries = try await getConsistencyLeaderboard(
-                    communityId: communityId,
-                    timeframe: timeframe,
-                    limit: limit
-                )
-            case .profitKings:
-                entries = try await getProfitLeaderboard(
-                    communityId: communityId,
-                    timeframe: timeframe,
-                    limit: limit
-                )
-            case .volumeTraders:
-                entries = try await getVolumeLeaderboard(
-                    communityId: communityId,
-                    timeframe: timeframe,
-                    limit: limit
-                )
-            case .riskMasters:
-                entries = try await getRiskLeaderboard(
-                    communityId: communityId,
-                    timeframe: timeframe,
-                    limit: limit
-                )
-            }
-            
-            // Cache the results
-            cacheLeaderboard(key: cacheKey, entries: entries)
-            
+            let members = try await authService.getCommunityMembers(communityId: communityId)
+            let users = Dictionary(members.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            let trades = try await closedTrades(forUserIds: Array(users.keys))
+            let entries = rank(
+                trades: filter(trades, to: timeframe),
+                users: users,
+                communityId: communityId,
+                category: category,
+                limit: limit
+            )
+            cache[key] = (entries, Date().addingTimeInterval(cacheTimeout))
             return entries
-            
         } catch {
-            errorMessage = "Failed to load leaderboard: \(error.localizedDescription)"
-            print("❌ Error getting leaderboard: \(error)")
+            errorMessage = "Couldn't load the leaderboard: \(error.localizedDescription)"
             throw error
         }
     }
-    
-    /// Get global leaderboard (all traders across all communities)
+
+    /// Leaderboard across every trader in the app
     func getGlobalLeaderboard(
         category: LeaderboardCategory,
         timeframe: LeaderboardTimeframe = .allTime,
         limit: Int = 100
     ) async throws -> [CommunityLeaderboardEntry] {
-        print("🌍 Getting global leaderboard")
-        
-        // Check cache first
-        let cacheKey = "global_\(category.rawValue)_\(timeframe.rawValue)"
-        if let cachedEntries = getCachedLeaderboard(key: cacheKey) {
-            print("✅ Using cached global leaderboard data")
-            return cachedEntries
-        }
-        
+        let key = "global_\(category.rawValue)_\(timeframe.rawValue)"
+        if let cached = cachedEntries(for: key) { return cached }
+
         isLoading = true
         errorMessage = ""
-        
-        defer {
-            isLoading = false
-            lastUpdated = Date()
-        }
-        
+        defer { isLoading = false; lastUpdated = Date() }
+
         do {
-            let entries = try await calculateGlobalLeaderboard(
-                category: category,
-                timeframe: timeframe,
-                limit: limit
+            let snapshot = try await db.collection("trades")
+                .whereField("isOpen", isEqualTo: false)
+                .limit(to: globalTradeScanLimit)
+                .getDocuments()
+            let trades = filter(
+                snapshot.documents.compactMap { try? Trade.fromFirestore(data: $0.data(), id: $0.documentID) },
+                to: timeframe
             )
-            
-            // Cache the results
-            cacheLeaderboard(key: cacheKey, entries: entries)
-            globalLeaderboardCache = entries
-            
+
+            // Rank first, then look up profiles only for the users who made the cut
+            var entries = rank(trades: trades, users: nil, communityId: "global", category: category, limit: limit)
+            let users = Dictionary(
+                try await fetchUsers(ids: entries.map(\.userId)).map { ($0.id, $0) },
+                uniquingKeysWith: { a, _ in a }
+            )
+            for i in entries.indices { entries[i].apply(users[entries[i].userId]) }
+
+            cache[key] = (entries, Date().addingTimeInterval(cacheTimeout))
             return entries
-            
         } catch {
-            errorMessage = "Failed to load global leaderboard: \(error.localizedDescription)"
-            print("❌ Error getting global leaderboard: \(error)")
+            errorMessage = "Couldn't load the global leaderboard: \(error.localizedDescription)"
             throw error
         }
     }
-    
-    // MARK: - Specific Leaderboard Types
-    
-    /// Get consistency-based leaderboard (win rate focused)
-    private func getConsistencyLeaderboard(
-        communityId: String,
-        timeframe: LeaderboardTimeframe,
-        limit: Int
-    ) async throws -> [CommunityLeaderboardEntry] {
-        print("🎯 Calculating consistency leaderboard")
-        
-        let communityMembers = try await getCommunityMembers(communityId: communityId)
-        var entries: [CommunityLeaderboardEntry] = []
-        
-        for member in communityMembers {
-            if let entry = await calculateMemberStats(
-                userId: member.userId,
-                username: member.username,
-                communityId: communityId,
-                timeframe: timeframe
-            ) {
-                // ✅ CHANGE: Lower minimum trades from 5 to 1 for testing
-                if entry.totalTrades >= 1 { // Was: >= 5
-                    entries.append(entry)
-                }
-            }
-        }
-        
-        // Sort by win rate, then by total trades
-        entries.sort { lhs, rhs in
-            if lhs.winRate == rhs.winRate {
-                return lhs.totalTrades > rhs.totalTrades
-            }
-            return lhs.winRate > rhs.winRate
-        }
-        
-        // Assign ranks and limit results
-        return assignRanks(to: entries, limit: limit)
+
+    func clearCache() {
+        cache.removeAll()
     }
-    
-    /// Get profit-based leaderboard (total P&L focused)
-    private func getProfitLeaderboard(
-        communityId: String,
-        timeframe: LeaderboardTimeframe,
-        limit: Int
-    ) async throws -> [CommunityLeaderboardEntry] {
-        print("💰 Calculating profit leaderboard")
-        
-        let communityMembers = try await getCommunityMembers(communityId: communityId)
-        var entries: [CommunityLeaderboardEntry] = []
-        
-        for member in communityMembers {
-            if let entry = await calculateMemberStats(
-                userId: member.userId,
-                username: member.username,
-                communityId: communityId,
-                timeframe: timeframe
-            ) {
-                entries.append(entry)
-            }
-        }
-        
-        // Sort by total profit/loss
-        entries.sort { $0.totalProfitLoss > $1.totalProfitLoss }
-        
-        return assignRanks(to: entries, limit: limit)
+
+    /// Drop cached boards for one community (or "global") so the next load is fresh
+    func invalidate(communityId: String) {
+        cache = cache.filter { !$0.key.hasPrefix("\(communityId)_") }
     }
-    
-    /// Get volume-based leaderboard (most active traders)
-    private func getVolumeLeaderboard(
+
+    // MARK: - Ranking
+
+    private func rank(
+        trades: [Trade],
+        users: [String: User]?,
         communityId: String,
-        timeframe: LeaderboardTimeframe,
-        limit: Int
-    ) async throws -> [CommunityLeaderboardEntry] {
-        print("📊 Calculating volume leaderboard")
-        
-        let communityMembers = try await getCommunityMembers(communityId: communityId)
-        var entries: [CommunityLeaderboardEntry] = []
-        
-        for member in communityMembers {
-            if let entry = await calculateMemberStats(
-                userId: member.userId,
-                username: member.username,
-                communityId: communityId,
-                timeframe: timeframe
-            ) {
-                entries.append(entry)
-            }
-        }
-        
-        // Sort by total trades
-        entries.sort { $0.totalTrades > $1.totalTrades }
-        
-        return assignRanks(to: entries, limit: limit)
-    }
-    
-    /// Get risk management leaderboard (best risk/reward ratios)
-    private func getRiskLeaderboard(
-        communityId: String,
-        timeframe: LeaderboardTimeframe,
-        limit: Int
-    ) async throws -> [CommunityLeaderboardEntry] {
-        print("⚖️ Calculating risk leaderboard")
-        
-        let communityMembers = try await getCommunityMembers(communityId: communityId)
-        var entries: [CommunityLeaderboardEntry] = []
-        
-        for member in communityMembers {
-            if let entry = await calculateMemberStats(
-                userId: member.userId,
-                username: member.username,
-                communityId: communityId,
-                timeframe: timeframe
-            ) {
-                // Calculate risk score (combination of win rate and trade count)
-                var riskScore = entry.winRate * 0.7 // 70% weight on win rate
-                if entry.totalTrades >= 10 {
-                    riskScore += Double(min(entry.totalTrades, 50)) * 0.6 // Bonus for experience
-                }
-                
-                var scoredEntry = entry
-                scoredEntry.score = riskScore
-                entries.append(scoredEntry)
-            }
-        }
-        
-        // Sort by risk score
-        entries.sort { $0.score > $1.score }
-        
-        return assignRanks(to: entries, limit: limit)
-    }
-    
-    // MARK: - Global Leaderboard Calculation
-    
-    private func calculateGlobalLeaderboard(
         category: LeaderboardCategory,
-        timeframe: LeaderboardTimeframe,
         limit: Int
-    ) async throws -> [CommunityLeaderboardEntry] {
-        print("🌍 Calculating global leaderboard for category: \(category)")
-        
-        // Get all users with trading activity
-        let allUsers = try await getAllActiveTraders(timeframe: timeframe)
-        var entries: [CommunityLeaderboardEntry] = []
-        
-        for user in allUsers {
-            if let entry = await calculateMemberStats(
-                userId: user.id,
-                username: user.username,
-                communityId: "global", // Use "global" as community ID
-                timeframe: timeframe
-            ) {
-                entries.append(entry)
-            }
+    ) -> [CommunityLeaderboardEntry] {
+        let byUser = Dictionary(grouping: trades, by: \.userId)
+
+        var entries: [CommunityLeaderboardEntry] = byUser.compactMap { userId, trades in
+            // Community boards only rank members (users != nil); the global board ranks everyone
+            if let users, users[userId] == nil { return nil }
+            return CommunityLeaderboardEntry(userId: userId, communityId: communityId, trades: trades, user: users?[userId])
         }
-        
-        // Sort based on category
+
         switch category {
         case .consistencyMasters:
-            entries = entries.filter { $0.totalTrades >= 1 } // Was: >= 10
-            entries.sort { lhs, rhs in
-                if lhs.winRate == rhs.winRate {
-                    return lhs.totalTrades > rhs.totalTrades
-                }
-                return lhs.winRate > rhs.winRate
-            }
+            entries = entries.filter { $0.totalTrades >= Self.minimumTradesForRatios }
+            for i in entries.indices { entries[i].score = entries[i].winRate }
         case .profitKings:
-            entries.sort { $0.totalProfitLoss > $1.totalProfitLoss }
+            for i in entries.indices { entries[i].score = entries[i].totalProfitLoss }
         case .volumeTraders:
-            entries.sort { $0.totalTrades > $1.totalTrades }
+            for i in entries.indices { entries[i].score = Double(entries[i].totalTrades) }
         case .riskMasters:
-            entries = entries.filter { $0.totalTrades >= 5 }
-            for i in 0..<entries.count {
-                let winRate = entries[i].winRate
-                let tradeCount = entries[i].totalTrades
-                entries[i].score = winRate * 0.7 + Double(min(tradeCount, 100)) * 0.3
-            }
-            entries.sort { $0.score > $1.score }
+            entries = entries.filter { $0.totalTrades >= Self.minimumTradesForRatios && $0.totalProfitLoss > 0 }
+            for i in entries.indices { entries[i].score = entries[i].profitFactor }
         }
-        
-        return assignRanks(to: entries, limit: limit)
-    }
-    
-    // MARK: - Helper Methods (Made Internal for Access)
-    
-    /// Get all active traders - ✅ Made internal
-    func getAllActiveTraders(timeframe: LeaderboardTimeframe) async throws -> [User] {
-        print("🌍 Getting all active traders for timeframe: \(timeframe)")
-        
-        var activeTraders: [User] = []
-        
-        // Get current user if they have trades
-        if let currentUser = authService.currentUser {
-            let userTrades = try await authService.getUserTradesSimple(userId: currentUser.id)
-            let filteredTrades = filterTradesByTimeframe(trades: userTrades, timeframe: timeframe)
-            
-            if !filteredTrades.filter({ !$0.isOpen }).isEmpty {
-                activeTraders.append(currentUser)
-            }
+
+        // Ties go to the trader with more trades, then higher P&L
+        entries.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.totalTrades != $1.totalTrades { return $0.totalTrades > $1.totalTrades }
+            return $0.totalProfitLoss > $1.totalProfitLoss
         }
-        
-        // TODO: In production, you'd query Firebase for all users with recent trading activity
-        // This would require a more sophisticated query structure
-        
-        return activeTraders
-    }
-    
-    /// Get community members - ✅ Made internal
-    func getCommunityMembers(communityId: String) async throws -> [CommunityMember] {
-        print("👥 Getting members for community: \(communityId)")
-        
-        // For global leaderboard, we need all active traders
-        if communityId == "global" {
-            let activeTraders = try await getAllActiveTraders(timeframe: .allTime)
-            return activeTraders.map { CommunityMember(userId: $0.id, username: $0.username) }
-        }
-        
-        // For specific communities, get actual members
-        // TODO: Implement real community member fetching from Firebase
-        // For now, return current user as member if they exist
-        guard let currentUser = authService.currentUser else {
-            throw LeaderboardError.noCurrentUser
-        }
-        
-        return [CommunityMember(userId: currentUser.id, username: currentUser.username)]
-    }
-    
-    /// Calculate member statistics
-    private func calculateMemberStats(
-        userId: String,
-        username: String,
-        communityId: String,
-        timeframe: LeaderboardTimeframe
-    ) async -> CommunityLeaderboardEntry? {
-        
-        do {
-            let userTrades = try await authService.getUserTradesSimple(userId: userId)
-            let filteredTrades = filterTradesByTimeframe(trades: userTrades, timeframe: timeframe)
-            let closedTrades = filteredTrades.filter { !$0.isOpen }
-            
-            guard !closedTrades.isEmpty else {
-                return nil
-            }
-            
-            let totalTrades = closedTrades.count
-            let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
-            let winRate = Double(winningTrades) / Double(totalTrades) * 100
-            let totalProfitLoss = closedTrades.reduce(0) { $0 + $1.profitLoss }
-            
-            return CommunityLeaderboardEntry(
-                userId: userId,
-                username: username,
-                communityId: communityId,
-                totalTrades: totalTrades,
-                winRate: winRate,
-                totalProfitLoss: totalProfitLoss
-            )
-            
-        } catch {
-            print("❌ Error calculating stats for user \(userId): \(error)")
-            return nil
+
+        return entries.prefix(limit).enumerated().map { index, entry in
+            var ranked = entry
+            ranked.rank = index + 1
+            return ranked
         }
     }
-    
-    /// Filter trades by timeframe - ✅ Made internal
-    func filterTradesByTimeframe(trades: [Trade], timeframe: LeaderboardTimeframe) -> [Trade] {
-        let now = Date()
-        let calendar = Calendar.current
-        
-        let cutoffDate: Date
-        
-        switch timeframe {
-        case .daily:
-            cutoffDate = calendar.startOfDay(for: now)
-        case .weekly:
-            cutoffDate = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
-        case .monthly:
-            cutoffDate = calendar.dateInterval(of: .month, for: now)?.start ?? now
-        case .quarterly:
-            let quarter = (calendar.component(.month, from: now) - 1) / 3
-            let quarterStartMonth = quarter * 3 + 1
-            cutoffDate = calendar.date(from: DateComponents(
-                year: calendar.component(.year, from: now),
-                month: quarterStartMonth,
-                day: 1
-            )) ?? now
-        case .yearly:
-            cutoffDate = calendar.dateInterval(of: .year, for: now)?.start ?? now
-        case .allTime:
-            return trades
+
+    /// Keep trades closed within the timeframe (falls back to entry date for trades without an exit date)
+    func filter(_ trades: [Trade], to timeframe: LeaderboardTimeframe) -> [Trade] {
+        guard let start = timeframe.startDate() else { return trades.filter { !$0.isOpen } }
+        return trades.filter { !$0.isOpen && ($0.exitDate ?? $0.entryDate) >= start }
+    }
+
+    // MARK: - Firestore
+
+    private func closedTrades(forUserIds userIds: [String]) async throws -> [Trade] {
+        var trades: [Trade] = []
+        for chunk in userIds.chunked(into: inQueryLimit) {
+            let snapshot = try await db.collection("trades")
+                .whereField("userId", in: chunk)
+                .getDocuments()
+            trades += snapshot.documents.compactMap { try? Trade.fromFirestore(data: $0.data(), id: $0.documentID) }
         }
-        
-        return trades.filter { $0.entryDate >= cutoffDate }
+        return trades.filter { !$0.isOpen }
     }
-    
-    /// Assign ranks to leaderboard entries
-    private func assignRanks(to entries: [CommunityLeaderboardEntry], limit: Int) -> [CommunityLeaderboardEntry] {
-        let limitedEntries = Array(entries.prefix(limit))
-        
-        return limitedEntries.enumerated().map { index, entry in
-            var rankedEntry = entry
-            rankedEntry.rank = index + 1
-            return rankedEntry
+
+    private func fetchUsers(ids: [String]) async throws -> [User] {
+        var users: [User] = []
+        for chunk in ids.chunked(into: inQueryLimit) {
+            let snapshot = try await db.collection("users")
+                .whereField(FieldPath.documentID(), in: chunk)
+                .getDocuments()
+            users += snapshot.documents.compactMap { try? User.fromFirestore(data: $0.data(), id: $0.documentID) }
         }
+        return users
     }
-    
-    // MARK: - Cache Management
-    
-    private func getCachedLeaderboard(key: String) -> [CommunityLeaderboardEntry]? {
-        guard let expiry = cacheExpiry[key],
-              Date() < expiry,
-              let cachedData = leaderboardCache[key] else {
-            return nil
-        }
-        
-        return cachedData
-    }
-    
-    private func cacheLeaderboard(key: String, entries: [CommunityLeaderboardEntry]) {
-        leaderboardCache[key] = entries
-        cacheExpiry[key] = Date().addingTimeInterval(cacheTimeout)
-    }
-    
-    /// Clear all cached leaderboard data
-    func clearCache() {
-        leaderboardCache.removeAll()
-        globalLeaderboardCache.removeAll()
-        cacheExpiry.removeAll()
-        print("🗑️ Leaderboard cache cleared")
-    }
-    
-    /// Refresh leaderboard calculations
-    func refreshLeaderboards(communityId: String) async throws {
-        print("🔄 Refreshing leaderboard for community: \(communityId)")
-        
-        // Clear cache for this community
-        let keysToRemove = cacheExpiry.keys.filter { $0.contains(communityId) }
-        for key in keysToRemove {
-            leaderboardCache.removeValue(forKey: key)
-            cacheExpiry.removeValue(forKey: key)
-        }
-        
-        // Force reload
-        _ = try await getLeaderboard(communityId: communityId, category: .consistencyMasters)
-    }
-    
-    /// Refresh global leaderboards
-    func refreshGlobalLeaderboards() async throws {
-        print("🔄 Refreshing global leaderboards")
-        
-        // Clear global cache
-        let globalKeys = cacheExpiry.keys.filter { $0.contains("global") }
-        for key in globalKeys {
-            leaderboardCache.removeValue(forKey: key)
-            cacheExpiry.removeValue(forKey: key)
-        }
-        globalLeaderboardCache.removeAll()
-        
-        // Force reload
-        _ = try await getGlobalLeaderboard(category: .consistencyMasters)
+
+    private func cachedEntries(for key: String) -> [CommunityLeaderboardEntry]? {
+        guard let hit = cache[key], hit.expires > Date() else { return nil }
+        return hit.entries
     }
 }
 
 // MARK: - Supporting Types
 
 enum LeaderboardTimeframe: String, CaseIterable {
-    case daily = "daily"
-    case weekly = "weekly"
-    case monthly = "monthly"
-    case quarterly = "quarterly"
-    case yearly = "yearly"
-    case allTime = "allTime"
-    
+    case weekly
+    case monthly
+    case yearly
+    case allTime
+
     var displayName: String {
         switch self {
-        case .daily: return "Today"
-        case .weekly: return "This Week"
-        case .monthly: return "This Month"
-        case .quarterly: return "This Quarter"
-        case .yearly: return "This Year"
+        case .weekly: return "Week"
+        case .monthly: return "Month"
+        case .yearly: return "Year"
         case .allTime: return "All Time"
+        }
+    }
+
+    /// Start of the window, or nil for all time
+    func startDate(now: Date = Date(), calendar: Calendar = .current) -> Date? {
+        switch self {
+        case .weekly: return calendar.dateInterval(of: .weekOfYear, for: now)?.start
+        case .monthly: return calendar.dateInterval(of: .month, for: now)?.start
+        case .yearly: return calendar.dateInterval(of: .year, for: now)?.start
+        case .allTime: return nil
         }
     }
 }
 
-struct CommunityMember {
-    let userId: String
-    let username: String
-}
-
 enum LeaderboardError: Error, LocalizedError {
     case noCurrentUser
-    case invalidCommunityId
-    case calculationFailed
-    case cacheError
-    
+
     var errorDescription: String? {
         switch self {
-        case .noCurrentUser:
-            return "No current user found"
-        case .invalidCommunityId:
-            return "Invalid community ID"
-        case .calculationFailed:
-            return "Failed to calculate leaderboard stats"
-        case .cacheError:
-            return "Cache operation failed"
+        case .noCurrentUser: return "You need to be signed in to see leaderboards"
         }
+    }
+}
+
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }
