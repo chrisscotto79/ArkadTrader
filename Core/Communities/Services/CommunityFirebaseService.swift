@@ -131,6 +131,9 @@ class CommunityFirebaseService: ObservableObject {
         for document in snapshot.documents {
             let userId = document.documentID
             let memberData = document.data()
+            let storedRole = CommunityRole(rawValue: memberData["role"] as? String ?? "") ?? .member
+            let role: CommunityRole = userId == createdBy ? .owner : storedRole
+            let joinedAt = (memberData["joinedAt"] as? Timestamp)?.dateValue() ?? Date()
             
             print("👤 Processing member: \(userId)")
             print("📄 Member data keys: \(memberData.keys)")
@@ -138,15 +141,12 @@ class CommunityFirebaseService: ObservableObject {
             // Get actual user data using the existing getUserById method
             do {
                 if let user = try await authService.getUserById(userId: userId) {
-                    // Determine role - creator is owner, others are members
-                    let role: CommunityRole = userId == createdBy ? .owner : .member
-                    
                     let member = CommunityMemberWithRole(
                         userId: userId,
                         username: user.username,
                         fullName: user.fullName,
                         role: role,
-                        joinedAt: Date()
+                        joinedAt: joinedAt
                     )
                     members.append(member)
                     print("✅ Added member: \(user.fullName) (\(user.username)) as \(role.displayName)")
@@ -157,8 +157,8 @@ class CommunityFirebaseService: ObservableObject {
                         userId: userId,
                         username: "user\(userId.suffix(4))",
                         fullName: "User \(userId.suffix(4))",
-                        role: userId == createdBy ? .owner : .member,
-                        joinedAt: Date()
+                        role: role,
+                        joinedAt: joinedAt
                     )
                     members.append(member)
                 }
@@ -169,8 +169,8 @@ class CommunityFirebaseService: ObservableObject {
                     userId: userId,
                     username: "user\(userId.suffix(4))",
                     fullName: "User \(userId.suffix(4))",
-                    role: userId == createdBy ? .owner : .member,
-                    joinedAt: Date()
+                    role: role,
+                    joinedAt: joinedAt
                 )
                 members.append(member)
             }

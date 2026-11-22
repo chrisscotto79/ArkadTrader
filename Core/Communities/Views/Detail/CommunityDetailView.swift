@@ -19,6 +19,9 @@ struct CommunityDetailView: View {
     @State private var showJoinConfirmation = false
     @State private var animateEntry = false
     
+    /// Latest copy of the community (refreshed after settings change), falling back to the one passed in.
+    private var current: Community { viewModel.community ?? community }
+    
     // UI Constants
     private let headerHeight: CGFloat = 260
     private let cornerRadius: CGFloat = 24
@@ -77,8 +80,10 @@ struct CommunityDetailView: View {
         .sheet(isPresented: $showMembersList) {
             EnhancedMembersListSheet(community: community)
         }
-        .sheet(isPresented: $showCommunitySettings) {
-            EnhancedCommunitySettingsSheet(community: community)
+        .sheet(isPresented: $showCommunitySettings, onDismiss: {
+            Task { await viewModel.reloadCommunity() }
+        }) {
+            EnhancedCommunitySettingsSheet(community: current)
         }
         .sheet(isPresented: $showCreateChannel) {
             CreateChannelSheet(community: community)
@@ -112,7 +117,7 @@ struct CommunityDetailView: View {
     
     // MARK: - Helper Functions
     private var communityColor: Color {
-        switch community.type {
+        switch current.type {
         case .dayTrading: return .red
         case .swingTrading: return .orange
         case .options: return .purple
@@ -123,18 +128,18 @@ struct CommunityDetailView: View {
     }
 
     private func getCommunityInitials() -> String {
-        let words = community.name.components(separatedBy: " ")
+        let words = current.name.components(separatedBy: " ")
         if words.count >= 2 {
             let first = String(words[0].prefix(1))
             let second = String(words[1].prefix(1))
             return (first + second).uppercased()
         } else {
-            return String(community.name.prefix(2)).uppercased()
+            return String(current.name.prefix(2)).uppercased()
         }
     }
 
     private func getCommunityTypeIcon() -> String {
-        switch community.type {
+        switch current.type {
         case .general: return "person.3"
         case .dayTrading: return "chart.line.uptrend.xyaxis"
         case .swingTrading: return "chart.bar"
@@ -179,11 +184,21 @@ extension CommunityDetailView {
     
     private var parallaxHeader: some View {
         ZStack {
-            // Background with gradient overlay
+            // Banner image (if set) under a tinted gradient so text stays readable
+            if let urlString = current.bannerURL, let url = URL(string: urlString) {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    communityColor
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            }
+            
             LinearGradient(
                 colors: [
-                    communityColor.opacity(0.9),
-                    communityColor.opacity(0.6)
+                    communityColor.opacity(current.bannerURL == nil ? 0.9 : 0.55),
+                    communityColor.opacity(current.bannerURL == nil ? 0.6 : 0.25)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -214,14 +229,14 @@ extension CommunityDetailView {
                 
                 // Community Info
                 VStack(spacing: 8) {
-                    Text(community.name)
+                    Text(current.name)
                         .font(.title)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
                     
-                    if !community.description.isEmpty {
-                        Text(community.description)
+                    if !current.description.isEmpty {
+                        Text(current.description)
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.9))
                             .multilineTextAlignment(.center)
@@ -231,7 +246,7 @@ extension CommunityDetailView {
                     
                     // Badges
                     HStack(spacing: 8) {
-                        Label(community.type.displayName, systemImage: getCommunityTypeIcon())
+                        Label(current.type.displayName, systemImage: getCommunityTypeIcon())
                             .font(.caption)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
@@ -239,7 +254,7 @@ extension CommunityDetailView {
                             .padding(.vertical, 5)
                             .background(Capsule().fill(.white.opacity(0.2)))
                         
-                        if community.isPrivate {
+                        if current.isPrivate {
                             Label("Private", systemImage: "lock.fill")
                                 .font(.caption)
                                 .fontWeight(.semibold)
@@ -272,10 +287,22 @@ extension CommunityDetailView {
                 .frame(width: 80, height: 80)
                 .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
                 .overlay(
-                    Text(getCommunityInitials())
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .foregroundColor(communityColor)
+                    Group {
+                        if let urlString = current.avatarURL, let url = URL(string: urlString) {
+                            AsyncImage(url: url) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                ProgressView()
+                            }
+                        } else {
+                            Text(getCommunityInitials())
+                                .font(.title)
+                                .fontWeight(.bold)
+                                .foregroundColor(communityColor)
+                        }
+                    }
+                    .frame(width: 76, height: 76)
+                    .clipShape(Circle())
                 )
             
             if viewModel.isUserMember {
@@ -310,7 +337,7 @@ extension CommunityDetailView {
                 
                 // Title (appears on scroll)
                 if headerOffset < -100 {
-                    Text(community.name)
+                    Text(current.name)
                         .font(.headline)
                         .fontWeight(.bold)
                         .transition(.opacity.combined(with: .scale))
@@ -422,15 +449,15 @@ extension CommunityDetailView {
                     }
                 } else {
                     Button(action: {
-                        if community.isPrivate {
+                        if current.isPrivate {
                             showJoinConfirmation = true
                         } else {
                             viewModel.joinCommunity()
                         }
                     }) {
                         HStack(spacing: 8) {
-                            Image(systemName: community.isPrivate ? "lock.fill" : "person.badge.plus")
-                            Text(community.isPrivate ? "Request to Join" : "Join Community")
+                            Image(systemName: current.isPrivate ? "lock.fill" : "person.badge.plus")
+                            Text(current.isPrivate ? "Request to Join" : "Join Community")
                         }
                         .font(.subheadline)
                         .fontWeight(.semibold)
@@ -496,7 +523,7 @@ extension CommunityDetailView {
             GridItem(.flexible())
         ], spacing: 16) {
             statCard(
-                value: "\(community.memberCount)",
+                value: "\(current.memberCount)",
                 label: "Members",
                 icon: "person.3.fill",
                 color: .blue

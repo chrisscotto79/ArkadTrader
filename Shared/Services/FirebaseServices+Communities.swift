@@ -485,6 +485,31 @@ extension FirebaseServices {
         }
     }
     
+    /// Every member's role in a community, keyed by user id. The creator is always the owner.
+    func getCommunityMemberRoles(communityId: String) async throws -> [String: CommunityRole] {
+        let communityRef = db.collection("communities").document(communityId)
+        async let communityDoc = communityRef.getDocument()
+        async let membersSnapshot = communityRef.collection("members").getDocuments()
+        
+        var roles: [String: CommunityRole] = [:]
+        for doc in try await membersSnapshot.documents {
+            roles[doc.documentID] = CommunityRole(rawValue: doc.data()["role"] as? String ?? "") ?? .member
+        }
+        if let createdBy = try await communityDoc.data()?["createdBy"] as? String {
+            roles[createdBy] = .owner
+        }
+        return roles
+    }
+    
+    /// A single user's role, or nil if they aren't a member.
+    func getMemberRole(communityId: String, userId: String, createdBy: String) async throws -> CommunityRole? {
+        if userId == createdBy { return .owner }
+        let doc = try await db.collection("communities").document(communityId)
+            .collection("members").document(userId).getDocument()
+        guard doc.exists else { return nil }
+        return CommunityRole(rawValue: doc.data()?["role"] as? String ?? "") ?? .member
+    }
+    
     func updateCommunityMemberRole(communityId: String, userId: String, role: String) async throws {
         try await db.collection("communities").document(communityId)
             .collection("members").document(userId)

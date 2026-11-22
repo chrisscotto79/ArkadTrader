@@ -3,6 +3,7 @@
 
 import Foundation
 import Combine
+import FirebaseFirestore
 
 @MainActor
 class CommunityDetailViewModel: ObservableObject {
@@ -32,6 +33,19 @@ class CommunityDetailViewModel: ObservableObject {
     init() {}
     
     // MARK: - Public Methods
+    
+    /// Re-fetch the community document so edits (name, avatar, banner) show immediately.
+    func reloadCommunity() async {
+        guard let id = community?.id else { return }
+        do {
+            let snapshot = try await Firestore.firestore().collection("communities").document(id).getDocument()
+            if let data = snapshot.data() {
+                community = try Community.fromFirestore(data: data, id: id)
+            }
+        } catch {
+            print("⚠️ CommunityDetailViewModel: Failed to reload community: \(error)")
+        }
+    }
     
     /// Load community data, channels, and user permissions
     func loadCommunityData(community: Community) {
@@ -263,15 +277,12 @@ Format your callouts like this:
             isUserMember = userCommunities.contains { $0.id == community.id }
             
             if isUserMember {
-                // Determine user role
-                if community.createdBy == userId {
-                    userRole = "owner"
-                    canManageChannels = true
-                } else {
-                    // TODO: Check for admin/moderator roles when role system is implemented
-                    userRole = "member"
-                    canManageChannels = false
-                }
+                // Owners and admins can manage channels
+                let role = try await firebaseService.getMemberRole(
+                    communityId: community.id, userId: userId, createdBy: community.createdBy
+                ) ?? .member
+                userRole = role.rawValue
+                canManageChannels = role == .owner || role == .admin
             } else {
                 userRole = "member"
                 canManageChannels = false

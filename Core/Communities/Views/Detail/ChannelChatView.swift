@@ -895,6 +895,7 @@ extension ChannelChatView {
                             EnhancedMessageRowWithReactions(
                                 message: message,
                                 author: userCache[message.authorId],
+                                authorRole: viewModel.role(for: message.authorId),
                                 community: community,
                                 showUsername: shouldShowUsername(message),
                                 isUserMessage: message.authorId == viewModel.currentUserId,
@@ -993,6 +994,7 @@ extension ChannelChatView {
 struct EnhancedMessageRowWithReactions: View {
     let message: CommunityMessage
     let author: User?
+    let authorRole: CommunityRole
     let community: Community
     let showUsername: Bool
     let isUserMessage: Bool
@@ -1132,8 +1134,8 @@ struct EnhancedMessageRowWithReactions: View {
                     .foregroundColor(userColor)
                 
                 // MOD/ADMIN Badge - ENHANCED with simplified role system!
-                if let author = author {
-                    if isUserOwner(author) {
+                Group {
+                    if authorRole == .owner {
                         Image(systemName: "crown.fill")
                             .font(.caption2)
                             .foregroundColor(.purple)
@@ -1142,7 +1144,7 @@ struct EnhancedMessageRowWithReactions: View {
                                     .fill(.purple.opacity(0.15))
                                     .frame(width: 16, height: 16)
                             )
-                    } else if isUserAdmin(author) {
+                    } else if authorRole == .admin {
                         Image(systemName: "star.fill")
                             .font(.caption2)
                             .foregroundColor(.orange)
@@ -1151,7 +1153,7 @@ struct EnhancedMessageRowWithReactions: View {
                                     .fill(.orange.opacity(0.15))
                                     .frame(width: 16, height: 16)
                             )
-                    } else if isUserModerator(author) {
+                    } else if authorRole == .moderator {
                         Image(systemName: "shield.fill")
                             .font(.caption2)
                             .foregroundColor(.blue)
@@ -1425,26 +1427,6 @@ struct EnhancedMessageRowWithReactions: View {
         .padding(.top, 4)
         .padding(.leading, 52)
         .transition(.opacity.combined(with: .move(edge: .top)))
-    }
-    
-    // MARK: - Helper Methods for Role Checking
-    private func isUserAdmin(_ user: User) -> Bool {
-        // TODO: Implement actual admin checking logic
-        // This should check if the user has admin role in the current community
-        // For now, returning false as placeholder - you'll need to integrate with your community role system
-        return false // Placeholder
-    }
-    
-    private func isUserModerator(_ user: User) -> Bool {
-        // TODO: Implement actual moderator checking logic
-        // This should check if the user has moderator role in the current community
-        // For now, returning false as placeholder - you'll need to integrate with your community role system
-        return false // Placeholder
-    }
-    
-    private func isUserOwner(_ user: User) -> Bool {
-        // Check if the user is the owner of the current community
-        return user.id == community.creatorId
     }
     
     // MARK: - Helper Properties and Methods

@@ -13,6 +13,8 @@ class ChannelChatViewModel: ObservableObject {
     @Published var errorMessage = ""
     @Published var canUserPost = true
     @Published var canUserManageChannel = false
+    /// Roles of community members, keyed by user id (used for badges and permissions)
+    @Published var memberRoles: [String: CommunityRole] = [:]
     
     // Firebase-backed Message Reactions
     @Published var messageReactions: [String: [MessageReaction]] = [:] // messageId -> reactions
@@ -48,11 +50,12 @@ class ChannelChatViewModel: ObservableObject {
         self.community = community
         self.channel = channel
         
-        // Check user permissions
+        // Check user permissions (refined once member roles load)
         checkUserPermissions()
         
         // Load initial messages and start real-time listening
         Task {
+            await loadMemberRoles()
             await loadInitialMessages()
             await loadAllMessageReactions()
             startListeningForMessages()
@@ -227,19 +230,31 @@ class ChannelChatViewModel: ObservableObject {
             return
         }
         
-        // Check if user can post (not admin-only or user is admin)
-        canUserPost = !channel.adminOnly || isUserAdmin()
+        let role: CommunityRole = community.createdBy == currentUserId ? .owner : role(for: currentUserId)
+        let isAdmin = role == .owner || role == .admin
         
-        // Check if user can manage channel (owner or admin)
-        canUserManageChannel = isUserAdmin() || community.createdBy == currentUserId
+        // Admin-only channels (like #callouts) accept posts from owners and admins only
+        canUserPost = !channel.adminOnly || isAdmin
+        
+        // Owners, admins and moderators can moderate the channel
+        canUserManageChannel = isAdmin || role == .moderator
     }
     
-    /// Check if current user is admin
-    private func isUserAdmin() -> Bool {
-        guard let community = community,
-              let currentUserId = currentUserId else { return false }
-        
-        return community.createdBy == currentUserId
+    /// A member's role in this community (defaults to member)
+    func role(for userId: String) -> CommunityRole {
+        if let community = community, community.createdBy == userId { return .owner }
+        return memberRoles[userId] ?? .member
+    }
+    
+    /// Load every member's role, then re-check what the current user may do
+    private func loadMemberRoles() async {
+        guard let community = community else { return }
+        do {
+            memberRoles = try await firebaseService.getCommunityMemberRoles(communityId: community.id)
+        } catch {
+            print("⚠️ ChannelChatViewModel: Could not load member roles: \(error)")
+        }
+        checkUserPermissions()
     }
     
     /// Load initial messages
