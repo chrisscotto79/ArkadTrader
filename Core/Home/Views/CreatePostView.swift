@@ -127,7 +127,7 @@ struct CreatePostView: View {
             Button("Cancel") {
                 handleCancel()
             }
-            .foregroundColor(.arkadGold)
+            .foregroundColor(.orange) // Using orange instead of .arkadGold for compatibility
         }
         
         ToolbarItem(placement: .navigationBarTrailing) {
@@ -135,7 +135,7 @@ struct CreatePostView: View {
                 // Preview toggle
                 Button(action: { togglePreview() }) {
                     Image(systemName: showPreview ? "eye.slash" : "eye")
-                        .foregroundColor(.arkadGold)
+                        .foregroundColor(.orange)
                 }
                 
                 // Post button
@@ -146,7 +146,7 @@ struct CreatePostView: View {
                 .foregroundColor(canPost ? .white : .gray)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(canPost ? Color.arkadGold : Color.gray.opacity(0.3))
+                .background(canPost ? Color.orange : Color.gray.opacity(0.3))
                 .cornerRadius(20)
                 .disabled(!canPost || isPosting)
                 .scaleEffect(isPosting ? 0.95 : 1.0)
@@ -161,7 +161,7 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "square.grid.3x3")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Post Type")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -183,21 +183,21 @@ struct CreatePostView: View {
             VStack(spacing: 8) {
                 Image(systemName: postTypeIcon(for: type))
                     .font(.title2)
-                    .foregroundColor(selectedPostType == type ? .white : .arkadGold)
+                    .foregroundColor(selectedPostType == type ? .white : .orange)
                 
                 Text(type.displayName)
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundColor(selectedPostType == type ? .white : .arkadGold)
+                    .foregroundColor(selectedPostType == type ? .white : .orange)
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 80)
-            .background(selectedPostType == type ? Color.arkadGold : Color.arkadGold.opacity(0.1))
+            .background(selectedPostType == type ? Color.orange : Color.orange.opacity(0.1))
             .cornerRadius(Constants.cornerRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: Constants.cornerRadius)
-                    .stroke(selectedPostType == type ? Color.arkadGold : Color.clear, lineWidth: 2)
+                    .stroke(selectedPostType == type ? Color.orange : Color.clear, lineWidth: 2)
             )
             .scaleEffect(selectedPostType == type ? 1.02 : 1.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selectedPostType)
@@ -209,7 +209,7 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "text.bubble")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Content")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -276,7 +276,7 @@ struct CreatePostView: View {
         } else if characterCount > Constants.warningThreshold {
             return .orange
         } else {
-            return .arkadGold
+            return .orange
         }
     }
     
@@ -286,7 +286,7 @@ struct CreatePostView: View {
             // Header
             HStack {
                 Image(systemName: "chart.line.uptrend.xyaxis")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Trade Details")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -303,10 +303,10 @@ struct CreatePostView: View {
                         Image(systemName: "chevron.down")
                     }
                     .font(.caption)
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Color.arkadGold.opacity(0.1))
+                    .background(Color.orange.opacity(0.1))
                     .cornerRadius(12)
                 }
             }
@@ -406,7 +406,7 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "dollarsign.circle.fill")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Stock Tickers")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -414,7 +414,7 @@ struct CreatePostView: View {
                 Spacer()
                 
                 if !detectedTickers.isEmpty {
-                    Badge(text: "\(detectedTickers.count)", color: .arkadGold)
+                    Badge(text: "\(detectedTickers.count)", color: .orange)
                 }
             }
             
@@ -445,10 +445,10 @@ struct CreatePostView: View {
                             Text("$\(ticker)")
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundColor(detectedTickers.contains(ticker) ? .secondary : .arkadGold)
+                                .foregroundColor(detectedTickers.contains(ticker) ? .secondary : .orange)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 6)
-                                .background(Color.arkadGold.opacity(detectedTickers.contains(ticker) ? 0.05 : 0.15))
+                                .background(Color.orange.opacity(detectedTickers.contains(ticker) ? 0.05 : 0.15))
                                 .cornerRadius(8)
                         }
                         .disabled(detectedTickers.contains(ticker))
@@ -463,7 +463,7 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "photo.stack")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Charts & Screenshots")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -471,7 +471,7 @@ struct CreatePostView: View {
                 Spacer()
                 
                 if !selectedUIImages.isEmpty {
-                    Badge(text: "\(selectedUIImages.count)/\(Constants.maxImages)", color: .arkadGold)
+                    Badge(text: "\(selectedUIImages.count)/\(Constants.maxImages)", color: .orange)
                 }
             }
             
@@ -494,14 +494,14 @@ struct CreatePostView: View {
             ) {
                 HStack {
                     Image(systemName: selectedUIImages.isEmpty ? "plus.circle.fill" : "plus")
-                        .foregroundColor(.arkadGold)
+                        .foregroundColor(.orange)
                     Text(selectedUIImages.isEmpty ? "Add Charts/Screenshots" : "Add More")
                         .fontWeight(.medium)
-                        .foregroundColor(.arkadGold)
+                        .foregroundColor(.orange)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(Color.arkadGold.opacity(0.1))
+                .background(Color.orange.opacity(0.1))
                 .cornerRadius(Constants.cornerRadius)
             }
             .disabled(selectedUIImages.count >= Constants.maxImages)
@@ -513,7 +513,7 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "number.circle.fill")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Suggested Hashtags")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -526,10 +526,10 @@ struct CreatePostView: View {
                             Text(hashtag)
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundColor(.arkadGold)
+                                .foregroundColor(.orange)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
-                                .background(Color.arkadGold.opacity(0.15))
+                                .background(Color.orange.opacity(0.15))
                                 .cornerRadius(12)
                         }
                     }
@@ -544,7 +544,7 @@ struct CreatePostView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "eye")
-                    .foregroundColor(.arkadGold)
+                    .foregroundColor(.orange)
                 Text("Preview")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -552,7 +552,7 @@ struct CreatePostView: View {
             
             PostPreviewCard(
                 content: content,
-                username: authService.currentUser?.username ?? "username",
+                user: authService.currentUser,
                 images: selectedUIImages,
                 postType: selectedPostType
             )
@@ -567,7 +567,7 @@ struct CreatePostView: View {
             
             VStack(spacing: 16) {
                 ProgressView(value: imageLoadingProgress)
-                    .progressViewStyle(CircularProgressViewStyle(tint: .arkadGold))
+                    .progressViewStyle(CircularProgressViewStyle(tint: .orange))
                     .scaleEffect(1.5)
                 
                 Text("Loading images...")
@@ -591,10 +591,10 @@ struct CreatePostView: View {
                     .font(.caption)
                     .fontWeight(.medium)
             }
-            .foregroundColor(.arkadGold)
+            .foregroundColor(.orange)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.arkadGold.opacity(0.1))
+            .background(Color.orange.opacity(0.1))
             .cornerRadius(8)
         }
     }
@@ -911,7 +911,7 @@ struct TickerChip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.arkadGold)
+        .background(Color.orange)
         .cornerRadius(12)
     }
 }
@@ -941,28 +941,24 @@ struct ImagePreview: View {
     }
 }
 
+// MARK: - UPDATED: PostPreviewCard with Profile Image
 struct PostPreviewCard: View {
     let content: String
-    let username: String
+    let user: User?
     let images: [UIImage]
     let postType: PostType
     
+    @State private var imageLoadError = false
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Circle()
-                    .fill(Color.arkadGold.opacity(0.2))
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Text(String(username.prefix(1)).uppercased())
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundColor(.arkadGold)
-                    )
+            HStack(spacing: 12) {
+                // ENHANCED: Profile Image with real user image
+                profileImageView
                 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
-                        Text("@\(username)")
+                        Text("@\(user?.username ?? "username")")
                             .font(.subheadline)
                             .fontWeight(.semibold)
                         
@@ -973,7 +969,7 @@ struct PostPreviewCard: View {
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.arkadGold)
+                                .background(Color.orange)
                                 .cornerRadius(6)
                         }
                     }
@@ -1010,6 +1006,82 @@ struct PostPreviewCard: View {
         .padding(12)
         .background(Color(.systemGray6))
         .cornerRadius(12)
+    }
+    
+    // MARK: - Profile Image View
+    @ViewBuilder
+    private var profileImageView: some View {
+        Group {
+            if let user = user,
+               let profileImageUrl = user.profileImageUrl,
+               !profileImageUrl.isEmpty,
+               !imageLoadError {
+                
+                AsyncImage(url: URL(string: profileImageUrl)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 40, height: 40)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.orange.opacity(0.3), lineWidth: 2)
+                            )
+                    
+                    case .failure(_):
+                        fallbackAvatarView
+                            .onAppear {
+                                imageLoadError = true
+                            }
+                    
+                    case .empty:
+                        Circle()
+                            .fill(Color.orange.opacity(0.2))
+                            .frame(width: 40, height: 40)
+                            .overlay(
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .foregroundColor(.orange)
+                            )
+                    
+                    @unknown default:
+                        fallbackAvatarView
+                    }
+                }
+                
+            } else {
+                fallbackAvatarView
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var fallbackAvatarView: some View {
+        Circle()
+            .fill(Color.orange.opacity(0.2))
+            .frame(width: 40, height: 40)
+            .overlay(
+                Text(userInitials)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.orange)
+            )
+    }
+    
+    private var userInitials: String {
+        guard let user = user else { return "U" }
+        
+        let names = user.fullName.split(separator: " ")
+        let firstInitial = names.first?.first ?? Character("U")
+        let lastInitial = names.count > 1 ? names.last?.first : nil
+        
+        if let lastInitial = lastInitial {
+            return String(firstInitial) + String(lastInitial)
+        } else {
+            return String(firstInitial)
+        }
     }
 }
 

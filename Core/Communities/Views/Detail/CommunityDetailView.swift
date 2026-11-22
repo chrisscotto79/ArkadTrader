@@ -1090,11 +1090,10 @@ struct MembersListRow: View {
                         .foregroundColor(.secondary)
                 }
                 
-                if member.joinedAt != nil {
-                    Text("Joined \(member.joinedAt, style: .date)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                // Removed unnecessary nil check since joinedAt is non-optional
+                Text("Joined \(member.joinedAt, style: .date)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             
             Spacer()
@@ -1160,11 +1159,11 @@ class MembersListViewModel: ObservableObject {
         }
         
         do {
-            let loadedMembers = try await firebaseService.getCommunityMembers(communityId: community.id)
+            let loadedMembers = try await CommunityFirebaseService.shared.getCommunityMembersWithRoles(communityId: community.id)
             
             await MainActor.run {
                 // Sort members by role priority and then by name
-                
+                self.members = self.sortMembers(loadedMembers)
                 self.isLoading = false
             }
         } catch {
@@ -1172,6 +1171,30 @@ class MembersListViewModel: ObservableObject {
                 self.errorMessage = "Failed to load members: \(error.localizedDescription)"
                 self.isLoading = false
             }
+        }
+    }
+    
+    private func sortMembers(_ members: [CommunityMemberWithRole]) -> [CommunityMemberWithRole] {
+        return members.sorted { member1, member2 in
+            // First sort by role priority (owner -> admin -> moderator -> member)
+            let role1Priority = getRolePriority(member1.role)
+            let role2Priority = getRolePriority(member2.role)
+            
+            if role1Priority != role2Priority {
+                return role1Priority < role2Priority
+            }
+            
+            // Then sort by name alphabetically
+            return member1.fullName.localizedCaseInsensitiveCompare(member2.fullName) == .orderedAscending
+        }
+    }
+    
+    private func getRolePriority(_ role: CommunityRole) -> Int {
+        switch role {
+        case .owner: return 0
+        case .admin: return 1
+        case .moderator: return 2
+        case .member: return 3
         }
     }
 }

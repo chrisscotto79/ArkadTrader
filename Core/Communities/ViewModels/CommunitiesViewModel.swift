@@ -84,26 +84,19 @@ class CommunitiesViewModel: ObservableObject {
             isLoading = true
             errorMessage = ""
             
-            async let featuredTask = loadFeaturedCommunities()
-            async let discoveryTask = loadDiscoveryCommunities()
-            async let userCommunitiesTask = loadUserCommunities()
-            async let userStatsTask = loadUserStats()
-            
-            // Wait for all tasks to complete
-            await featuredTask
-            await discoveryTask
-            await userCommunitiesTask
-            await userStatsTask
+            // Sequential execution - simple and reliable
+            await loadFeaturedCommunities()
+            await loadDiscoveryCommunities()
+            await loadUserCommunities()
+            await loadUserStats()
             
             isLoading = false
         }
     }
-    
+
     /// Refresh all data
     func refreshData() {
-        Task {
-            await loadInitialData()
-        }
+        loadInitialData()
     }
     
     // MARK: - Data Loading Methods

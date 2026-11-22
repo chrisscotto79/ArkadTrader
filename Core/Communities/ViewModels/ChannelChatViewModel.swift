@@ -445,17 +445,26 @@ class ChannelChatViewModel: ObservableObject {
 
 /// Message reaction model for Firebase
 struct MessageReaction: Identifiable, Codable {
-    let id = UUID()
+    var id: String { "\(userId)_\(emoji)_\(Int(createdAt.timeIntervalSince1970))" }
     let emoji: String
     let userId: String
     let username: String
     let createdAt: Date
     
+    // Initializer for creating new reactions
     init(emoji: String, userId: String, username: String) {
         self.emoji = emoji
         self.userId = userId
         self.username = username
         self.createdAt = Date()
+    }
+    
+    // Private initializer for loading from Firestore with custom createdAt
+    private init(emoji: String, userId: String, username: String, createdAt: Date) {
+        self.emoji = emoji
+        self.userId = userId
+        self.username = username
+        self.createdAt = createdAt
     }
     
     func toFirestore() -> [String: Any] {
@@ -475,8 +484,12 @@ struct MessageReaction: Identifiable, Codable {
             throw FirestoreError.invalidData
         }
         
-        var reaction = MessageReaction(emoji: emoji, userId: userId, username: username)
-        return reaction
+        return MessageReaction(
+            emoji: emoji,
+            userId: userId,
+            username: username,
+            createdAt: createdAtTimestamp.dateValue()
+        )
     }
 }
 

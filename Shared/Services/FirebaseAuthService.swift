@@ -257,7 +257,7 @@ class FirebaseAuthService: ObservableObject {
             }
         }
     func updateProfileImage(_ image: UIImage) async throws {
-        guard let user = currentUser else {
+        guard currentUser != nil else {
             throw AuthError.notAuthenticated
         }
         

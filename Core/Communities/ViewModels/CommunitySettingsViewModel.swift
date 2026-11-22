@@ -179,25 +179,32 @@ class CommunitySettingsViewModel: ObservableObject {
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
         
-        // Start upload with progress monitoring
-        let uploadTask = storageRef.putData(imageData, metadata: metadata)
-        
-        // Monitor progress
-        uploadTask.observe(.progress) { [weak self] snapshot in
-            guard let progress = snapshot.progress else { return }
-            let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-            
-            Task { @MainActor in
-                if isAvatar {
-                    self?.avatarUploadProgress = percentComplete
+        // Upload with progress monitoring using continuation
+        _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StorageMetadata, Error>) in
+            let uploadTask = storageRef.putData(imageData, metadata: metadata) { metadata, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else if let metadata = metadata {
+                    continuation.resume(returning: metadata)
                 } else {
-                    self?.bannerUploadProgress = percentComplete
+                    continuation.resume(throwing: ImageUploadError.uploadFailed)
+                }
+            }
+            
+            // Monitor progress
+            uploadTask.observe(.progress) { [weak self] snapshot in
+                guard let progress = snapshot.progress else { return }
+                let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+                
+                Task { @MainActor in
+                    if isAvatar {
+                        self?.avatarUploadProgress = percentComplete
+                    } else {
+                        self?.bannerUploadProgress = percentComplete
+                    }
                 }
             }
         }
-        
-        // Wait for completion
-        _ = try await uploadTask
         
         // Get download URL
         let downloadURL = try await storageRef.downloadURL()

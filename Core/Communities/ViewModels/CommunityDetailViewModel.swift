@@ -43,12 +43,9 @@ class CommunityDetailViewModel: ObservableObject {
             isLoading = true
             errorMessage = ""
             
-            // Load data concurrently
-            async let channelsTask = loadChannels(for: community.id)
-            async let userStateTask = loadUserState(for: community)
-            
-            await channelsTask
-            await userStateTask
+            // Load data sequentially to avoid type inference warnings
+            await loadChannels(for: community.id)
+            await loadUserState(for: community)
             
             // Check if we should prompt for channel setup
             checkChannelSetupNeeded()
@@ -178,8 +175,8 @@ Format your callouts like this:
                 isUserMember = true
                 userRole = "member"
                 
-                // Create activity
-                if let username = authService.currentUser?.username {
+                // Create activity (only if user has a username)
+                if authService.currentUser?.username != nil {
                     try await authService.createActivity(
                         userId: userId,
                         type: .joinedCommunity,

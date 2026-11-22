@@ -139,37 +139,125 @@ struct CommunityMessage: Identifiable, Codable {
     }
 }
 
-// MARK: - Community Settings
+// MARK: - Enhanced Community Settings with Image Support
 struct CommunitySettings {
     var name: String
     var description: String
     var isPrivate: Bool
-    var avatarURL: String? // For community avatar
-    var bannerURL: String? // For community banner
+    
+    // ✅ ENHANCED: Support both property naming conventions
+    // Store internally as the Community model expects
+    private var _avatarURL: String?
+    private var _bannerURL: String?
+    
+    // ✅ ENHANCED: Computed properties for compatibility with UI code
+    var profileImageUrl: String? {
+        get { return _avatarURL }
+        set { _avatarURL = newValue }
+    }
+    
+    var bannerImageUrl: String? {
+        get { return _bannerURL }
+        set { _bannerURL = newValue }
+    }
+    
+    // ✅ ENHANCED: Direct access properties for Community model mapping
+    var avatarURL: String? {
+        get { return _avatarURL }
+        set { _avatarURL = newValue }
+    }
+    
+    var bannerURL: String? {
+        get { return _bannerURL }
+        set { _bannerURL = newValue }
+    }
+    
+    // ✅ ENHANCED: Helper computed properties
+    var hasAvatarImage: Bool {
+        return _avatarURL != nil && !_avatarURL!.isEmpty
+    }
+    
+    var hasBannerImage: Bool {
+        return _bannerURL != nil && !_bannerURL!.isEmpty
+    }
     
     init(from community: Community) {
         self.name = community.name
         self.description = community.description
         self.isPrivate = community.isPrivate
-        // Use the actual Community property names
-        self.avatarURL = community.avatarURL
-        self.bannerURL = community.bannerURL
+        
+        // ✅ ENHANCED: Map from Community model properties
+        self._avatarURL = community.avatarURL
+        self._bannerURL = community.bannerURL
     }
     
-    // Convert back to community for updates
+    // ✅ ENHANCED: Initialize with empty values for new communities
+    init() {
+        self.name = ""
+        self.description = ""
+        self.isPrivate = false
+        self._avatarURL = nil
+        self._bannerURL = nil
+    }
+    
+    // ✅ ENHANCED: Convert back to community for updates with proper mapping
     func updateCommunity(_ community: Community) -> Community {
         var updatedCommunity = community
         updatedCommunity.name = self.name
         updatedCommunity.description = self.description
         updatedCommunity.isPrivate = self.isPrivate
-        // Use the actual Community property names
-        updatedCommunity.avatarURL = self.avatarURL
-        updatedCommunity.bannerURL = self.bannerURL
+        
+        // ✅ ENHANCED: Map back to Community model properties
+        updatedCommunity.avatarURL = self._avatarURL
+        updatedCommunity.bannerURL = self._bannerURL
+        
         return updatedCommunity
+    }
+    
+    // ✅ ENHANCED: Validation methods
+    func isValidForSave() -> Bool {
+        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               name.count >= 3 &&
+               description.count >= 10
+    }
+    
+    func validationMessage() -> String? {
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Community name is required"
+        }
+        if name.count < 3 {
+            return "Community name must be at least 3 characters"
+        }
+        if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Community description is required"
+        }
+        if description.count < 10 {
+            return "Community description must be at least 10 characters"
+        }
+        return nil
+    }
+    
+    // ✅ ENHANCED: Clear image methods
+    mutating func clearAvatar() {
+        self._avatarURL = nil
+    }
+    
+    mutating func clearBanner() {
+        self._bannerURL = nil
+    }
+    
+    // ✅ ENHANCED: Set image URLs
+    mutating func setAvatarURL(_ url: String?) {
+        self._avatarURL = url
+    }
+    
+    mutating func setBannerURL(_ url: String?) {
+        self._bannerURL = url
     }
 }
 
-// MARK: - Community Role Enum
+// MARK: - Community Role Enum (Enhanced)
 enum CommunityRole: String, CaseIterable, Codable {
     case owner = "owner"
     case admin = "admin"
@@ -213,14 +301,31 @@ enum CommunityRole: String, CaseIterable, Codable {
         }
     }
     
+    // ✅ ENHANCED: Additional role methods
+    var canManageImages: Bool {
+        return hierarchyLevel >= 4 // Only owners can manage community images
+    }
+    
+    var canManageSettings: Bool {
+        return hierarchyLevel >= 4 // Only owners can manage settings
+    }
+    
+    var canManageMembers: Bool {
+        return hierarchyLevel >= 3 // Admins and above can manage members
+    }
+    
+    var canManageChannels: Bool {
+        return hierarchyLevel >= 3 // Admins and above can manage channels
+    }
+    
     // Can this role manage the target role?
     func canManage(_ targetRole: CommunityRole) -> Bool {
         return self.hierarchyLevel > targetRole.hierarchyLevel
     }
 }
 
-// MARK: - Community Member With Role
-struct CommunityMemberWithRole: Identifiable, Codable {
+// MARK: - Enhanced Community Member With Role
+struct CommunityMemberWithRole: Identifiable, Codable, Hashable {
     let id: String
     let userId: String
     let username: String
@@ -229,7 +334,12 @@ struct CommunityMemberWithRole: Identifiable, Codable {
     let joinedAt: Date
     let isOnline: Bool // We can add this later
     
-    init(userId: String, username: String, fullName: String, role: CommunityRole = .member, joinedAt: Date = Date()) {
+    // ✅ ENHANCED: Additional properties
+    var profileImageUrl: String?
+    var isVerified: Bool
+    var lastActiveAt: Date?
+    
+    init(userId: String, username: String, fullName: String, role: CommunityRole = .member, joinedAt: Date = Date(), profileImageUrl: String? = nil, isVerified: Bool = false) {
         self.id = userId
         self.userId = userId
         self.username = username
@@ -237,17 +347,65 @@ struct CommunityMemberWithRole: Identifiable, Codable {
         self.role = role
         self.joinedAt = joinedAt
         self.isOnline = false // Default for now
+        self.profileImageUrl = profileImageUrl
+        self.isVerified = isVerified
+        self.lastActiveAt = nil
+    }
+    
+    // ✅ ENHANCED: Computed properties
+    var initials: String {
+        let components = fullName.components(separatedBy: " ")
+        if components.count >= 2 {
+            let first = String(components[0].prefix(1))
+            let last = String(components[1].prefix(1))
+            return (first + last).uppercased()
+        } else {
+            return String(fullName.prefix(2)).uppercased()
+        }
+    }
+    
+    var displayName: String {
+        return fullName.isEmpty ? username : fullName
+    }
+    
+    var timeInCommunity: String {
+        let now = Date()
+        let interval = now.timeIntervalSince(joinedAt)
+        let days = Int(interval / 86400)
+        
+        if days < 1 {
+            return "Joined today"
+        } else if days < 30 {
+            return "Joined \(days) day\(days == 1 ? "" : "s") ago"
+        } else if days < 365 {
+            let months = Int(days / 30)
+            return "Joined \(months) month\(months == 1 ? "" : "s") ago"
+        } else {
+            let years = Int(days / 365)
+            return "Joined \(years) year\(years == 1 ? "" : "s") ago"
+        }
     }
     
     // Firebase conversion
     func toFirestore() -> [String: Any] {
-        return [
+        var data: [String: Any] = [
             "userId": userId,
             "username": username,
             "fullName": fullName,
             "role": role.rawValue,
-            "joinedAt": Timestamp(date: joinedAt)
+            "joinedAt": Timestamp(date: joinedAt),
+            "isVerified": isVerified
         ]
+        
+        if let profileImageUrl = profileImageUrl {
+            data["profileImageUrl"] = profileImageUrl
+        }
+        
+        if let lastActiveAt = lastActiveAt {
+            data["lastActiveAt"] = Timestamp(date: lastActiveAt)
+        }
+        
+        return data
     }
     
     static func fromFirestore(data: [String: Any]) throws -> CommunityMemberWithRole {
@@ -260,18 +418,35 @@ struct CommunityMemberWithRole: Identifiable, Codable {
             throw FirestoreError.invalidData
         }
         
-        return CommunityMemberWithRole(
+        var member = CommunityMemberWithRole(
             userId: userId,
             username: username,
             fullName: fullName,
             role: role,
-            joinedAt: joinedAtTimestamp.dateValue()
+            joinedAt: joinedAtTimestamp.dateValue(),
+            profileImageUrl: data["profileImageUrl"] as? String,
+            isVerified: data["isVerified"] as? Bool ?? false
         )
+        
+        if let lastActiveTimestamp = data["lastActiveAt"] as? Timestamp {
+            member.lastActiveAt = lastActiveTimestamp.dateValue()
+        }
+        
+        return member
+    }
+    
+    // ✅ ENHANCED: Hashable conformance
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: CommunityMemberWithRole, rhs: CommunityMemberWithRole) -> Bool {
+        return lhs.id == rhs.id
     }
 }
 
-// MARK: - Community Rule
-struct CommunityRule: Identifiable, Codable {
+// MARK: - Enhanced Community Rule
+struct CommunityRule: Identifiable, Codable, Hashable {
     var id: String
     var title: String
     var description: String
@@ -281,6 +456,11 @@ struct CommunityRule: Identifiable, Codable {
     var createdAt: Date
     var category: String? // Rule category (e.g., "Trading", "Behavior", "Content")
     var iconName: String? // Optional icon for the rule
+    
+    // ✅ ENHANCED: Additional properties
+    var isActive: Bool
+    var violationCount: Int
+    var lastUpdated: Date?
     
     init(title: String, description: String, isRequired: Bool = true, order: Int = 0, isDefault: Bool = false, category: String? = nil, iconName: String? = nil) {
         self.id = UUID().uuidString
@@ -292,6 +472,46 @@ struct CommunityRule: Identifiable, Codable {
         self.createdAt = Date()
         self.category = category
         self.iconName = iconName
+        self.isActive = true
+        self.violationCount = 0
+        self.lastUpdated = nil
+    }
+    
+    // ✅ ENHANCED: Computed properties
+    var categoryIcon: String {
+        guard let category = category else { return "doc.text" }
+        
+        switch category.lowercased() {
+        case "legal": return "scale.3d"
+        case "risk management": return "shield.fill"
+        case "trading content": return "chart.bar.fill"
+        case "content policy": return "doc.plaintext"
+        case "behavior": return "person.2.fill"
+        default: return iconName ?? "doc.text"
+        }
+    }
+    
+    var categoryColor: Color {
+        guard let category = category else { return .blue }
+        
+        switch category.lowercased() {
+        case "legal": return .red
+        case "risk management": return .orange
+        case "trading content": return .green
+        case "content policy": return .purple
+        case "behavior": return .blue
+        default: return .gray
+        }
+    }
+    
+    var priorityLevel: Int {
+        if isRequired && isDefault {
+            return 3 // Highest priority
+        } else if isRequired {
+            return 2 // High priority
+        } else {
+            return 1 // Normal priority
+        }
     }
     
     // Firebase conversion
@@ -302,7 +522,9 @@ struct CommunityRule: Identifiable, Codable {
             "isRequired": isRequired,
             "order": order,
             "isDefault": isDefault,
-            "createdAt": Timestamp(date: createdAt)
+            "createdAt": Timestamp(date: createdAt),
+            "isActive": isActive,
+            "violationCount": violationCount
         ]
         
         if let category = category {
@@ -310,6 +532,9 @@ struct CommunityRule: Identifiable, Codable {
         }
         if let iconName = iconName {
             data["iconName"] = iconName
+        }
+        if let lastUpdated = lastUpdated {
+            data["lastUpdated"] = Timestamp(date: lastUpdated)
         }
         
         return data
@@ -336,8 +561,23 @@ struct CommunityRule: Identifiable, Codable {
         )
         rule.id = id
         rule.createdAt = createdAtTimestamp.dateValue()
+        rule.isActive = data["isActive"] as? Bool ?? true
+        rule.violationCount = data["violationCount"] as? Int ?? 0
+        
+        if let lastUpdatedTimestamp = data["lastUpdated"] as? Timestamp {
+            rule.lastUpdated = lastUpdatedTimestamp.dateValue()
+        }
         
         return rule
+    }
+    
+    // ✅ ENHANCED: Hashable conformance
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: CommunityRule, rhs: CommunityRule) -> Bool {
+        return lhs.id == rhs.id
     }
     
     // MARK: - Enhanced Default Financial Disclaimer Rules
@@ -396,7 +636,7 @@ struct CommunityRule: Identifiable, Codable {
     }
 }
 
-// MARK: - Community Moderation Settings
+// MARK: - Enhanced Community Moderation Settings
 struct CommunityModerationSettings: Codable {
     var autoModEnabled: Bool
     var requireApproval: Bool // For new members
@@ -405,6 +645,15 @@ struct CommunityModerationSettings: Codable {
     var linkPostingAllowed: Bool
     var imagePostingAllowed: Bool
     
+    // ✅ ENHANCED: Additional moderation settings
+    var slowModeEnabled: Bool
+    var slowModeInterval: TimeInterval // in seconds
+    var autoDeleteSpam: Bool
+    var requireEmailVerification: Bool
+    var minimumAccountAge: TimeInterval // in seconds
+    var allowedFileTypes: [String]
+    var maxFileSize: Int // in bytes
+    
     init() {
         self.autoModEnabled = true
         self.requireApproval = false
@@ -412,6 +661,30 @@ struct CommunityModerationSettings: Codable {
         self.maxMessagesPerMinute = 10
         self.linkPostingAllowed = true
         self.imagePostingAllowed = true
+        self.slowModeEnabled = false
+        self.slowModeInterval = 30
+        self.autoDeleteSpam = true
+        self.requireEmailVerification = false
+        self.minimumAccountAge = 0
+        self.allowedFileTypes = ["jpg", "jpeg", "png", "gif", "webp"]
+        self.maxFileSize = 10 * 1024 * 1024 // 10MB
+    }
+    
+    // ✅ ENHANCED: Computed properties
+    var isStrictMode: Bool {
+        return autoModEnabled && requireApproval && slowModeEnabled && requireEmailVerification
+    }
+    
+    var moderationLevel: String {
+        if isStrictMode {
+            return "Strict"
+        } else if autoModEnabled && (requireApproval || slowModeEnabled) {
+            return "Moderate"
+        } else if autoModEnabled {
+            return "Basic"
+        } else {
+            return "Disabled"
+        }
     }
     
     // Firebase conversion
@@ -422,7 +695,14 @@ struct CommunityModerationSettings: Codable {
             "bannedWords": bannedWords,
             "maxMessagesPerMinute": maxMessagesPerMinute,
             "linkPostingAllowed": linkPostingAllowed,
-            "imagePostingAllowed": imagePostingAllowed
+            "imagePostingAllowed": imagePostingAllowed,
+            "slowModeEnabled": slowModeEnabled,
+            "slowModeInterval": slowModeInterval,
+            "autoDeleteSpam": autoDeleteSpam,
+            "requireEmailVerification": requireEmailVerification,
+            "minimumAccountAge": minimumAccountAge,
+            "allowedFileTypes": allowedFileTypes,
+            "maxFileSize": maxFileSize
         ]
     }
     
@@ -435,7 +715,50 @@ struct CommunityModerationSettings: Codable {
         settings.maxMessagesPerMinute = data["maxMessagesPerMinute"] as? Int ?? 10
         settings.linkPostingAllowed = data["linkPostingAllowed"] as? Bool ?? true
         settings.imagePostingAllowed = data["imagePostingAllowed"] as? Bool ?? true
+        settings.slowModeEnabled = data["slowModeEnabled"] as? Bool ?? false
+        settings.slowModeInterval = data["slowModeInterval"] as? TimeInterval ?? 30
+        settings.autoDeleteSpam = data["autoDeleteSpam"] as? Bool ?? true
+        settings.requireEmailVerification = data["requireEmailVerification"] as? Bool ?? false
+        settings.minimumAccountAge = data["minimumAccountAge"] as? TimeInterval ?? 0
+        settings.allowedFileTypes = data["allowedFileTypes"] as? [String] ?? ["jpg", "jpeg", "png", "gif", "webp"]
+        settings.maxFileSize = data["maxFileSize"] as? Int ?? 10 * 1024 * 1024
         
         return settings
+    }
+}
+
+// MARK: - Image Upload States (for UI feedback)
+enum ImageUploadState: Equatable {
+    case idle
+    case uploading(progress: Double)
+    case success(url: String)
+    case failed(error: String)
+    
+    var isUploading: Bool {
+        if case .uploading = self {
+            return true
+        }
+        return false
+    }
+    
+    var uploadProgress: Double {
+        if case .uploading(let progress) = self {
+            return progress
+        }
+        return 0.0
+    }
+    
+    var errorMessage: String? {
+        if case .failed(let error) = self {
+            return error
+        }
+        return nil
+    }
+    
+    var uploadedURL: String? {
+        if case .success(let url) = self {
+            return url
+        }
+        return nil
     }
 }

@@ -2013,75 +2013,31 @@ class UserGroupsViewModel: ObservableObject {
         guard !userId.isEmpty else { return }
         
         isLoading = true
+        errorMessage = ""
         
         Task {
             do {
-                // Try to get communities from Firebase using the public method
-                let communities: [Community]
-                do {
-                    communities = try await authService.getUserCommunities(userId: userId)
-                } catch {
-                    print("Firebase getUserCommunities failed: \(error)")
-                    // If the method doesn't exist or fails, return empty array
-                    communities = []
-                }
+                let tradingGroups = try await getUserCommunitiesAsTradingGroups(userId: userId)
                 
-                // Convert communities to TradingGroup
-                let tradingGroups = communities.map { community in
-                    TradingGroup(
-                        id: community.id,
-                        name: community.name,
-                        description: community.description,
-                        memberCount: community.memberCount,
-                        isPrivate: false, // You can add this field to Community model if needed
-                        imageUrl: nil,
-                        category: community.type.displayName,
-                        createdAt: community.createdAt
-                    )
-                }
-                
-                await MainActor.run {
-                    self.groups = tradingGroups
-                    self.isLoading = false
-                    self.errorMessage = ""
-                }
+                self.groups = tradingGroups
+                self.isLoading = false
+                self.errorMessage = ""
             } catch {
-                await MainActor.run {
-                    print("Error loading groups: \(error)")
-                    self.errorMessage = "Failed to load groups. Please try again."
-                    self.isLoading = false
-                }
+                print("Error loading groups: \(error)")
+                self.errorMessage = "Failed to load groups. Please try again."
+                self.isLoading = false
             }
         }
     }
     
-    @MainActor
     func refreshGroups() async {
         guard !currentUserId.isEmpty else { return }
         
         isLoading = true
+        errorMessage = ""
         
         do {
-            let communities: [Community]
-            do {
-                communities = try await authService.getUserCommunities(userId: currentUserId)
-            } catch {
-                print("Firebase getUserCommunities failed: \(error)")
-                communities = []
-            }
-            
-            let tradingGroups = communities.map { community in
-                TradingGroup(
-                    id: community.id,
-                    name: community.name,
-                    description: community.description,
-                    memberCount: community.memberCount,
-                    isPrivate: false,
-                    imageUrl: nil,
-                    category: community.type.displayName,
-                    createdAt: community.createdAt
-                )
-            }
+            let tradingGroups = try await getUserCommunitiesAsTradingGroups(userId: currentUserId)
             
             self.groups = tradingGroups
             self.errorMessage = ""
@@ -2091,6 +2047,35 @@ class UserGroupsViewModel: ObservableObject {
         }
         
         isLoading = false
+    }
+    
+    // MARK: - Private Helper Methods
+    
+    /// Fetches user communities and converts them to TradingGroup objects
+    private func getUserCommunitiesAsTradingGroups(userId: String) async throws -> [TradingGroup] {
+        let communities: [Community]
+        
+        do {
+            communities = try await authService.getUserCommunities(userId: userId)
+        } catch {
+            print("Firebase getUserCommunities failed: \(error)")
+            // If the method doesn't exist or fails, return empty array
+            communities = []
+        }
+        
+        // Convert communities to TradingGroup
+        return communities.map { community in
+            TradingGroup(
+                id: community.id,
+                name: community.name,
+                description: community.description,
+                memberCount: community.memberCount,
+                isPrivate: false, // You can add this field to Community model if needed
+                imageUrl: nil,
+                category: community.type.displayName,
+                createdAt: community.createdAt
+            )
+        }
     }
 }
 

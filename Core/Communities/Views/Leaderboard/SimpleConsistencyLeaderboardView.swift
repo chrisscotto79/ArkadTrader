@@ -590,7 +590,7 @@ struct SearchUserCard: View {
                     // User Stats
                     HStack(spacing: 12) {
                         VStack(spacing: 2) {
-                            Text("\(user.followersCount ?? 0)")
+                            Text("\(user.followersCount)")
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.textPrimary)

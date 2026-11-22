@@ -5,7 +5,7 @@ import Foundation
 import Firebase
 import FirebaseAuth
 import FirebaseFirestore
-import SwiftUICore
+import SwiftUI
 import FirebaseStorage
 
 // MARK: - Main Service Class
@@ -27,8 +27,13 @@ class FirebaseServices {
     
     private func configureFirestore() {
         let settings = FirestoreSettings()
-        settings.isPersistenceEnabled = true
-        settings.cacheSizeBytes = FirestoreCacheSizeUnlimited
+        
+        // Use persistent cache settings (replaces both isPersistenceEnabled and cacheSizeBytes)
+        let cacheSettings = PersistentCacheSettings()
+        // Note: PersistentCacheSettings automatically enables persistence and provides generous cache limits
+        // If you need to set a specific size limit, use cacheSettings.sizeBytes = yourLimit
+        settings.cacheSettings = cacheSettings
+        
         db.settings = settings
     }
     
@@ -201,51 +206,64 @@ class FirebaseServices {
         }
         
         /// Listen to real-time reactions for all messages in a channel
-        func listenToChannelReactions(communityId: String, channelId: String, completion: @escaping ([String: [MessageReaction]]) -> Void) {
-            print("👂 Setting up real-time reactions listener for channel \(channelId)")
-            
-            // Listen to all messages in the channel
-            db.collection("communities").document(communityId)
-                .collection("channels").document(channelId)
-                .collection("messages")
-                .addSnapshotListener { [weak self] messagesSnapshot, error in
-                    guard let messagesSnapshot = messagesSnapshot else {
-                        print("❌ Error fetching messages for reactions: \(error?.localizedDescription ?? "unknown")")
-                        completion([:])
-                        return
-                    }
-                    
-                    print("🔄 Messages snapshot changed, updating reactions...")
-                    
-                    Task {
-                        var allReactions: [String: [MessageReaction]] = [:]
-                        
-                        // For each message, get its reactions
-                        for messageDoc in messagesSnapshot.documents {
-                            let messageId = messageDoc.documentID
-                            
-                            do {
-                                let reactions = try await self?.getMessageReactions(
-                                    messageId: messageId,
-                                    channelId: channelId,
-                                    communityId: communityId
-                                ) ?? []
-                                
-                                if !reactions.isEmpty {
-                                    allReactions[messageId] = reactions
-                                }
-                            } catch {
-                                print("❌ Error loading reactions for message \(messageId): \(error)")
-                            }
-                        }
-                        
-                        await MainActor.run {
-                            print("✅ Updated reactions for \(allReactions.count) messages")
-                            completion(allReactions)
-                        }
-                    }
+    func listenToChannelReactions(communityId: String, channelId: String, completion: @escaping @Sendable ([String: [MessageReaction]]) -> Void) {
+        print("👂 Setting up real-time reactions listener for channel \(channelId)")
+        
+        // Listen to all messages in the channel
+        db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages")
+            .addSnapshotListener { [weak self] messagesSnapshot, error in
+                guard let messagesSnapshot = messagesSnapshot else {
+                    print("❌ Error fetching messages for reactions: \(error?.localizedDescription ?? "unknown")")
+                    completion([:])
+                    return
                 }
+                
+                print("🔄 Messages snapshot changed, updating reactions...")
+                
+                Task { @MainActor in
+                    await self?.processReactionsForMessages(
+                        messagesSnapshot: messagesSnapshot,
+                        channelId: channelId,
+                        communityId: communityId,
+                        completion: completion
+                    )
+                }
+            }
+    }
+
+    @MainActor
+    private func processReactionsForMessages(
+        messagesSnapshot: QuerySnapshot,
+        channelId: String,
+        communityId: String,
+        completion: @escaping @Sendable ([String: [MessageReaction]]) -> Void
+    ) async {
+        var allReactions: [String: [MessageReaction]] = [:]
+        
+        // For each message, get its reactions
+        for messageDoc in messagesSnapshot.documents {
+            let messageId = messageDoc.documentID
+            
+            do {
+                let reactions = try await getMessageReactions(
+                    messageId: messageId,
+                    channelId: channelId,
+                    communityId: communityId
+                )
+                
+                if !reactions.isEmpty {
+                    allReactions[messageId] = reactions
+                }
+            } catch {
+                print("❌ Error loading reactions for message \(messageId): \(error)")
+            }
         }
+        
+        print("✅ Updated reactions for \(allReactions.count) messages")
+        completion(allReactions)
+    }
         
         /// Get popular emojis used in a channel (for emoji picker suggestions)
         func getPopularChannelEmojis(communityId: String, channelId: String, limit: Int = 8) async throws -> [String] {
@@ -868,10 +886,8 @@ class FirebaseServices {
         
         print("📊 Image data size: \(imageData.count) bytes")
         
-        // ✅ SIMPLIFIED FILE PATH: Use simpler naming convention
-        let fileName = "\(userId).jpg"  // Just userId.jpg - simple and clean
-        
-        // ✅ DIFFERENT PATH STRUCTURE: Try without subdirectory first
+        // Simple file naming convention
+        let fileName = "\(userId).jpg"
         let storageRef = Storage.storage().reference().child("profile_images").child(fileName)
         
         print("🔍 Upload path: profile_images/\(fileName)")
@@ -879,27 +895,40 @@ class FirebaseServices {
         do {
             print("🔄 Uploading image to Firebase Storage...")
             
-            // Simple upload without custom metadata
-            let uploadTask = try await storageRef.putData(imageData)
+            // Upload the image data using proper async/await pattern
+            _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StorageMetadata, Error>) in
+                storageRef.putData(imageData, metadata: nil) { metadata, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else if let metadata = metadata {
+                        continuation.resume(returning: metadata)
+                    } else {
+                        continuation.resume(throwing: FirestoreError.uploadFailed)
+                    }
+                }
+            }
             print("✅ Image uploaded successfully")
             print("📍 Upload path confirmed: \(storageRef.fullPath)")
             
-            // ✅ IMMEDIATE DOWNLOAD URL ATTEMPT: Try right away
-            do {
-                let downloadURL = try await storageRef.downloadURL()
-                print("✅ Download URL obtained immediately: \(downloadURL.absoluteString)")
-                return downloadURL.absoluteString
-            } catch {
-                print("⚠️ Immediate download URL failed: \(error)")
-                
-                // ✅ ALTERNATIVE: Try constructing public URL manually
+            // Get the download URL
+            let downloadURL = try await storageRef.downloadURL()
+            print("✅ Download URL obtained: \(downloadURL.absoluteString)")
+            return downloadURL.absoluteString
+            
+        } catch let storageError {
+            print("❌ Storage operation failed: \(storageError)")
+            
+            // If getting download URL fails, try constructing a public URL as fallback
+            if storageError.localizedDescription.contains("download") ||
+               storageError.localizedDescription.contains("url") {
+                print("🔄 Attempting fallback with constructed public URL")
                 let publicURL = "https://firebasestorage.googleapis.com/v0/b/arkad-ios-app.firebasestorage.app/o/profile_images%2F\(fileName)?alt=media"
-                print("🔄 Trying constructed public URL: \(publicURL)")
+                print("🔄 Constructed public URL: \(publicURL)")
                 return publicURL
             }
             
-        } catch {
-            print("❌ Profile image upload failed: \(error)")
+            // For any other errors, rethrow as FirestoreError
+            print("❌ Profile image upload failed: \(storageError)")
             throw FirestoreError.uploadFailed
         }
     }
@@ -1826,8 +1855,7 @@ class FirebaseServices {
             let data = document.data()
             guard let senderId = data["senderId"] as? String,
                   let recipientId = data["recipientId"] as? String,
-                  let content = data["content"] as? String,
-                  let timestamp = (data["timestamp"] as? Timestamp)?.dateValue() else {
+                  let content = data["content"] as? String else {
                 return nil
             }
             
