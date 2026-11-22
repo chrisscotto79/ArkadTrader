@@ -72,6 +72,17 @@
 				Models/TradingEnums.swift,
 				Models/User.swift,
 				Services/FirebaseAuthService.swift,
+				Services/FirebaseModels.swift,
+				"Services/FirebaseServices+AuthWrappers.swift",
+				"Services/FirebaseServices+Communities.swift",
+				"Services/FirebaseServices+MarketNews.swift",
+				"Services/FirebaseServices+Messaging.swift",
+				"Services/FirebaseServices+Moderation.swift",
+				"Services/FirebaseServices+Notifications.swift",
+				"Services/FirebaseServices+Posts.swift",
+				"Services/FirebaseServices+Social.swift",
+				"Services/FirebaseServices+Trades.swift",
+				"Services/FirebaseServices+Users.swift",
 				Services/FirebaseServices.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
