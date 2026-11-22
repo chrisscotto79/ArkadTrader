@@ -449,14 +449,7 @@ struct EnhancedCommunityCard: View {
     
     // MARK: - Helper Methods
     private func getCommunityColor() -> Color {
-        switch community.type {
-        case .dayTrading: return .marketRed
-        case .swingTrading: return .warning
-        case .options: return .optionColor
-        case .crypto: return .cryptoColor
-        case .stocks: return .stockColor
-        case .general: return .arkadGold
-        }
+        community.type.tint
     }
     
     private func getActivityColor() -> Color {

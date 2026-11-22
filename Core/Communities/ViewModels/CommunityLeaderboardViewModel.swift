@@ -8,7 +8,7 @@ class CommunityLeaderboardViewModel: ObservableObject {
 
     @Published var entries: [CommunityLeaderboardEntry] = []
     @Published var category: LeaderboardCategory = .profitKings
-    @Published var timeframe: LeaderboardTimeframe = .monthly
+    @Published var timeframe: LeaderboardTimeframe = .allTime
     @Published var isLoading = false
     @Published var errorMessage = ""
 

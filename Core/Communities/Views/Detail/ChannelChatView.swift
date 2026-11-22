@@ -39,7 +39,7 @@ extension ChannelChatView {
                     Button("Cancel") {
                         hideMentionSuggestions()
                     }
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
@@ -112,25 +112,25 @@ struct MentionSuggestionRow: View {
                                 .aspectRatio(contentMode: .fill)
                         } placeholder: {
                             Circle()
-                                .fill(Color.blue.opacity(0.2))
+                                .fill(Color.accentColor.opacity(0.2))
                                 .overlay(
                                     Text(user.fullName.prefix(1))
                                         .font(.headline)
                                         .fontWeight(.semibold)
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.accentColor)
                                 )
                         }
                         .frame(width: 40, height: 40)
                         .clipShape(Circle())
                     } else {
                         Circle()
-                            .fill(Color.blue.opacity(0.2))
+                            .fill(Color.accentColor.opacity(0.2))
                             .frame(width: 40, height: 40)
                             .overlay(
                                 Text(user.fullName.prefix(1))
                                     .font(.headline)
                                     .fontWeight(.semibold)
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(.accentColor)
                             )
                     }
                 }
@@ -300,7 +300,7 @@ struct MessageSearchSheet: View {
                             searchText = ""
                             searchResults = []
                         }
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -426,22 +426,22 @@ struct SearchMessageRow: View {
                                     .aspectRatio(contentMode: .fill)
                             } placeholder: {
                                 Circle()
-                                    .fill(Color.blue.opacity(0.2))
+                                    .fill(Color.accentColor.opacity(0.2))
                                     .overlay(
                                         Text(author.fullName.prefix(1))
                                             .font(.caption)
                                             .fontWeight(.semibold)
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(.accentColor)
                                     )
                             }
                         } else {
                             Circle()
-                                .fill(Color.blue.opacity(0.2))
+                                .fill(Color.accentColor.opacity(0.2))
                                 .overlay(
                                     Text(message.authorUsername.prefix(1))
                                         .font(.caption)
                                         .fontWeight(.semibold)
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.accentColor)
                                 )
                         }
                     }
@@ -784,10 +784,10 @@ extension ChannelChatView {
                             .font(.subheadline)
                             .fontWeight(.medium)
                     }
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Color.blue.opacity(0.1))
+                    .background(Color.accentColor.opacity(0.1))
                     .cornerRadius(12)
                 }
                 
@@ -1155,7 +1155,7 @@ struct EnhancedMessageRowWithReactions: View {
                     } else if authorRole == .moderator {
                         Image(systemName: "shield.fill")
                             .font(.caption2)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                             .background(
                                 Circle()
                                     .fill(.blue.opacity(0.15))
@@ -1168,7 +1168,7 @@ struct EnhancedMessageRowWithReactions: View {
                 if let author = author, author.isVerified {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                 }
                 
                 // Subscription tier badge
@@ -1335,12 +1335,12 @@ struct EnhancedMessageRowWithReactions: View {
             // Document icon
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.1))
+                    .fill(Color.accentColor.opacity(0.1))
                     .frame(width: 40, height: 40)
                 
                 Image(systemName: documentIcon(for: mediaContent.fileName))
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
             }
             
             // Document info
@@ -1366,7 +1366,7 @@ struct EnhancedMessageRowWithReactions: View {
             }) {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
             }
         }
         .padding(.horizontal, 12)
@@ -1405,7 +1405,7 @@ struct EnhancedMessageRowWithReactions: View {
         HStack(spacing: 16) {
             Button("Reply", action: onReply)
                 .font(.caption)
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
             
             if canEdit {
                 Button("Edit", action: onEdit)
@@ -1426,7 +1426,7 @@ struct EnhancedMessageRowWithReactions: View {
                     Text("React")
                         .font(.caption)
                 }
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
             }
             
             Spacer()
@@ -1577,7 +1577,7 @@ struct EnhancedMessageRowWithReactions: View {
             return false
         }
         
-        return currentUserMentioned ? Color.blue.opacity(0.1) : Color(.systemGray6)
+        return currentUserMentioned ? Color.accentColor.opacity(0.1) : Color(.systemGray6)
     }
     
     // MARK: - Read Receipts View
@@ -1586,12 +1586,12 @@ struct EnhancedMessageRowWithReactions: View {
             if readReceipts.count > 0 {
                 Image(systemName: readReceipts.count == 1 ? "checkmark" : "checkmark.circle.fill")
                     .font(.caption2)
-                    .foregroundColor(readReceipts.count == 1 ? .secondary : .blue)
+                    .foregroundColor(readReceipts.count == 1 ? .secondary : .accentColor)
                 
                 if readReceipts.count > 1 {
                     Text("\(readReceipts.count)")
                         .font(.caption2)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                         .fontWeight(.medium)
                 }
                 
@@ -1684,17 +1684,17 @@ extension ChannelChatView {
                 }) {
                     ZStack {
                         Circle()
-                            .fill(viewModel.canUserPost ? Color.blue : Color.gray)
+                            .fill(viewModel.canUserPost ? Color.arkadGold : Color.gray)
                             .frame(width: 32, height: 32)
                         
                         if isUploadingMedia {
                             ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .progressViewStyle(CircularProgressViewStyle(tint: .black))
                                 .scaleEffect(0.7)
                         } else {
                             Image(systemName: "plus")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(.black)
                         }
                     }
                 }
@@ -1737,7 +1737,7 @@ extension ChannelChatView {
                         }) {
                             Image(systemName: "face.smiling.fill")
                                 .font(.title3)
-                                .foregroundColor(showEmojiPicker ? .blue : .gray)
+                                .foregroundColor(showEmojiPicker ? .accentColor : .gray)
                         }
                         .disabled(!viewModel.canUserPost)
                     }
@@ -1757,7 +1757,7 @@ extension ChannelChatView {
                 }) {
                     Image(systemName: editingMessage != nil ? "checkmark.circle.fill" : "arrow.up.circle.fill")
                         .font(.title2)
-                        .foregroundColor(canSendMessage ? .blue : .gray)
+                        .foregroundColor(canSendMessage ? .accentColor : .gray)
                 }
                 .disabled(!canSendMessage)
             }
@@ -2100,7 +2100,7 @@ extension ChannelChatView {
                             emojiPickerForMessage = nil
                         }
                         .fontWeight(.semibold)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
@@ -2165,12 +2165,12 @@ extension ChannelChatView {
                 HStack {
                     Image(systemName: "arrowshape.turn.up.left.fill")
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                     
                     Text("Replying to \(message.authorUsername)")
                         .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                 }
                 
                 Text(message.content)
@@ -2189,10 +2189,10 @@ extension ChannelChatView {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color.blue.opacity(0.05))
+        .background(Color.accentColor.opacity(0.05))
         .overlay(
             Rectangle()
-                .fill(Color.blue)
+                .fill(Color.arkadGold)
                 .frame(width: 3)
                 .frame(maxHeight: .infinity),
             alignment: .leading
@@ -2229,7 +2229,7 @@ extension ChannelChatView {
                 }
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
                 .disabled(editedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 
                 Button("Cancel") {
@@ -2548,7 +2548,7 @@ struct UserProfileSheet: View {
                         
                         if user.isVerified {
                             Image(systemName: "checkmark.seal.fill")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.accentColor)
                                 .font(.title3)
                         }
                         
@@ -2872,13 +2872,13 @@ struct UserProfileSheet: View {
                     ForEach(0..<min(3, user.communityIds.count), id: \.self) { index in
                         HStack {
                             Circle()
-                                .fill(Color.blue.opacity(0.2))
+                                .fill(Color.accentColor.opacity(0.2))
                                 .frame(width: 32, height: 32)
                                 .overlay(
                                     Text("#")
                                         .font(.caption)
                                         .fontWeight(.bold)
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.accentColor)
                                 )
                             
                             VStack(alignment: .leading, spacing: 2) {
@@ -2906,7 +2906,7 @@ struct UserProfileSheet: View {
                     if user.communityIds.count > 3 {
                         Text("+ \(user.communityIds.count - 3) more communities")
                             .font(.caption)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                             .fontWeight(.medium)
                     }
                 }

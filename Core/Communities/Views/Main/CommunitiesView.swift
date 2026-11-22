@@ -182,6 +182,8 @@ extension CommunitiesView {
                     VStack(spacing: 4) {
                         Text(selectedTab.displayName)
                             .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [Color.textPrimary, Color.textPrimary.opacity(0.8)],
@@ -276,8 +278,7 @@ extension CommunitiesView {
     }
     
     private var cleanStatsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
+        HStack(spacing: 10) {
                 statPill(
                     value: "\(viewModel.userCommunities.count)",
                     label: "Joined",
@@ -300,18 +301,17 @@ extension CommunitiesView {
                         icon: "crown.fill"
                     )
                 }
-            }
-            .padding(.horizontal, 24)
         }
+        .padding(.horizontal, 24)
     }
     
     private func statPill(value: String, label: String, color: Color, icon: String) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             // Icon container
             ZStack {
                 Circle()
                     .fill(color.opacity(0.15))
-                    .frame(width: 32, height: 32)
+                    .frame(width: 28, height: 28)
                 
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
@@ -326,9 +326,11 @@ extension CommunitiesView {
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.textSecondary)
+                    .lineLimit(1)
             }
         }
-        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 16)
@@ -787,6 +789,7 @@ extension CommunitiesView {
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(.textSecondary)
                         }
+                        .fixedSize()
                         
                         if isOwner {
                             // Owner badge
@@ -796,7 +799,9 @@ extension CommunitiesView {
                                 
                                 Text("Owner")
                                     .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
                             }
+                            .fixedSize()
                             .foregroundColor(.arkadGold)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
@@ -812,8 +817,10 @@ extension CommunitiesView {
                 
                 // Enhanced type badge and chevron
                 HStack(spacing: 12) {
-                    Text(community.type.displayName)
+                    Text(community.type.shortDisplayName)
                         .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
                         .foregroundColor(getCommunityColor(for: community.type))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -1072,14 +1079,7 @@ extension CommunitiesView {
     
     // MARK: - Helper Methods
     private func getSectionColor(for type: CommunityType) -> Color {
-        switch type {
-        case .dayTrading: return .marketRed
-        case .swingTrading: return .warning
-        case .options: return .optionColor
-        case .crypto: return .cryptoColor
-        case .stocks: return .stockColor
-        case .general: return .arkadGold
-        }
+        type.tint
     }
     
     private func showCommunityPreview(_ community: Community) {
@@ -1645,14 +1645,7 @@ extension CommunitiesView {
     }
     
     private func getCommunityColor(for type: CommunityType) -> Color {
-        switch type {
-        case .dayTrading: return .marketRed
-        case .swingTrading: return .warning
-        case .options: return .optionColor
-        case .crypto: return .cryptoColor
-        case .stocks: return .stockColor
-        case .general: return .arkadGold
-        }
+        type.tint
     }
     
     private func getCommunityInitials(from name: String) -> String {
@@ -1893,7 +1886,7 @@ enum LeaderboardMode: CaseIterable {
 class GlobalLeaderboardViewModel: ObservableObject {
     @Published var entries: [CommunityLeaderboardEntry] = []
     @Published var category: LeaderboardCategory = .profitKings
-    @Published var timeframe: LeaderboardTimeframe = .monthly
+    @Published var timeframe: LeaderboardTimeframe = .allTime
     @Published var isLoading = false
     @Published var errorMessage = ""
 

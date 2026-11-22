@@ -468,22 +468,7 @@ struct CommentRowView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 // User avatar
-                AsyncImage(url: URL(string: "https://avatar.iran.liara.run/username?username=\(comment.authorUsername)")) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Circle()
-                        .fill(Color.arkadGold.opacity(0.2))
-                        .overlay(
-                            Text(String(comment.authorUsername.prefix(1)).uppercased())
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.arkadGold)
-                        )
-                }
-                .frame(width: isReply ? 28 : 32, height: isReply ? 28 : 32)
-                .clipShape(Circle())
+                UserAvatar(username: comment.authorUsername, size: isReply ? 28 : 32)
                 
                 VStack(alignment: .leading, spacing: 8) {
                     // Header with username and time

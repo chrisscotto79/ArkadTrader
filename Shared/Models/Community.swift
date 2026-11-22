@@ -3,6 +3,7 @@
 
 import Foundation
 import FirebaseFirestore
+import SwiftUI
 
 // MARK: - Activity Level Enum
 enum ActivityLevel: String, CaseIterable, Codable {
@@ -289,3 +290,17 @@ enum CommunityType: String, CaseIterable, Codable {
 
 // MARK: - Firestore Error
 
+
+extension CommunityType {
+    /// The colour used for this community type everywhere in the app
+    var tint: Color {
+        switch self {
+        case .general: return .arkadGold
+        case .dayTrading: return .marketRed
+        case .swingTrading: return .warning
+        case .options: return .optionColor
+        case .crypto: return .cryptoColor
+        case .stocks: return .stockColor
+        }
+    }
+}

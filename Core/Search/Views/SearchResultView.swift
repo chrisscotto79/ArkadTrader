@@ -84,21 +84,7 @@ struct SearchResultView: View {
     private var resultIcon: some View {
         switch result.type {
         case .user:
-            AsyncImage(url: URL(string: "https://avatar.iran.liara.run/username?username=\(result.user?.username ?? "user")")) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Circle()
-                    .fill(Color.arkadGold.opacity(0.2))
-                    .overlay(
-                        Text(userInitials)
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(.arkadGold)
-                    )
-            }
-            .frame(width: 44, height: 44)
-            .clipShape(Circle())
+            UserAvatar(username: result.user?.username ?? "user", imageURL: result.user?.profileImageUrl, size: 44)
             
         case .post:
             RoundedRectangle(cornerRadius: 8)
@@ -215,20 +201,6 @@ struct SearchResultView: View {
             
         case .group:
             return result.community?.isPrivate ?? false ? "Private" : "Public"
-        }
-    }
-    
-    // MARK: - Helper Computed Properties
-    private var userInitials: String {
-        guard let user = result.user else { return "U" }
-        let names = user.fullName.split(separator: " ")
-        let firstInitial = names.first?.first ?? Character("U")
-        let lastInitial = names.count > 1 ? names.last?.first : nil
-        
-        if let lastInitial = lastInitial {
-            return String(firstInitial) + String(lastInitial)
-        } else {
-            return String(firstInitial)
         }
     }
     

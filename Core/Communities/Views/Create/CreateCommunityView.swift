@@ -17,9 +17,9 @@ struct CreateCommunityView: View {
                 // Background gradient
                 LinearGradient(
                     colors: [
-                        Color.blue.opacity(0.1),
+                        Color.arkadGold.opacity(0.1),
                         Color(.systemGroupedBackground),
-                        Color.blue.opacity(0.05)
+                        Color.arkadGold.opacity(0.05)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -73,14 +73,14 @@ struct CreateCommunityView: View {
             HStack {
                 ForEach(1...totalSteps, id: \.self) { step in
                     Circle()
-                        .fill(step <= currentStep ? Color.blue : Color.gray.opacity(0.3))
+                        .fill(step <= currentStep ? Color.arkadGold : Color.gray.opacity(0.3))
                         .frame(width: 12, height: 12)
                         .scaleEffect(step == currentStep ? 1.3 : 1.0)
                         .animation(.spring(response: 0.3), value: currentStep)
                     
                     if step < totalSteps {
                         Rectangle()
-                            .fill(step < currentStep ? Color.blue : Color.gray.opacity(0.3))
+                            .fill(step < currentStep ? Color.arkadGold : Color.gray.opacity(0.3))
                             .frame(height: 2)
                             .animation(.easeInOut, value: currentStep)
                     }
@@ -327,7 +327,7 @@ struct CreateCommunityView: View {
             HStack(spacing: 16) {
                 Image(systemName: icon)
                     .font(.title2)
-                    .foregroundColor(isSelected ? .blue : .gray)
+                    .foregroundColor(isSelected ? .accentColor : .gray)
                     .frame(width: 30)
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -345,14 +345,14 @@ struct CreateCommunityView: View {
                 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
-                    .foregroundColor(isSelected ? .blue : .gray.opacity(0.5))
+                    .foregroundColor(isSelected ? .accentColor : .gray.opacity(0.5))
             }
             .padding(20)
             .background(Color(.systemBackground))
             .cornerRadius(16)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(isSelected ? Color.blue : Color.gray.opacity(0.2), lineWidth: 2)
+                    .stroke(isSelected ? Color.arkadGold : Color.gray.opacity(0.2), lineWidth: 2)
             )
         }
         .buttonStyle(PlainButtonStyle())
@@ -362,7 +362,7 @@ struct CreateCommunityView: View {
         HStack(spacing: 12) {
             Image(systemName: guideline.icon)
                 .font(.title3)
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
                 .frame(width: 24)
             
             VStack(alignment: .leading, spacing: 2) {
@@ -523,7 +523,7 @@ struct CreateCommunityView: View {
             ForEach(tips, id: \.self) { tip in
                 HStack(alignment: .top, spacing: 8) {
                     Text("•")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                         .fontWeight(.bold)
                     
                     Text(tip)
@@ -567,14 +567,14 @@ struct CreateCommunityView: View {
                     }
                 }
                 .font(.headline)
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
                 .background(Color(.systemBackground))
                 .cornerRadius(12)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 2)
+                        .stroke(Color.arkadGold, lineWidth: 2)
                 )
             }
             
@@ -589,15 +589,15 @@ struct CreateCommunityView: View {
             }
             .font(.headline)
             .fontWeight(.semibold)
-            .foregroundColor(.white)
+            .foregroundColor(canProceed ? .black : .white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
             .background(
                 Group {
                     if currentStep == totalSteps {
-                        viewModel.isCreating ? Color.gray : (canProceed ? Color.blue : Color.gray)
+                        viewModel.isCreating ? Color.gray : (canProceed ? Color.arkadGold : Color.gray)
                     } else {
-                        canProceed ? Color.blue : Color.gray
+                        canProceed ? Color.arkadGold : Color.gray
                     }
                 }
             )
@@ -607,7 +607,7 @@ struct CreateCommunityView: View {
                 Group {
                     if currentStep == totalSteps && viewModel.isCreating {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
                             .scaleEffect(0.8)
                     }
                 }

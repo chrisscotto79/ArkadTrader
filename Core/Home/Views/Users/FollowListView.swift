@@ -86,16 +86,7 @@ struct UserRowView: View {
     
     var body: some View {
         HStack {
-            AsyncImage(url: URL(string: "https://avatar.iran.liara.run/username?username=\(user.username)")) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Circle()
-                    .fill(Color.gray.opacity(0.3))
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(Circle())
+            UserAvatar(username: user.username, imageURL: user.profileImageUrl, size: 40)
             
             VStack(alignment: .leading, spacing: 2) {
                 HStack {

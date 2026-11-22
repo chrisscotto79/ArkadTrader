@@ -60,7 +60,7 @@ struct LeaderboardRow: View {
                     if entry.isVerified {
                         Image(systemName: "checkmark.seal.fill")
                             .font(.caption2)
-                            .foregroundColor(.arkadGold)
+                            .foregroundColor(.blue)
                     }
                     if isCurrentUser {
                         Text("You")

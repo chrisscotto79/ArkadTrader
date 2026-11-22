@@ -26,7 +26,7 @@ struct CommunityDetailView: View {
     private var current: Community { viewModel.community ?? community }
     
     // UI Constants
-    private let headerHeight: CGFloat = 260
+    private let headerHeight: CGFloat = 300
     private let cornerRadius: CGFloat = 24
     
     var body: some View {
@@ -145,14 +145,7 @@ struct CommunityDetailView: View {
     }
 
     private var communityColor: Color {
-        switch current.type {
-        case .dayTrading: return .red
-        case .swingTrading: return .orange
-        case .options: return .purple
-        case .crypto: return .yellow
-        case .stocks: return .green
-        case .general: return .blue
-        }
+        current.type.tint
     }
 
     private func getCommunityInitials() -> String {
@@ -232,20 +225,9 @@ extension CommunityDetailView {
                 endPoint: .bottomTrailing
             )
             
-            // Pattern overlay
-            GeometryReader { geometry in
-                ForEach(0..<10, id: \.self) { _ in
-                    Circle()
-                        .fill(Color.white.opacity(0.03))
-                        .frame(width: CGFloat.random(in: 50...150))
-                        .position(
-                            x: CGFloat.random(in: 0...geometry.size.width),
-                            y: CGFloat.random(in: 0...geometry.size.height)
-                        )
-                        .blur(radius: 2)
-                }
-            }
-            
+            // Darken the bottom so the white title reads on light community colours
+            LinearGradient(colors: [.clear, .black.opacity(0.35)], startPoint: .center, endPoint: .bottom)
+
             // Content
             VStack(spacing: 20) {
                 Spacer()
@@ -262,6 +244,7 @@ extension CommunityDetailView {
                         .fontWeight(.bold)
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
+                        .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
                     
                     if !current.description.isEmpty {
                         Text(current.description)
@@ -466,12 +449,12 @@ extension CommunityDetailView {
                             }
                             .font(.subheadline)
                             .fontWeight(.semibold)
-                            .foregroundColor(.white)
+                            .foregroundColor(.black)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(
                                 RoundedRectangle(cornerRadius: 14)
-                                    .fill(Color.blue.gradient)
+                                    .fill(Color.arkadGold.gradient)
                             )
                         }
                     }
@@ -511,11 +494,11 @@ extension CommunityDetailView {
                 Button(action: { showMembersList = true }) {
                     Image(systemName: "person.3.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                         .frame(width: 48, height: 48)
                         .background(
                             RoundedRectangle(cornerRadius: 14)
-                                .fill(Color.blue.opacity(0.1))
+                                .fill(Color.accentColor.opacity(0.1))
                         )
                 }
                 
@@ -648,7 +631,7 @@ extension CommunityDetailView {
                     Button(action: { showCreateChannel = true }) {
                         Image(systemName: "plus.circle.fill")
                             .font(.title3)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                     }
                 }
             }
@@ -724,7 +707,7 @@ extension CommunityDetailView {
                     }
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
                 }
             }
         }
@@ -997,7 +980,7 @@ struct EnhancedMembersListSheet: View {
                             }
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                         }
                     }
                     .padding(.horizontal, 32)
@@ -1033,7 +1016,7 @@ struct EnhancedMembersListSheet: View {
                         }
                         .font(.subheadline)
                         .fontWeight(.medium)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
@@ -1314,7 +1297,7 @@ struct EnhancedCommunitySettingsSheet: View {
                                     }
                                 }
                                 .font(.subheadline)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.accentColor)
                             }
                         }
                         .padding(.vertical, 8)
@@ -1336,7 +1319,7 @@ struct EnhancedCommunitySettingsSheet: View {
                                 viewModel.showingAddRule = true
                             }
                             .font(.subheadline)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                         }
                     }
                 }
@@ -1444,12 +1427,12 @@ struct EnhancedCommunitySettingsSheet: View {
                                                     .font(.caption)
                                                     .fontWeight(.medium)
                                             }
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(.accentColor)
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
                                             .background(
                                                 Capsule()
-                                                    .fill(Color.blue.opacity(0.1))
+                                                    .fill(Color.accentColor.opacity(0.1))
                                             )
                                         }
                                         .disabled(viewModel.isUploadingAvatar)
@@ -1594,12 +1577,12 @@ struct EnhancedCommunitySettingsSheet: View {
                                                     .font(.caption)
                                                     .fontWeight(.medium)
                                             }
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(.accentColor)
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
                                             .background(
                                                 Capsule()
-                                                    .fill(Color.blue.opacity(0.1))
+                                                    .fill(Color.accentColor.opacity(0.1))
                                             )
                                         }
                                         .disabled(viewModel.isUploadingBanner)
@@ -1656,12 +1639,12 @@ struct EnhancedCommunitySettingsSheet: View {
                                 }
                             }
                             .frame(maxWidth: .infinity)
-                            .foregroundColor(viewModel.canSave ? .white : .gray)
+                            .foregroundColor(viewModel.canSave ? .black : .gray)
                         }
                         .disabled(!viewModel.canSave || viewModel.isLoading)
                         .listRowBackground(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(viewModel.canSave ? Color.blue : Color.gray.opacity(0.3))
+                                .fill(viewModel.canSave ? Color.arkadGold : Color.gray.opacity(0.3))
                         )
                     }
                     
@@ -1699,7 +1682,7 @@ struct EnhancedCommunitySettingsSheet: View {
                                     }
                                 }
                                 .font(.subheadline)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.accentColor)
                             }
                         } else {
                             ForEach(viewModel.members) { member in
@@ -1830,14 +1813,7 @@ struct EnhancedCommunitySettingsSheet: View {
     
     // MARK: - Helper Methods
     private func getCommunityColor() -> Color {
-        switch community.type {
-        case .dayTrading: return .red
-        case .swingTrading: return .orange
-        case .options: return .purple
-        case .crypto: return .yellow
-        case .stocks: return .green
-        case .general: return .blue
-        }
+        community.type.tint
     }
     
     private func getCommunityInitials() -> String {
