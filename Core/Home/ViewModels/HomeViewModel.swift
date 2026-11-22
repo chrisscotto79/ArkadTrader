@@ -137,7 +137,7 @@ class HomeViewModel: ObservableObject {
     private let postsPerPage = 20
     
     // Finnhub API configuration
-    private let finnhubApiKey = "ct73so9r01qr3sdtkf20ct73so9r01qr3sdtkf2g"
+    private var finnhubApiKey: String { AppConfig.finnhubAPIKey }
     private let finnhubBaseUrl = "https://finnhub.io/api/v1"
     
     // News caching - refresh every 30 minutes
@@ -641,6 +641,7 @@ class HomeViewModel: ObservableObject {
     }
     
     fileprivate func fetchMarketNews() async throws -> [MarketNewsArticle] {
+        guard !finnhubApiKey.isEmpty else { return [] }
         let urlString = "\(finnhubBaseUrl)/news?category=general&token=\(finnhubApiKey)"
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)

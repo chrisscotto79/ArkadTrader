@@ -51,6 +51,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Components/CustomButton.swift,
+				Config/AppConfig.swift,
 				Components/CustomTextField.swift,
 				Components/FollowButton.swift,
 				Components/LoadingView.swift,
@@ -160,6 +161,7 @@
 				ArkadTraderApp.swift,
 				ContentView.swift,
 				"GoogleService-Info.plist",
+				Secrets.plist,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
