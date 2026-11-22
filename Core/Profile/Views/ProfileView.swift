@@ -1910,7 +1910,8 @@ enum ProfileTab: CaseIterable {
     }
 }
 
-// MARK: - View Models (Fixed compilation errors)
+// MARK: - View Models
+@MainActor
 class UserPostsViewModel: ObservableObject {
     @Published var posts: [Post] = []
     @Published var isLoading = false
@@ -2000,6 +2001,7 @@ class UserPostsViewModel: ObservableObject {
     }
 }
 
+@MainActor
 class UserGroupsViewModel: ObservableObject {
     @Published var groups: [TradingGroup] = []
     @Published var isLoading = false

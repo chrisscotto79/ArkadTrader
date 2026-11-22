@@ -310,7 +310,7 @@ struct UserProfileCard: View {
             // Followers
             statItemView(
                 title: "Followers",
-                value: "\(user.followersCount ?? 0)",
+                value: "\(user.followersCount)",
                 color: .blue
             )
             
@@ -321,7 +321,7 @@ struct UserProfileCard: View {
             // Following
             statItemView(
                 title: "Following",
-                value: "\(user.followingCount ?? 0)",
+                value: "\(user.followingCount)",
                 color: .purple
             )
             

@@ -119,15 +119,13 @@ class SearchViewModel: ObservableObject {
         
         print("🚀 SearchViewModel: Starting parallel search for '\(query)'")
         
-        do {
-            // Perform searches with individual error handling
-            let userResults = await searchUsersWithErrorHandling(query: query)
-            let postResults = await searchPostsWithErrorHandling(query: query)
-            let tradeResults = await searchTradesWithErrorHandling(query: query)
-            let communityResults = await searchCommunitiesWithErrorHandling(query: query)
-            
-            // Combine all results
-            let allResults = userResults + postResults + tradeResults + communityResults
+        // Run the four searches in parallel; each one handles its own errors.
+        async let userResults = searchUsersWithErrorHandling(query: query)
+        async let postResults = searchPostsWithErrorHandling(query: query)
+        async let tradeResults = searchTradesWithErrorHandling(query: query)
+        async let communityResults = searchCommunitiesWithErrorHandling(query: query)
+        
+        let allResults = await userResults + postResults + tradeResults + communityResults
             print("📊 SearchViewModel: Total results found: \(allResults.count)")
             
             await MainActor.run {
@@ -144,13 +142,6 @@ class SearchViewModel: ObservableObject {
                 
                 print("✅ SearchViewModel: Search completed with \(searchResults.count) results")
             }
-            
-        } catch {
-            print("❌ SearchViewModel: Search failed with error: \(error)")
-            await MainActor.run {
-                handleSearchError(error)
-            }
-        }
     }
     private func searchUsersWithErrorHandling(query: String) async -> [SearchResult] {
         do {

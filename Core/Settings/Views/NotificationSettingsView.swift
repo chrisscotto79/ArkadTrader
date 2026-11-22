@@ -45,7 +45,7 @@ struct NotificationSettingsView: View {
                             }
                         }
                     }
-                    .onChange(of: pushNotificationsEnabled) { newValue in
+                    .onChange(of: pushNotificationsEnabled) { _, newValue in
                         if newValue {
                             Task {
                                 await requestNotificationPermission()

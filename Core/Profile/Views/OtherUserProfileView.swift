@@ -96,19 +96,10 @@ struct OtherUserProfileView: View {
     // MARK: - Data Loading
     
     private func loadUserData() async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                await loadUserTrades()
-            }
-            
-            group.addTask {
-                postsViewModel.loadUserPosts(userId: user.id)
-            }
-            
-            group.addTask {
-                groupsViewModel.loadUserGroups(userId: user.id)
-            }
-        }
+        // Posts and groups load in their own tasks; trades load here.
+        postsViewModel.loadUserPosts(userId: user.id)
+        groupsViewModel.loadUserGroups(userId: user.id)
+        await loadUserTrades()
     }
     
     private func loadUserTrades() async {
@@ -624,7 +615,7 @@ struct OtherUserGroupCard: View {
                 
                 Spacer()
                 
-                Text(group.category ?? "General")
+                Text(group.category)
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

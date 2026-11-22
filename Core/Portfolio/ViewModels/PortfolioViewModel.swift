@@ -45,7 +45,7 @@ class PortfolioViewModel: ObservableObject {
     // MARK: - Setup Methods
     private func setupRealtimeUpdates() {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            self?.updateCurrentPrices()
+            Task { @MainActor in self?.updateCurrentPrices() }
         }
     }
     
@@ -204,7 +204,6 @@ class PortfolioViewModel: ObservableObject {
         let currentValueOfOpenPositions = openTrades.reduce(0) { $0 + $1.currentValue }
         let totalInvestedInOpenPositions = openTrades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
         let realizedPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
-        let unrealizedPL = currentValueOfOpenPositions - totalInvestedInOpenPositions
         
         // Available Cash = Starting Capital + Realized P&L - Money Currently Invested
         let availableCash = startingCapital + realizedPL - totalInvestedInOpenPositions

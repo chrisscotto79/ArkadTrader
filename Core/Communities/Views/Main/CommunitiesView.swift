@@ -30,7 +30,7 @@ struct CommunitiesView: View {
     @StateObject private var globalLeaderboardViewModel = GlobalLeaderboardViewModel()
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 // Enhanced background with mesh gradient effect
                 ZStack {
@@ -74,37 +74,19 @@ struct CommunitiesView: View {
                     modernSideMenuOverlay
                 }
                 
-                // Hidden NavigationLinks
-                NavigationLink(
-                    destination: Group {
-                        if let community = selectedLeaderboardCommunity {
-                            SimpleConsistencyLeaderboardView(community: community)
-                                .environmentObject(authService)
-                        } else {
-                            EmptyView()
-                        }
-                    },
-                    isActive: $navigateToLeaderboard
-                ) {
-                    EmptyView()
-                }
-                .hidden()
-
-                NavigationLink(
-                    destination: Group {
-                        if let community = selectedCommunity {
-                            CommunityDetailView(community: community)
-                        } else {
-                            EmptyView()
-                        }
-                    },
-                    isActive: $navigateToCommunity
-                ) {
-                    EmptyView()
-                }
-                .hidden()
             }
             .navigationBarHidden(true)
+            .navigationDestination(isPresented: $navigateToLeaderboard) {
+                if let community = selectedLeaderboardCommunity {
+                    SimpleConsistencyLeaderboardView(community: community)
+                        .environmentObject(authService)
+                }
+            }
+            .navigationDestination(isPresented: $navigateToCommunity) {
+                if let community = selectedCommunity {
+                    CommunityDetailView(community: community)
+                }
+            }
             .sheet(isPresented: $showCreateCommunity) {
                 CreateCommunityView()
             }
@@ -137,7 +119,6 @@ struct CommunitiesView: View {
                 viewModel.loadInitialData()
             }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
     }
     
     // MARK: - Navigation Helpers
@@ -685,7 +666,7 @@ extension CommunitiesView {
             .padding(.bottom, 100)
         }
         .refreshable {
-            await viewModel.refreshData()
+            viewModel.refreshData()
         }
     }
     

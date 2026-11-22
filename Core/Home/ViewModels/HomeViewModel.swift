@@ -121,8 +121,6 @@ class HomeViewModel: ObservableObject {
 
     // Filter posts to exclude hidden ones
     private func filterHiddenPosts() {
-        let currentUserId = authService.currentUser?.id ?? ""
-        
         posts = posts.filter { post in
             !hiddenPosts.contains(post.id) &&
             !reportedPostsByUser.contains(post.id)
@@ -195,15 +193,8 @@ class HomeViewModel: ObservableObject {
         isLoadingMore = true
         currentPage += 1
         
-        do {
-            // In a real implementation, you'd implement pagination in Firebase
-            // For now, we'll just indicate there are no more posts after first load
-            hasMorePosts = false
-            
-        } catch {
-            errorMessage = "Failed to load more posts: \(error.localizedDescription)"
-            showError = true
-        }
+        // Pagination isn't implemented yet; the first load returns everything.
+        hasMorePosts = false
         
         isLoadingMore = false
     }

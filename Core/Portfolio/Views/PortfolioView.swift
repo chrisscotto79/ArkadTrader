@@ -381,7 +381,6 @@ extension PortfolioView {
         let maxValue = data.max() ?? 0
         let minValue = data.min() ?? 0
         let range = maxValue - minValue
-        let adjustedRange = range < 1 ? 100.0 : range
         let adjustedMin = range < 1 ? minValue - 50.0 : minValue
         let adjustedMax = range < 1 ? maxValue + 50.0 : maxValue
         let finalRange = adjustedMax - adjustedMin

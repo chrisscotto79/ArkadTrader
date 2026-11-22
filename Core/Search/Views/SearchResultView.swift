@@ -355,8 +355,8 @@ struct SearchResultView: View {
         )
         
         minimalUser.bio = "Trader on ArkadTrader"
-        minimalUser.followersCount = user.followersCount ?? 0
-        minimalUser.followingCount = user.followingCount ?? 0
+        minimalUser.followersCount = user.followersCount
+        minimalUser.followingCount = user.followingCount
         minimalUser.totalProfitLoss = user.totalProfitLoss
         minimalUser.winRate = user.winRate
         

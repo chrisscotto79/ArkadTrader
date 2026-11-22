@@ -46,16 +46,10 @@ class ProfileViewModel: ObservableObject {
         isLoading = true
         
         Task {
-            do {
-                self.user = authService.currentUser
-                await loadProfileStats()
-                await loadUserContent()
-                self.isLoading = false
-            } catch {
-                self.errorMessage = "Failed to load profile: \(error.localizedDescription)"
-                self.showError = true
-                self.isLoading = false
-            }
+            self.user = authService.currentUser
+            await loadProfileStats()
+            await loadUserContent()
+            self.isLoading = false
         }
     }
     
@@ -111,7 +105,7 @@ class ProfileViewModel: ObservableObject {
     
     // MARK: - Profile Updates
     func updateProfile() async {
-        guard let userId = authService.currentUser?.id else { return }
+        guard authService.currentUser != nil else { return }
         
         isLoading = true
         

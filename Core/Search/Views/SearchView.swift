@@ -141,7 +141,7 @@ struct SearchView: View {
                     .onSubmit {
                         performSearch()
                     }
-                    .onChange(of: searchText) { newValue in
+                    .onChange(of: searchText) { _, newValue in
                         handleSearchTextChange(newValue)
                     }
             }
