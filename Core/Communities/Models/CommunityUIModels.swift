@@ -93,6 +93,8 @@ struct CommunityMessage: Identifiable, Codable {
     var channelId: String
     var communityId: String
     var createdAt: Date
+    /// Structured trade callout, when this message is one
+    var callout: TradeCallout?
     
     init(content: String, authorId: String, authorUsername: String, channelId: String, communityId: String) {
         self.id = UUID().uuidString
@@ -106,7 +108,7 @@ struct CommunityMessage: Identifiable, Codable {
     
     // Firebase conversion
     func toFirestore() -> [String: Any] {
-        return [
+        var data: [String: Any] = [
             "content": content,
             "authorId": authorId,
             "authorUsername": authorUsername,
@@ -114,6 +116,8 @@ struct CommunityMessage: Identifiable, Codable {
             "communityId": communityId,
             "createdAt": Timestamp(date: createdAt)
         ]
+        if let callout { data["callout"] = callout.toFirestore() }
+        return data
     }
     
     static func fromFirestore(data: [String: Any], id: String) throws -> CommunityMessage {
@@ -135,6 +139,9 @@ struct CommunityMessage: Identifiable, Codable {
         )
         message.id = id
         message.createdAt = createdAtTimestamp.dateValue()
+        if let calloutData = data["callout"] as? [String: Any] {
+            message.callout = TradeCallout.fromFirestore(calloutData)
+        }
         return message
     }
 }

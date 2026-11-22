@@ -630,6 +630,14 @@ extension FirebaseServices {
             }
     }
     
+    /// Update the status of a trade callout (open, target hit, stopped out, closed).
+    func updateCalloutStatus(messageId: String, channelId: String, communityId: String, status: TradeCallout.Status) async throws {
+        try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages").document(messageId)
+            .updateData(["callout.status": status.rawValue])
+    }
+    
     func deleteCommunityMessage(messageId: String, communityId: String, channelId: String) async throws {
         try await db.collection("communities").document(communityId)
             .collection("channels").document(channelId)

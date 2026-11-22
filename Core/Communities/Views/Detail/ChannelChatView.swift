@@ -626,6 +626,8 @@ struct ChannelChatView: View {
         @State private var showingCamera = false
         @State private var showingDocumentPicker = false
         @State private var showingMediaOptions = false
+        @State private var showCreateCallout = false
+        @State private var calloutToTrack: CommunityMessage?
         @State private var selectedImage: UIImage?
         @State private var selectedDocumentURL: URL?
         @State private var isUploadingMedia = false
@@ -679,6 +681,18 @@ struct ChannelChatView: View {
             if let user = selectedUserForProfile {
                 UserProfileSheet(user: user, community: community)
                     .environmentObject(authService)
+            }
+        }
+        .sheet(isPresented: $showCreateCallout) {
+            CreateCalloutSheet(channelName: channel.name) { callout in
+                viewModel.sendCallout(callout)
+            }
+        }
+        .sheet(item: $calloutToTrack) { message in
+            if let callout = message.callout {
+                TrackCalloutSheet(callout: callout, communityName: community.name) { entry, quantity in
+                    try await viewModel.trackCallout(callout, entryPrice: entry, quantity: quantity)
+                }
             }
         }
         .sheet(isPresented: $showingChannelInfo) {
@@ -894,7 +908,12 @@ extension ChannelChatView {
                                     showUserProfile = true
                                 },
                                 readReceipts: readReceipts[message.id] ?? [],
-                                currentUserId: authService.currentUser?.id ?? ""
+                                currentUserId: authService.currentUser?.id ?? "",
+                                canManageCallout: viewModel.canManageCallout(message),
+                                onTrackCallout: { calloutToTrack = message },
+                                onUpdateCalloutStatus: { status in
+                                    viewModel.updateCalloutStatus(message, to: status)
+                                }
                             )
                             .id(message.id)
                         }
@@ -984,8 +1003,11 @@ struct EnhancedMessageRowWithReactions: View {
     let onReact: (String) -> Void
     let onShowEmojiPicker: () -> Void
     let onProfileTap: (User) -> Void
-    let readReceipts: Set<String> // NEW: User IDs who have read this message
-    let currentUserId: String // NEW: Current user ID
+    let readReceipts: Set<String> // User IDs who have read this message
+    let currentUserId: String
+    var canManageCallout: Bool = false
+    var onTrackCallout: () -> Void = {}
+    var onUpdateCalloutStatus: (TradeCallout.Status) -> Void = { _ in }
     
     @State private var showingActions = false
     
@@ -1172,8 +1194,16 @@ struct EnhancedMessageRowWithReactions: View {
     
     private var messageContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // ENHANCED: Handle different message types
-            if let mediaContent = getMediaContent(from: message) {
+            // Handle different message types
+            if let callout = message.callout {
+                CalloutCardView(
+                    callout: callout,
+                    authorUsername: message.authorUsername,
+                    canManage: canManageCallout,
+                    onTrack: onTrackCallout,
+                    onUpdateStatus: onUpdateCalloutStatus
+                )
+            } else if let mediaContent = getMediaContent(from: message) {
                 mediaMessageView(mediaContent)
             } else {
                 // Regular text message bubble with mention highlighting
@@ -1636,7 +1666,19 @@ extension ChannelChatView {
             Divider()
             
             HStack(spacing: 12) {
-                // ENHANCED: Attachment Button with Media Options
+                // New trade callout (callout channels, admins only)
+                if channel.type == .callouts && viewModel.canUserPost {
+                    Button(action: { showCreateCallout = true }) {
+                        Image(systemName: "megaphone.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(Color.arkadGold))
+                    }
+                    .accessibilityLabel("New trade callout")
+                }
+                
+                // Attachment Button with Media Options
                 Button(action: {
                     showingMediaOptions = true
                 }) {

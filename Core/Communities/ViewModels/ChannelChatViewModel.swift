@@ -106,6 +106,67 @@ class ChannelChatViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Trade Callouts
+    
+    /// Post a structured trade callout (admins only in callout channels).
+    func sendCallout(_ callout: TradeCallout) {
+        guard let community = community, let channel = channel,
+              let currentUser = authService.currentUser, canUserPost else { return }
+        var message = CommunityMessage(
+            content: callout.summary,
+            authorId: currentUser.id,
+            authorUsername: currentUser.username,
+            channelId: channel.id,
+            communityId: community.id
+        )
+        message.callout = callout
+        Task {
+            do {
+                try await firebaseService.sendCommunityMessage(message)
+            } catch {
+                await handleError(error, context: "posting callout")
+            }
+        }
+    }
+    
+    /// The callout's author and community owners/admins can update its status.
+    func canManageCallout(_ message: CommunityMessage) -> Bool {
+        guard let userId = currentUserId else { return false }
+        let role = role(for: userId)
+        return message.authorId == userId || role == .owner || role == .admin
+    }
+    
+    func updateCalloutStatus(_ message: CommunityMessage, to status: TradeCallout.Status) {
+        guard let community = community, let channel = channel, canManageCallout(message) else { return }
+        if let index = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[index].callout?.status = status  // optimistic; listener confirms
+        }
+        Task {
+            do {
+                try await firebaseService.updateCalloutStatus(
+                    messageId: message.id, channelId: channel.id, communityId: community.id, status: status
+                )
+            } catch {
+                await handleError(error, context: "updating callout")
+            }
+        }
+    }
+    
+    /// Add a callout to the current user's portfolio as an open trade.
+    func trackCallout(_ callout: TradeCallout, entryPrice: Double, quantity: Int) async throws {
+        guard let currentUser = authService.currentUser else { throw FirestoreError.unauthorized }
+        var trade = Trade(ticker: callout.ticker, tradeType: callout.assetType, entryPrice: entryPrice,
+                          quantity: quantity, userId: currentUser.id)
+        trade.stopLossPrice = callout.stopPrice
+        trade.takeProfitPrice = callout.targetPrice
+        trade.strategy = "Callout (\(callout.direction.displayName))"
+        trade.notes = ["From a callout in \(community?.name ?? "a community")", callout.note]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        trade.tags = ["callout", callout.direction.rawValue]
+        if let communityId = community?.id { trade.sharedCommunityIds = [communityId] }
+        try await authService.addTrade(trade)
+    }
+    
     // MARK: - Firebase-Backed Message Reactions
     
     /// Add or remove reaction to a message (toggle behavior)
