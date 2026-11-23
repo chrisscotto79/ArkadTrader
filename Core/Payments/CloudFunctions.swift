@@ -62,6 +62,10 @@ enum CloudFunctions {
         if let error = error as? CloudFunctionError {
             return error.errorDescription ?? "Something went wrong. Try again."
         }
+        // The brokerage Worker's own errors (Core/Brokerage/BrokerageService.swift)
+        if let error = error as? BrokerageAPIError {
+            return error.errorDescription ?? "Something went wrong. Try again."
+        }
 
         let nsError = error as NSError
         if nsError.domain == FunctionsErrorDomain, let code = FunctionsErrorCode(rawValue: nsError.code) {

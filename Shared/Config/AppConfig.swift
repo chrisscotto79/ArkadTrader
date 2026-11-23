@@ -22,15 +22,26 @@ enum AppConfig {
 
     // MARK: - Free mode
     //
-    // Arkad currently runs on Firebase's free (Spark) plan with no Cloud Functions,
-    // Stripe or SnapTrade. These switches turn the server-backed features back on
-    // once the backend in functions/ is deployed (see docs/backend-setup.md).
+    // Arkad currently runs on Firebase's free (Spark) plan with no Cloud Functions or
+    // Stripe. These switches turn the server-backed features back on once the backend in
+    // functions/ is deployed (see docs/backend-setup.md).
 
     /// Paid communities, payouts, subscriptions and the revenue dashboard.
     static let paidCommunitiesEnabled = false
 
-    /// Read-only brokerage linking through SnapTrade.
-    static let brokerageLinkingEnabled = false
+    /// The Cloudflare Worker that does read-only brokerage linking through SnapTrade
+    /// (brokerage-worker/, docs/brokerage-worker-setup.md). Read from `BrokerageWorkerURL`
+    /// in Secrets.plist, like `https://arkad-brokerage.<you>.workers.dev`. Nil when not set.
+    static let brokerageWorkerURL: URL? = {
+        let raw = (secrets["BrokerageWorkerURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: raw), url.scheme == "https", url.host?.isEmpty == false,
+              !raw.contains("YOUR_") else { return nil }
+        return url
+    }()
+
+    /// Read-only brokerage linking (Robinhood, Coinbase and others through SnapTrade).
+    /// On once `BrokerageWorkerURL` is set in Secrets.plist.
+    static var brokerageLinkingEnabled: Bool { brokerageWorkerURL != nil }
 
     /// Cloud Functions are deployed. When false, the app does the work itself:
     /// it computes track records, creates inbox notifications, checks price alerts

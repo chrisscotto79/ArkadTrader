@@ -294,7 +294,9 @@ Subscriptions use `application_fee_percent: PLATFORM_FEE_PERCENT` and `transfer_
 
 ## 5. Brokerage linking (SnapTrade, read-only)
 
-### Callable functions
+**Free mode:** this runs on the Cloudflare Worker in `brokerage-worker/` instead of Cloud Functions, so Firebase can stay on Spark. The app POSTs to `<BrokerageWorkerURL>/connect`, `/sync`, `/disconnect` and `/delete-user` with `Authorization: Bearer <Firebase ID token>`; inputs and outputs are the same as the callables below, and errors are `{ error: { message } }` with an HTTP status. The Worker writes the same documents, signed in as a service account. It also serves the return page at `/open/brokerage/connected`. Setup: `docs/brokerage-worker-setup.md`. Brokerage linking is on when `BrokerageWorkerURL` is set in `App/Secrets.plist`.
+
+### Callable functions (Blaze plan only, not used in free mode)
 
 | name | input | output |
 |---|---|---|

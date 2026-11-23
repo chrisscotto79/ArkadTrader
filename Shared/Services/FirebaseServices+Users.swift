@@ -402,6 +402,14 @@ extension FirebaseServices {
             }
         }
 
+        // Linked brokerages: the Worker removes the SnapTrade user and the brokerage docs,
+        // which the rules don't let the app delete. Imported trades go with the trades below.
+        if AppConfig.brokerageLinkingEnabled {
+            await step("linked brokerages") {
+                try await BrokerageService.deleteLinkedData()
+            }
+        }
+
         // Track record
         await step("track record") {
             try await db.collection("traderStats").document(userId).delete()

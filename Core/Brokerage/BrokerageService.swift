@@ -1,9 +1,11 @@
 // File: Core/Brokerage/BrokerageService.swift
-// Read-only brokerage linking through SnapTrade. The server writes connections, holdings and
-// imported trades; the app reads them and calls the snaptrade* functions.
-// See docs/backend-contracts.md, section 5.
+// Read-only brokerage linking through SnapTrade. The brokerage Worker (brokerage-worker/,
+// a Cloudflare Worker on the free plan) writes connections, holdings and imported trades;
+// the app reads them from Firestore and calls the Worker to connect, sync and disconnect.
+// See docs/backend-contracts.md, section 5, and docs/brokerage-worker-setup.md.
 
 import Foundation
+import FirebaseAuth
 import FirebaseFirestore
 
 // MARK: - Models
@@ -100,19 +102,87 @@ enum BrokerageService {
 
     /// SnapTrade connection portal URL; it redirects to `arkad://brokerage/connected`
     static func connectLink() async throws -> URL {
-        try await CloudFunctions.callForURL("snaptradeConnectLink")
+        let response = try await BrokerageAPI.post("connect", as: CloudLinkResponse.self)
+        guard let url = URL(string: response.url), url.scheme == "https" else {
+            throw BrokerageAPIError.invalidResponse
+        }
+        return url
     }
 
     /// Pulls holdings and trades from every connected brokerage
     static func sync() async throws -> BrokerageSyncResult {
-        try await CloudFunctions.call("snaptradeSync", as: BrokerageSyncResult.self)
+        try await BrokerageAPI.post("sync", as: BrokerageSyncResult.self)
     }
 
     static func disconnect(connectionId: String) async throws {
-        _ = try await CloudFunctions.call(
-            "snaptradeDisconnect",
-            data: ["connectionId": connectionId],
-            as: CloudOKResponse.self
-        )
+        _ = try await BrokerageAPI.post("disconnect", body: ["connectionId": connectionId], as: CloudOKResponse.self)
+    }
+
+    /// Account deletion: removes the SnapTrade user, its connections and the brokerage docs
+    /// the app can't delete itself. Does nothing when brokerage linking is off.
+    static func deleteLinkedData() async throws {
+        guard AppConfig.brokerageLinkingEnabled else { return }
+        _ = try await BrokerageAPI.post("delete-user", as: CloudOKResponse.self)
+    }
+}
+
+// MARK: - Worker client
+
+/// An error from the brokerage Worker, with a message that's safe to show.
+enum BrokerageAPIError: LocalizedError {
+    case notConfigured
+    case signedOut
+    case server(String)
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured: return "Brokerage linking isn't available yet. Try again later."
+        case .signedOut: return "Sign in again to continue."
+        case .server(let message): return message
+        case .invalidResponse: return "Something went wrong. Try again."
+        }
+    }
+}
+
+/// POSTs JSON to the brokerage Worker with the user's Firebase ID token.
+/// Errors come back as `{ error: { message } }`.
+enum BrokerageAPI {
+    private struct ErrorBody: Decodable {
+        struct Detail: Decodable { let message: String? }
+        let error: Detail?
+    }
+
+    static func post<Response: Decodable>(
+        _ path: String,
+        body: [String: String] = [:],
+        as type: Response.Type = Response.self
+    ) async throws -> Response {
+        guard let base = AppConfig.brokerageWorkerURL else { throw BrokerageAPIError.notConfigured }
+        guard let user = Auth.auth().currentUser else { throw BrokerageAPIError.signedOut }
+        let token = try await user.getIDToken()
+
+        var request = URLRequest(url: base.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        // Syncing a long history can take a while
+        request.timeoutInterval = path == "sync" ? 120 : 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            if status == 401 { throw BrokerageAPIError.signedOut }
+            let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error?.message
+            if let message, !message.isEmpty { throw BrokerageAPIError.server(message) }
+            // No message: nothing is deployed at that address
+            throw BrokerageAPIError.notConfigured
+        }
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            throw BrokerageAPIError.invalidResponse
+        }
     }
 }

@@ -86,7 +86,7 @@ enum LegalDocumentType: String, Identifiable {
     case privacy
 
     /// Shown at the top of both documents. Update whenever the text changes.
-    static let effectiveDate = "November 22, 2026"
+    static let effectiveDate = "November 23, 2026"
 
     var id: String { rawValue }
 
@@ -152,7 +152,7 @@ enum LegalDocumentType: String, Identifiable {
             ),
             LegalSection(
                 heading: "Third-party services",
-                body: "The Service relies on third parties, including Google Firebase for accounts and data storage and Finnhub for market news and quotes. Market data may be delayed, incomplete or wrong, and is provided only for your information. Your use of a third-party service may be governed by that provider's own terms. If we add features that connect to brokerages or other services, additional terms may apply and will be shown to you first."
+                body: "The Service relies on third parties, including Google Firebase for accounts and data storage and Finnhub for market news and quotes. Market data may be delayed, incomplete or wrong, and is provided only for your information. Your use of a third-party service may be governed by that provider's own terms. If you link a brokerage, the read-only connection is made by SnapTrade, and your use of it may be governed by SnapTrade's terms. Holdings and trades imported from a brokerage come as the brokerage reports them and may be delayed, incomplete or wrong."
             ),
             LegalSection(
                 heading: "Our rights",
@@ -215,7 +215,7 @@ enum LegalDocumentType: String, Identifiable {
             ),
             LegalSection(
                 heading: "How we share information",
-                body: "We don't sell your personal information, and we don't share it for cross-context behavioural advertising. We share information only:\n• With service providers who run the Service for us: Google Firebase (authentication, database, file storage and analytics) and Finnhub (market news and quotes). For quotes, the app sends Finnhub only the ticker symbols of your open stock positions, never your account details.\n• With Apple, if you make in-app purchases (when available).\n• When required by law, or to protect the rights, safety and property of our users, Arkad or others.\n• As part of a merger, acquisition or sale of assets, in which case this policy will continue to apply to your information."
+                body: "We don't sell your personal information, and we don't share it for cross-context behavioural advertising. We share information only:\n• With service providers who run the Service for us: Google Firebase (authentication, database, file storage and analytics) and Finnhub (market news and quotes). For quotes, the app sends Finnhub only the ticker symbols of your open stock positions, never your account details. If you link a brokerage, SnapTrade (which makes the read-only connection) and Cloudflare (which runs the service that talks to SnapTrade) process your brokerage data for us.\n• With Apple, if you make in-app purchases (when available).\n• When required by law, or to protect the rights, safety and property of our users, Arkad or others.\n• As part of a merger, acquisition or sale of assets, in which case this policy will continue to apply to your information."
             ),
             LegalSection(
                 heading: "Where data is stored and how it's protected",
@@ -238,8 +238,12 @@ enum LegalDocumentType: String, Identifiable {
                 body: "Arkad is for people 18 and older. We don't knowingly collect information from anyone under 18. If you think a minor has created an account, email \(AppInfo.supportEmail) and we'll delete it."
             ),
             LegalSection(
+                heading: "Linked brokerages",
+                body: "Linking a brokerage is optional. If you link one (such as Robinhood or Coinbase), you sign in on SnapTrade's page, not in Arkad, so Arkad never sees your brokerage password. The connection is read-only: Arkad can't place trades or move money. Arkad receives the brokerage's name, your holdings (symbols, quantities, prices and cost) and your buys and sells from the last 90 days, and saves them to your account as holdings and Verified trades. Imported trades stay private unless you choose to show them on your profile. You can disconnect in Settings > Linked brokerages: that brokerage's holdings are removed, and imported trades stay until you delete them. Deleting your account also removes your link with SnapTrade."
+            ),
+            LegalSection(
                 heading: "New features",
-                body: "If we add features that use new kinds of information, such as connecting a brokerage account or paying for a community, we'll update this policy and explain what's collected before you use them."
+                body: "If we add features that use new kinds of information, such as paying for a community, we'll update this policy and explain what's collected before you use them."
             ),
             LegalSection(
                 heading: "Changes to this policy",

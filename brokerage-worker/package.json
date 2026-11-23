@@ -1,0 +1,20 @@
+{
+  "name": "arkad-brokerage-worker",
+  "private": true,
+  "description": "Read-only brokerage linking (SnapTrade) for Arkad, on Cloudflare Workers' free plan",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "logs": "wrangler tail"
+  },
+  "dependencies": {
+    "jose": "^6.2.18"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261123.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.166.0"
+  }
+}

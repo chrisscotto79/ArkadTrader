@@ -1,0 +1,19 @@
+# Cloudflare Worker for read-only brokerage linking. Setup: docs/brokerage-worker-setup.md
+#
+# Secrets (set with `npx wrangler secret put NAME`, never written here):
+#   SNAPTRADE_CLIENT_ID       SnapTrade dashboard
+#   SNAPTRADE_CONSUMER_KEY    SnapTrade dashboard
+#   FIREBASE_SERVICE_ACCOUNT  the whole JSON key file of a Google service account
+#                             with the "Cloud Datastore User" role on arkad-ios-app
+
+name = "arkad-brokerage"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "arkad-ios-app"
+# How far back the first sync imports buys and sells
+IMPORT_DAYS = "90"
+
+[observability]
+enabled = true
