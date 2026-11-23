@@ -33,6 +33,49 @@ final class PortfolioViewModel: ObservableObject {
 
     /// Holdings synced from linked brokerages (read-only, written by the server)
     @Published var brokerageHoldings: [BrokerageHolding] = []
+    /// Linked brokerages. When any has synced, the account value is theirs instead of the
+    /// manual balance (`linkedAccount`).
+    @Published private(set) var brokerageConnections: [BrokerageConnection] = []
+
+    /// The linked brokerages' total, or nil when none is linked (or none has synced yet)
+    var linkedAccount: LinkedAccountSummary? {
+        guard AppConfig.brokerageLinkingEnabled else { return nil }
+        return LinkedAccountSummary(connections: brokerageConnections)
+    }
+
+    /// The account value shown at the top of Portfolio: the linked brokerages' total, or the
+    /// manual balance plus logged trades
+    var accountValue: Double {
+        linkedAccount?.totalValue ?? portfolio?.totalValue ?? 0
+    }
+
+    /// Account value over time for the Portfolio chart, oldest first, ending now.
+    /// - Linked brokerage: the daily values the Worker records on each sync.
+    /// - Manual: the starting balance plus each closed trade's P&L as of its close date (open
+    ///   trades count at cost until today's point). Deposits and withdrawals aren't dated, so
+    ///   the current balance is used throughout. Empty without a starting balance.
+    var accountValueSeries: [AccountValuePoint] {
+        if let linked = linkedAccount {
+            var points = linked.history
+            if let last = points.last, Calendar.current.isDateInToday(last.date) {
+                points.removeLast()
+            }
+            points.append(AccountValuePoint(date: Date(), value: linked.totalValue))
+            return points
+        }
+        guard let startingCapital, let firstEntry = trades.map(\.entryDate).min() else { return [] }
+        let closes = trades.filter { !$0.isOpen }
+            .map { (date: $0.exitDate ?? $0.entryDate, amount: $0.profitLoss) }
+            .sorted { $0.date < $1.date }
+        var running = startingCapital
+        var points = [AccountValuePoint(date: min(firstEntry, closes.first?.date ?? firstEntry), value: running)]
+        for close in closes {
+            running += close.amount
+            points.append(AccountValuePoint(date: close.date, value: running))
+        }
+        points.append(AccountValuePoint(date: max(Date(), points.last?.date ?? Date()), value: accountValue))
+        return points
+    }
 
     /// Win rate and P&L from price-checked and verified trades: the numbers that count
     @Published private(set) var checkedStats = TradeStats(trades: [])
@@ -157,6 +200,7 @@ final class PortfolioViewModel: ObservableObject {
         latestQuotes = [:]
         publishedStats = nil
         brokerageHoldings = []
+        brokerageConnections = []
         showStartingCapitalPrompt = false
         showDepositWithdrawSheet = false
         checkedStats = TradeStats(trades: [])
@@ -453,17 +497,20 @@ final class PortfolioViewModel: ObservableObject {
 
     // MARK: - Brokerage
 
-    /// Reads users/{uid}/brokerageHoldings. Holdings are shown separately and don't change account value.
+    /// Reads users/{uid}/brokerageConnections and brokerageHoldings. Once a linked brokerage has
+    /// synced, the Portfolio's account value comes from it (`linkedAccount`).
     /// Does nothing while brokerage linking is off (free mode).
     func loadBrokerageHoldings() async {
         guard AppConfig.brokerageLinkingEnabled, let userId = authService.currentUser?.id else {
             brokerageHoldings = []
+            brokerageConnections = []
             return
         }
-        // Keep what we have if the read fails (offline); there's nothing the user can fix here
-        if let holdings = try? await BrokerageService.holdings(userId: userId) {
-            brokerageHoldings = holdings
-        }
+        // Keep what we have if a read fails (offline); there's nothing the user can fix here
+        async let holdings = try? BrokerageService.holdings(userId: userId)
+        async let connections = try? BrokerageService.connections(userId: userId)
+        if let holdings = await holdings { brokerageHoldings = holdings }
+        if let connections = await connections { brokerageConnections = connections }
     }
 
     // MARK: - Profile

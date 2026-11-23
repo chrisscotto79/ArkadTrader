@@ -22,6 +22,15 @@ struct BrokerageConnection: Identifiable, Sendable, Equatable {
     var status: Status
     var createdAt: Date?
     var lastSyncAt: Date?
+    /// Totals across the connection's accounts as of the last sync. Nil before the first sync
+    /// that recorded them.
+    var cashBalance: Double?
+    var holdingsValue: Double?
+    var totalValue: Double?
+    /// SnapTrade is still pulling this connection's data, so an empty account may not be empty yet
+    var initialSyncPending: Bool
+    /// One value per day (the Worker records one each sync), oldest first
+    var valueHistory: [AccountValuePoint]
 
     init(id: String, data: [String: Any]) {
         self.id = id
@@ -29,6 +38,78 @@ struct BrokerageConnection: Identifiable, Sendable, Equatable {
         status = Status(rawValue: data["status"] as? String ?? "") ?? .connected
         createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
         lastSyncAt = (data["lastSyncAt"] as? Timestamp)?.dateValue()
+        cashBalance = (data["cashBalance"] as? NSNumber)?.doubleValue
+        holdingsValue = (data["holdingsValue"] as? NSNumber)?.doubleValue
+        totalValue = (data["totalValue"] as? NSNumber)?.doubleValue
+        initialSyncPending = data["initialSyncPending"] as? Bool ?? false
+        valueHistory = (data["valueHistory"] as? [[String: Any]] ?? []).compactMap { entry in
+            guard let day = entry["date"] as? String, let date = AccountValuePoint.date(fromDay: day),
+                  let value = (entry["value"] as? NSNumber)?.doubleValue, value.isFinite else { return nil }
+            return AccountValuePoint(date: date, value: value)
+        }
+        .sorted { $0.date < $1.date }
+    }
+}
+
+/// An account value at a point in time, for the Portfolio chart
+struct AccountValuePoint: Identifiable, Equatable, Sendable {
+    let date: Date
+    let value: Double
+    var id: Date { date }
+
+    /// "2026-11-23" (a UTC day, as the Worker writes it) as noon UTC, so it lands on the same
+    /// calendar day in every US time zone
+    static func date(fromDay day: String) -> Date? {
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
+    }
+}
+
+/// What the linked brokerages add up to, for the Portfolio's account value
+struct LinkedAccountSummary: Equatable {
+    var totalValue: Double
+    var cash: Double
+    var names: [String]
+    var lastSyncAt: Date?
+    var syncPending: Bool
+    /// Daily total across the linked brokerages, oldest first
+    var history: [AccountValuePoint]
+
+    /// Nil until at least one connection has synced its totals
+    init?(connections: [BrokerageConnection]) {
+        let synced = connections.filter { $0.totalValue != nil }
+        guard !synced.isEmpty else { return nil }
+        totalValue = synced.reduce(0) { $0 + ($1.totalValue ?? 0) }
+        cash = synced.reduce(0) { $0 + ($1.cashBalance ?? 0) }
+        names = synced.map(\.brokerageName)
+        lastSyncAt = synced.compactMap(\.lastSyncAt).min()
+        syncPending = connections.contains(where: \.initialSyncPending)
+        history = Self.combinedHistory(synced.map(\.valueHistory))
+    }
+
+    /// Adds up several brokerages day by day. A brokerage with no value recorded on a day
+    /// counts at its most recent earlier value (or nothing, before its first).
+    private static func combinedHistory(_ histories: [[AccountValuePoint]]) -> [AccountValuePoint] {
+        guard histories.count > 1 else { return histories.first ?? [] }
+        let days = Set(histories.flatMap { $0.map(\.date) }).sorted()
+        return days.map { day in
+            let total = histories.reduce(0.0) { sum, history in
+                sum + (history.last(where: { $0.date <= day })?.value ?? 0)
+            }
+            return AccountValuePoint(date: day, value: total)
+        }
+    }
+
+    /// "Robinhood", "Robinhood and Coinbase", "3 brokerages"
+    var title: String {
+        switch names.count {
+        case 1: return names[0]
+        case 2: return "\(names[0]) and \(names[1])"
+        default: return "\(names.count) brokerages"
+        }
     }
 }
 

@@ -20,31 +20,44 @@ export interface Authorization {
   brokerage?: { name?: string; display_name?: string };
 }
 
+/** An investment account from `GET /accounts/all` (other kinds, like bank accounts, are skipped) */
 export interface Account {
+  kind?: string;
   id: string;
-  brokerage_authorization: string;
-  institution_name?: string;
+  connection_id: string;
+  display_name?: string | null;
+  net_value?: { amount?: number | null; currency?: string | null } | null;
+  raw_type?: string | null;
+  sync_status?: {
+    positions?: string | null;
+    transactions?: { initial_sync_completed?: boolean } | null;
+  } | null;
+}
+
+/** A position from `GET /accounts/{id}/positions/all`. Numbers arrive as strings. */
+export interface Position {
+  instrument?: {
+    kind?: string;
+    id?: string;
+    symbol?: string;
+    raw_symbol?: string;
+    multiplier?: string | null;
+    underlying?: { symbol?: string } | null;
+  };
+  units?: string | null;
+  price?: string | null;
+  cost_basis?: string | null;
+  cash_equivalent?: boolean;
+}
+
+/** One currency's cash from `GET /accounts/{id}/balances` */
+export interface Balance {
+  currency?: { code?: string } | null;
+  cash?: number | null;
 }
 
 interface SymbolType {
   code?: string;
-}
-
-export interface Holdings {
-  positions?: Array<{
-    symbol?: { symbol?: { id?: string; symbol?: string; type?: SymbolType } };
-    units?: number | null;
-    fractional_units?: number | null;
-    price?: number | null;
-    average_purchase_price?: number | null;
-    cash_equivalent?: boolean | null;
-  }>;
-  option_positions?: Array<{
-    symbol?: { option_symbol?: { id?: string; ticker?: string } };
-    units?: number | null;
-    price?: number | null;
-    average_purchase_price?: number | null;
-  }>;
 }
 
 export interface Activity {
@@ -116,7 +129,7 @@ export class SnapTrade {
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
     const text = await res.text();
-    if (!res.ok) throw new UpstreamError("SnapTrade", res.status, text.slice(0, 500));
+    if (!res.ok) throw new UpstreamError("SnapTrade", res.status, `${method} ${path}: ${text.slice(0, 500)}`);
     return (text ? JSON.parse(text) : undefined) as T;
   }
 
@@ -145,12 +158,37 @@ export class SnapTrade {
     return this.request("GET", "/authorizations", { user });
   }
 
-  accounts(user: SnapTradeUser): Promise<Account[]> {
-    return this.request("GET", "/accounts", { user });
+  /** Investment accounts across every connection. `/accounts` and `/accounts/{id}/holdings`
+   *  return 410 for SnapTrade customers who signed up after May 11, 2026. */
+  async accounts(user: SnapTradeUser): Promise<Account[]> {
+    const res = await this.request<{ results?: Account[] }>("GET", "/accounts/all", { user });
+    return (res?.results ?? []).filter((a) => a.id && a.connection_id && (a.kind ?? "investment") === "investment");
   }
 
-  holdings(user: SnapTradeUser, accountId: string): Promise<Holdings> {
-    return this.request("GET", `/accounts/${encodeURIComponent(accountId)}/holdings`, { user });
+  async positions(user: SnapTradeUser, accountId: string): Promise<Position[]> {
+    const res = await this.request<{ results?: Position[] }>("GET", `/accounts/${encodeURIComponent(accountId)}/positions/all`, { user });
+    return res?.results ?? [];
+  }
+
+  /** Estimated daily account values for up to a year. A free add-on that's off by default
+   *  (SnapTrade dashboard -> Add-ons); fails when it isn't enabled. */
+  async valueHistory(user: SnapTradeUser, accountId: string): Promise<Array<{ date: string; value: number }>> {
+    const res = await this.request<{ history?: Array<{ date?: string; total_value?: string | number }> }>(
+      "GET",
+      `/accounts/${encodeURIComponent(accountId)}/balanceHistory`,
+      { user },
+    );
+    const out: Array<{ date: string; value: number }> = [];
+    for (const h of res?.history ?? []) {
+      const date = (h.date ?? "").slice(0, 10);
+      const value = Number(h.total_value);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(value)) out.push({ date, value });
+    }
+    return out;
+  }
+
+  balances(user: SnapTradeUser, accountId: string): Promise<Balance[]> {
+    return this.request("GET", `/accounts/${encodeURIComponent(accountId)}/balances`, { user });
   }
 
   /** Buys and sells between two dates (YYYY-MM-DD), every page */

@@ -1,9 +1,10 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
-// The Portfolio tab: account value, performance chart, key stats, and your open and closed trades.
-// Tap a trade to close, edit or delete it; the gold "+" logs a new one. Linked brokerages add a
-// read-only holdings section and Verified imported trades (hidden while AppConfig.brokerageLinkingEnabled is off).
-// Every trade row shows its proof label. Win rate, realized P&L, the chart and best trade count only
-// price-checked and verified trades; self-reported totals are shown separately, labelled as such.
+// The Portfolio tab: account value with a line chart, linked brokerage holdings, your trading record,
+// and your open and closed trades. Tap a trade to close, edit or delete it; the gold "+" logs a new one.
+// With a linked brokerage (AppConfig.brokerageLinkingEnabled), the account value and chart are the
+// brokerage's own; otherwise they're your starting balance plus logged trades.
+// Every trade row shows its proof label. Win rate, realized P&L and best trade count only
+// price-checked and verified trades; self-reported totals sit on one line underneath, labelled.
 
 import SwiftUI
 import Charts
@@ -15,7 +16,6 @@ struct PortfolioView: View {
 
     @State private var showAddTrade = false
     @State private var selectedTrade: Trade?
-    @State private var chartRange: ChartRange = .all
     @State private var showAllClosed = false
     @State private var showLinkedAccounts = false
 
@@ -101,16 +101,16 @@ struct PortfolioView: View {
             if let error = portfolioViewModel.loadError {
                 loadErrorCard(error)
             }
-            heroCard
+            valueCard
             if portfolioViewModel.trades.isEmpty && portfolioViewModel.loadError != nil {
                 EmptyView()
             } else if portfolioViewModel.trades.isEmpty && !isFirstLoad {
+                holdingsSection
                 emptyJournal
-                holdingsSection
             } else {
-                statsGrid
-                openPositionsSection
                 holdingsSection
+                recordCard
+                openPositionsSection
                 closedTradesSection
             }
         }
@@ -131,44 +131,27 @@ struct PortfolioView: View {
         .cardStyle()
     }
 
-    // MARK: - Hero
+    // MARK: - Account value & chart
 
-    private var heroCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.l) {
-            accountValueBlock
-            Divider().overlay(Color.hairline)
-            chartBlock
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle(padding: 20)
-    }
-
-    private var accountValueBlock: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            HStack(alignment: .center) {
-                Text("Account value")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: DS.Spacing.s)
+    private var valueCard: some View {
+        AccountValueCard(
+            currentValue: portfolioViewModel.accountValue,
+            points: portfolioViewModel.accountValueSeries,
+            source: valueSource,
+            emptyChartMessage: emptyChartMessage
+        ) {
+            if let linked = portfolioViewModel.linkedAccount {
+                Button {
+                    showLinkedAccounts = true
+                } label: {
+                    Label(linked.title, systemImage: "building.columns")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                }
+                .buttonStyle(PillButtonStyle(kind: .neutral))
+                .accessibilityHint("Manage linked brokerages")
+            } else {
                 balanceButton
-            }
-
-            Text(portfolioValue.asCurrency)
-                .arkadNumber(40)
-                .foregroundStyle(Color.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .contentTransition(.numericText())
-                .animation(.snappy, value: portfolioValue)
-
-            VStack(alignment: .leading, spacing: 4) {
-                ChangePill(text: totalPLText, isPositive: totalProfitLoss >= 0)
-                    .lineLimit(1)
-                    .fixedSize()
-                Text(accountChangeCaption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -188,179 +171,118 @@ struct PortfolioView: View {
         .buttonStyle(PillButtonStyle(kind: .neutral))
     }
 
-    /// The account value is a balance over every logged trade, so say when it includes self-reported ones
-    private var accountChangeCaption: String {
-        let base = startingCapital == nil ? "Realized" : "All time"
-        return selfReported.tradeCount > 0 ? "\(base), including self-reported trades" : base
-    }
-
-    private var totalPLText: String {
-        if let returnPercentage {
-            return "\(totalProfitLoss.asCurrencyWithSign) (\(String(format: "%+.1f%%", returnPercentage)))"
-        }
-        return totalProfitLoss.asCurrencyWithSign
-    }
-
-    // MARK: - Chart
-
-    @ViewBuilder
-    private var chartBlock: some View {
-        if countedClosedTrades.isEmpty {
-            chartEmptyState
-        } else {
-            VStack(alignment: .leading, spacing: DS.Spacing.m) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Performance")
-                            .font(.headline)
-                        Text("Realized P&L, price-checked & verified trades")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if let last = pnlSeries.last {
-                        Text("\(last.value.asCurrencyWithSign) \(chartRange.caption)")
-                            .font(.caption.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(last.value >= 0 ? Color.marketGreen : Color.marketRed)
-                    }
-                }
-
-                if pnlSeries.count < 2 {
-                    Text("No price-checked trades closed \(chartRange.caption)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 80)
-                } else {
-                    PnLChart(points: pnlSeries)
-                        .frame(height: 180)
-                        .transition(.opacity)
-                }
-
-                rangeChips
+    /// Where the account value comes from, in one line under the chart
+    private var valueSource: String {
+        if let linked = portfolioViewModel.linkedAccount {
+            var parts = ["From \(linked.title)"]
+            if linked.cash != 0 { parts.append("\(linked.cash.asCurrency) cash") }
+            if linked.syncPending {
+                parts.append("still importing")
+            } else if let synced = linked.lastSyncAt {
+                parts.append("synced \(synced.formatted(.relative(presentation: .named)))")
             }
+            return parts.joined(separator: " · ")
         }
+        if startingCapital == nil { return "Open trades at today's prices" }
+        return selfReported.tradeCount > 0
+            ? "Your balance plus logged trades, including self-reported ones"
+            : "Your balance plus logged trades"
     }
 
-    /// Nothing to chart yet: one compact line instead of an empty plot and range picker
-    private var chartEmptyState: some View {
-        HStack(spacing: DS.Spacing.m) {
-            Image(systemName: "chart.xyaxis.line")
-                .font(.title3)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Performance")
-                    .font(.subheadline.weight(.semibold))
-                Text(closedTrades.isEmpty
-                     ? "Close a price-checked trade to start your chart."
-                     : "No price-checked closed trades yet.")
+    /// Why there's no line yet
+    private var emptyChartMessage: String {
+        if let linked = portfolioViewModel.linkedAccount {
+            return "Your chart starts today. Arkad adds a point each day \(linked.title) syncs."
+        }
+        if startingCapital == nil { return "Set a starting balance to chart your account value." }
+        return "Log a trade to start your chart."
+    }
+
+    // MARK: - Trading record
+
+    /// Win rate, realized P&L and best trade from price-checked and verified trades, with
+    /// self-reported totals on one line underneath
+    private var recordCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Trading record")
+                    .font(.headline)
+                Spacer(minLength: DS.Spacing.s)
+                Label("Price-checked & verified", systemImage: "checkmark.shield")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if checked.hasClosedTrades {
+                HStack(alignment: .top, spacing: DS.Spacing.m) {
+                    recordMetric(
+                        "Win rate",
+                        String(format: "%.0f%%", checked.winRate),
+                        detail: "\(checked.winCount) of \(checked.closedCount) won"
+                    )
+                    recordMetric(
+                        "Realized P&L",
+                        checked.realizedPL.asCurrencyWithSign,
+                        color: checked.realizedPL >= 0 ? .marketGreen : .marketRed,
+                        detail: "\(checked.closedTodayPL.asCurrencyWithSign) today"
+                    )
+                    recordMetric(
+                        "Best trade",
+                        bestTrade?.profitLoss.asCurrencyWithSign ?? "–",
+                        color: bestTrade.map { $0.profitLoss >= 0 ? Color.marketGreen : Color.marketRed } ?? .primary,
+                        detail: bestTrade?.ticker ?? " "
+                    )
+                }
+            } else {
+                Text("Close a price-checked trade to see your win rate and P&L.")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var rangeChips: some View {
-        HStack(spacing: DS.Spacing.s) {
-            ForEach(ChartRange.allCases) { range in
-                Chip(title: range.label, isSelected: chartRange == range) {
-                    withAnimation(.snappy(duration: 0.25)) { chartRange = range }
-                }
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    // MARK: - Stats
-
-    private var statsGrid: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: DS.Spacing.m),
-                                GridItem(.flexible(), spacing: DS.Spacing.m)],
-                      spacing: DS.Spacing.m) {
-                StatTile(
-                    title: "Win rate",
-                    value: checked.hasClosedTrades ? String(format: "%.0f%%", checked.winRate) : "–",
-                    footnote: checked.hasClosedTrades
-                        ? "\(checked.winCount) of \(checked.closedCount) won"
-                        : "No price-checked trades"
-                )
-                StatTile(
-                    title: "Realized P&L",
-                    value: checked.hasClosedTrades ? checked.realizedPL.asCurrencyWithSign : "–",
-                    valueColor: checked.hasClosedTrades ? (checked.realizedPL >= 0 ? .marketGreen : .marketRed) : .primary,
-                    footnote: checked.hasClosedTrades
-                        ? "\(checked.closedTodayPL.asCurrencyWithSign) closed today"
-                        : "No price-checked trades"
-                )
-                StatTile(
-                    title: "Open positions",
-                    value: "\(openTrades.count)",
-                    footnote: openTrades.isEmpty ? "Nothing open" : "\(openCostBasis.asCurrency) at cost"
-                )
-                StatTile(
-                    title: "Best trade",
-                    value: bestTrade?.profitLoss.asCurrencyWithSign ?? "–",
-                    valueColor: bestTrade.map { $0.profitLoss >= 0 ? Color.marketGreen : Color.marketRed } ?? .primary,
-                    footnote: bestTrade?.ticker ?? "No price-checked trades"
-                )
-            }
-
-            Label("Win rate and P&L count only price-checked and verified trades.", systemImage: "checkmark.shield")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             if selfReported.tradeCount > 0 {
-                selfReportedCard
+                Divider().overlay(Color.hairline)
+                HStack(spacing: DS.Spacing.s) {
+                    TradeProofBadge(proof: .selfReported, compact: true)
+                    Text(selfReportedSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
             }
-        }
-    }
-
-    /// Totals for self-reported trades, kept apart from the stats that count
-    private var selfReportedCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            HStack {
-                TradeProofBadge(proof: .selfReported)
-                Spacer()
-                Text("Not counted")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-            HStack(alignment: .top, spacing: DS.Spacing.m) {
-                selfReportedMetric("Trades", "\(selfReported.tradeCount)")
-                selfReportedMetric(
-                    "Realized P&L",
-                    selfReported.hasClosedTrades ? selfReported.realizedPL.asCurrencyWithSign : "–"
-                )
-                selfReportedMetric(
-                    "Win rate",
-                    selfReported.hasClosedTrades ? String(format: "%.0f%%", selfReported.winRate) : "–"
-                )
-            }
-            Text("Self-reported trades weren't logged at a checked market price, so they stay out of your win rate and P&L.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle(padding: 14, radius: DS.Radius.m)
+        .cardStyle()
     }
 
-    private func selfReportedMetric(_ title: String, _ value: String) -> some View {
+    /// "2 trades · +$24.00 realized · not counted"
+    private var selfReportedSummary: String {
+        var parts = ["\(selfReported.tradeCount) \(selfReported.tradeCount == 1 ? "trade" : "trades")"]
+        if selfReported.hasClosedTrades {
+            parts.append("\(selfReported.realizedPL.asCurrencyWithSign) realized")
+        }
+        parts.append("not counted")
+        return parts.joined(separator: " · ")
+    }
+
+    private func recordMetric(_ title: String, _ value: String, color: Color = .primary, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Text(value)
-                .arkadNumber(15, weight: .semibold)
-                .foregroundStyle(Color.secondary)
+                .arkadNumber(18, weight: .semibold)
+                .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -370,7 +292,7 @@ struct PortfolioView: View {
 
     private var openPositionsSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            SectionHeader(title: "Open positions", count: openTrades.count)
+            SectionHeader(title: "Open trades", count: openTrades.count)
             if portfolioViewModel.quotesUnavailable && openTrades.contains(where: { $0.tradeType == .stock }) {
                 Label("Live prices are unavailable right now. Pull to refresh in a minute.",
                       systemImage: "wifi.exclamationmark")
@@ -381,7 +303,7 @@ struct PortfolioView: View {
             if openTrades.isEmpty {
                 inlineEmpty(
                     icon: "tray",
-                    text: "No open positions. Tap + to log a trade, then tap it later to close it."
+                    text: "No open trades. Tap + to log one, then tap it later to close it."
                 )
             } else {
                 tradeList(openTrades)
@@ -439,11 +361,25 @@ struct PortfolioView: View {
 
     @ViewBuilder
     private var holdingsSection: some View {
-        if AppConfig.brokerageLinkingEnabled && !portfolioViewModel.brokerageHoldings.isEmpty {
-            BrokerageHoldingsSection(holdings: portfolioViewModel.brokerageHoldings) {
+        if AppConfig.brokerageLinkingEnabled,
+           !portfolioViewModel.brokerageHoldings.isEmpty || portfolioViewModel.linkedAccount != nil {
+            BrokerageHoldingsSection(
+                holdings: portfolioViewModel.brokerageHoldings,
+                title: portfolioViewModel.linkedAccount.map { "\($0.title) holdings" } ?? "Brokerage holdings",
+                emptyMessage: holdingsEmptyMessage
+            ) {
                 showLinkedAccounts = true
             }
         }
+    }
+
+    /// Shown in the holdings section when a linked brokerage has no positions
+    private var holdingsEmptyMessage: String {
+        guard let linked = portfolioViewModel.linkedAccount else { return "No holdings." }
+        if linked.syncPending {
+            return "\(linked.title) is still sending your holdings. Pull to refresh in a few minutes."
+        }
+        return "No stocks, ETFs, options or crypto in your \(linked.title) account."
     }
 
     private var emptyJournal: some View {
@@ -455,7 +391,7 @@ struct PortfolioView: View {
                 actionTitle: "Add a trade",
                 action: { showAddTrade = true }
             )
-            if AppConfig.brokerageLinkingEnabled {
+            if AppConfig.brokerageLinkingEnabled && portfolioViewModel.linkedAccount == nil {
                 Button("Or connect a brokerage") { showLinkedAccounts = true }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.goldText)
@@ -468,18 +404,10 @@ struct PortfolioView: View {
 
     // MARK: - Data
 
-    private var portfolioValue: Double { portfolioViewModel.portfolio?.totalValue ?? 0 }
-    /// Change in account value over every logged trade (labelled when that includes self-reported ones)
-    private var totalProfitLoss: Double { portfolioViewModel.portfolio?.totalProfitLoss ?? 0 }
     private var startingCapital: Double? { portfolioViewModel.getUserStartingCapital() }
     /// Price-checked and verified trades: the numbers that count
     private var checked: TradeStats { portfolioViewModel.checkedStats }
     private var selfReported: TradeStats { portfolioViewModel.selfReportedStats }
-
-    private var returnPercentage: Double? {
-        guard let startingCapital, startingCapital > 0 else { return nil }
-        return totalProfitLoss / startingCapital * 100
-    }
 
     private var openTrades: [Trade] {
         portfolioViewModel.trades.filter(\.isOpen).sorted { $0.entryDate > $1.entryDate }
@@ -490,93 +418,218 @@ struct PortfolioView: View {
             .sorted { ($0.exitDate ?? $0.entryDate) > ($1.exitDate ?? $1.entryDate) }
     }
 
-    /// Closed price-checked and verified trades
-    private var countedClosedTrades: [Trade] { closedTrades.filter(\.countsTowardStats) }
-    private var openCostBasis: Double { openTrades.reduce(0) { $0 + $1.totalInvested } }
-
     private var bestTrade: Trade? {
-        countedClosedTrades.max { $0.profitLoss < $1.profitLoss }
-    }
-
-    /// Running total of realized P&L from closed price-checked and verified trades, within the chosen range
-    private var pnlSeries: [PnLPoint] {
-        let closes = countedClosedTrades
-            .map { (date: $0.exitDate ?? $0.entryDate, amount: $0.profitLoss) }
-            .sorted { $0.date < $1.date }
-        let start = chartRange.startDate
-        let inRange = closes.filter { start == nil || $0.date >= start! }
-        guard !inRange.isEmpty else { return [] }
-
-        var running = closes.filter { start != nil && $0.date < start! }.reduce(0) { $0 + $1.amount }
-        var points = [PnLPoint(date: start ?? inRange[0].date.addingTimeInterval(-3600), value: running)]
-        for close in inRange {
-            running += close.amount
-            points.append(PnLPoint(date: close.date, value: running))
-        }
-        points.append(PnLPoint(date: Date(), value: running))
-        return points
+        closedTrades.filter(\.countsTowardStats).max { $0.profitLoss < $1.profitLoss }
     }
 }
 
-// MARK: - Chart
+// MARK: - Account value card
 
-private struct PnLChart: View {
-    let points: [PnLPoint]
+/// The top of Portfolio: account value, its change over the chosen range, and a line chart.
+/// Drag across the chart to read the value on any day; the big number follows your finger.
+private struct AccountValueCard<Accessory: View>: View {
+    let currentValue: Double
+    /// Oldest first, ending now
+    let points: [AccountValuePoint]
+    let source: String
+    let emptyChartMessage: String
+    @ViewBuilder let accessory: () -> Accessory
 
-    private var lineColor: Color {
-        (points.last?.value ?? 0) >= 0 ? .marketGreen : .marketRed
-    }
+    @State private var range: ChartRange = .month
+    @State private var selectedDate: Date?
 
     var body: some View {
-        Chart(points) { point in
-            AreaMark(x: .value("Date", point.date), y: .value("P&L", point.value))
-                .foregroundStyle(lineColor.opacity(0.12))
-                .interpolationMethod(.monotone)
-            LineMark(x: .value("Date", point.date), y: .value("P&L", point.value))
-                .foregroundStyle(lineColor)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.monotone)
-            RuleMark(y: .value("Zero", 0))
-                .foregroundStyle(Color.secondary.opacity(0.3))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack(alignment: .center) {
+                Text("Account value")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: DS.Spacing.s)
+                accessory()
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(displayedValue.asCurrency)
+                    .arkadNumber(44)
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .contentTransition(.numericText())
+                    .animation(.snappy(duration: 0.2), value: displayedValue)
+
+                if hasChart {
+                    changeLine
+                }
+            }
+
+            if hasChart {
+                chart
+                    .frame(height: 180)
+                    .padding(.horizontal, -4)
+                rangePicker
+            } else {
+                Label(emptyChartMessage, systemImage: "chart.xyaxis.line")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, DS.Spacing.s)
+            }
+
+            Text(source)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle(padding: 20)
+    }
+
+    // MARK: Header numbers
+
+    /// "▲ +$12.40 (+1.3%) Past month", or the scrubbed day
+    private var changeLine: some View {
+        let change = displayedValue - baseline
+        let isUp = change >= 0
+        return HStack(spacing: 4) {
+            Image(systemName: isUp ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
+                .font(.system(size: 9))
+            Text(changeText(change))
+                .monospacedDigit()
+            Text(selectedPoint.map { $0.date.formatted(date: .abbreviated, time: .omitted) } ?? range.caption)
+                .foregroundStyle(Color.secondary)
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(isUp ? Color.marketGreen : Color.marketRed)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func changeText(_ change: Double) -> String {
+        guard baseline != 0 else { return change.asCurrencyWithSign }
+        return "\(change.asCurrencyWithSign) (\(String(format: "%+.1f%%", change / abs(baseline) * 100)))"
+    }
+
+    private var displayedValue: Double { selectedPoint?.value ?? currentValue }
+
+    // MARK: Chart
+
+    private var chart: some View {
+        let color = (currentValue - baseline) >= 0 ? Color.marketGreen : Color.marketRed
+        return Chart {
+            ForEach(Array(plotted.enumerated()), id: \.offset) { _, point in
+                AreaMark(x: .value("Date", point.date), yStart: .value("Floor", yDomain.lowerBound), yEnd: .value("Value", point.value))
+                    .foregroundStyle(
+                        LinearGradient(colors: [color.opacity(0.18), color.opacity(0)], startPoint: .top, endPoint: .bottom)
+                    )
+                LineMark(x: .value("Date", point.date), y: .value("Value", point.value))
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            }
+            // Where the range started, so up and down read at a glance
+            RuleMark(y: .value("Start", baseline))
+                .foregroundStyle(Color.secondary.opacity(0.35))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 4]))
+            if let selectedPoint {
+                RuleMark(x: .value("Selected", selectedPoint.date))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                PointMark(x: .value("Date", selectedPoint.date), y: .value("Value", selectedPoint.value))
+                    .symbolSize(70)
+                    .foregroundStyle(color)
+            }
+        }
+        .chartYScale(domain: yDomain)
+        .chartXScale(domain: xDomain)
+        .chartYAxis(.hidden)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                AxisValueLabel()
+            AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                AxisValueLabel(format: xLabelFormat)
                     .foregroundStyle(Color.secondary)
             }
         }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
-                AxisGridLine()
-                    .foregroundStyle(Color.hairline)
-                AxisValueLabel {
-                    if let amount = value.as(Double.self) {
-                        Text(amount, format: .currency(code: "USD").precision(.fractionLength(0)))
-                            .foregroundStyle(Color.secondary)
+        .chartXSelection(value: $selectedDate)
+        .sensoryFeedback(.selection, trigger: selectedPoint?.date)
+        .accessibilityLabel("Account value, \(range.caption.lowercased())")
+        .accessibilityValue("From \(baseline.asCurrency) to \(currentValue.asCurrency)")
+    }
+
+    private var rangePicker: some View {
+        HStack(spacing: DS.Spacing.s) {
+            ForEach(ChartRange.allCases) { option in
+                Chip(title: option.label, isSelected: range == option) {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        range = option
+                        selectedDate = nil
                     }
                 }
             }
+            Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: Data
+
+    /// A line needs two different days
+    private var hasChart: Bool {
+        guard let first = points.first, let last = points.last else { return false }
+        return !Calendar.current.isDate(first.date, inSameDayAs: last.date)
+    }
+
+    private var rangeStart: Date {
+        range.startDate.map { max($0, points.first?.date ?? $0) } ?? (points.first?.date ?? Date())
+    }
+
+    /// The value when the range began: the last value on or before its start
+    private var baseline: Double {
+        points.last(where: { $0.date <= rangeStart })?.value ?? points.first?.value ?? currentValue
+    }
+
+    /// Points inside the range, starting with the baseline at the range's first moment
+    private var plotted: [AccountValuePoint] {
+        let inside = points.filter { $0.date > rangeStart }
+        return [AccountValuePoint(date: rangeStart, value: baseline)] + inside
+    }
+
+    private var xDomain: ClosedRange<Date> {
+        let end = max(plotted.last?.date ?? Date(), rangeStart.addingTimeInterval(60))
+        return rangeStart...end
+    }
+
+    /// Padded so a flat line sits in the middle instead of on an edge
+    private var yDomain: ClosedRange<Double> {
+        let values = plotted.map(\.value) + [baseline]
+        let low = values.min() ?? 0
+        let high = values.max() ?? 0
+        let pad = max((high - low) * 0.12, max(abs(high) * 0.01, 1))
+        return (low - pad)...(high + pad)
+    }
+
+    /// The value at the scrubbed date: the last recorded value on or before it
+    private var selectedPoint: AccountValuePoint? {
+        guard let selectedDate else { return nil }
+        return plotted.last(where: { $0.date <= selectedDate }) ?? plotted.first
+    }
+
+    private var xLabelFormat: Date.FormatStyle {
+        switch range {
+        case .week, .month, .threeMonths: return .dateTime.month(.abbreviated).day()
+        case .year, .all: return .dateTime.month(.abbreviated).year(.twoDigits)
         }
     }
 }
 
 // MARK: - Supporting types
 
-private struct PnLPoint: Identifiable {
-    let id = UUID()
-    let date: Date
-    let value: Double
-}
-
 private enum ChartRange: String, CaseIterable, Identifiable {
-    case week, month, year, all
+    case week, month, threeMonths, year, all
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .week: return "1W"
         case .month: return "1M"
+        case .threeMonths: return "3M"
         case .year: return "1Y"
         case .all: return "All"
         }
@@ -584,10 +637,11 @@ private enum ChartRange: String, CaseIterable, Identifiable {
 
     var caption: String {
         switch self {
-        case .week: return "this week"
-        case .month: return "this month"
-        case .year: return "this year"
-        case .all: return "all time"
+        case .week: return "Past week"
+        case .month: return "Past month"
+        case .threeMonths: return "Past 3 months"
+        case .year: return "Past year"
+        case .all: return "All time"
         }
     }
 
@@ -596,6 +650,7 @@ private enum ChartRange: String, CaseIterable, Identifiable {
         switch self {
         case .week: return calendar.date(byAdding: .day, value: -7, to: Date())
         case .month: return calendar.date(byAdding: .month, value: -1, to: Date())
+        case .threeMonths: return calendar.date(byAdding: .month, value: -3, to: Date())
         case .year: return calendar.date(byAdding: .year, value: -1, to: Date())
         case .all: return nil
         }

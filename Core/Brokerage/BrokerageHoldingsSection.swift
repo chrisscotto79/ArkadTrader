@@ -5,6 +5,9 @@ import SwiftUI
 
 struct BrokerageHoldingsSection: View {
     let holdings: [BrokerageHolding]
+    var title: String = "Brokerage holdings"
+    /// Shown instead of rows when a linked brokerage has no positions
+    var emptyMessage: String = "No holdings."
     let onManage: () -> Void
 
     private var totalValue: Double { holdings.reduce(0) { $0 + $1.marketValue } }
@@ -14,32 +17,44 @@ struct BrokerageHoldingsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             SectionHeader(
-                title: "Brokerage holdings",
+                title: title,
                 count: holdings.count,
                 actionTitle: "Manage",
                 action: onManage
             )
 
-            LazyVStack(spacing: 0) {
-                ForEach(holdings) { holding in
-                    BrokerageHoldingRow(holding: holding)
-                    if holding.id != holdings.last?.id {
-                        Divider()
-                            .overlay(Color.hairline)
-                            .padding(.leading, 56)
+            if holdings.isEmpty {
+                HStack(spacing: DS.Spacing.m) {
+                    IconWell(systemName: "building.columns", tint: .secondary, size: 32)
+                    Text(emptyMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .cardStyle()
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(holdings) { holding in
+                        BrokerageHoldingRow(holding: holding)
+                        if holding.id != holdings.last?.id {
+                            Divider()
+                                .overlay(Color.hairline)
+                                .padding(.leading, 56)
+                        }
                     }
                 }
-            }
-            .cardStyle(padding: 0)
+                .cardStyle(padding: 0)
 
-            HStack(spacing: DS.Spacing.xs) {
-                Image(systemName: "checkmark.seal.fill")
-                    .foregroundStyle(Color.marketGreen)
-                Text(footnote)
+                HStack(spacing: DS.Spacing.xs) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(Color.marketGreen)
+                    Text(footnote)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, DS.Spacing.xs)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.leading, DS.Spacing.xs)
         }
     }
 

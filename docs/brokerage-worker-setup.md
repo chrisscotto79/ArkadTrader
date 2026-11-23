@@ -92,6 +92,10 @@ Add the Worker's address to `App/Secrets.plist` (kept out of git), next to the F
 
 Rebuild the app. **Settings → Linked brokerages** and the Portfolio holdings section appear as soon as the address is set; without it they stay hidden.
 
+Once a linked brokerage has synced, the Portfolio's **Account value** is that brokerage's total (positions plus cash), not the manual starting balance. Each sync stores the totals on `users/{uid}/brokerageConnections/{id}` as `cashBalance`, `holdingsValue`, `totalValue` and `initialSyncPending` (true while SnapTrade is still pulling a new connection's data).
+
+The Portfolio chart reads `valueHistory` on the same doc: one `{ date: "YYYY-MM-DD", value }` per day, oldest first, capped at 730 days. Each sync writes today's total. If SnapTrade's **balance history** add-on is turned on (SnapTrade dashboard → Add-ons), the Worker also backfills up to a year of estimated daily values on the first syncs; without it the chart starts on the day the brokerage was linked.
+
 ### 6. Try it
 
 Settings → **Linked brokerages** → **Connect a brokerage** → pick Robinhood (or another) → sign in on SnapTrade's page. You come back to Arkad, it syncs, and your holdings show in Portfolio with buys and sells from the last 90 days as Verified trades.
@@ -102,7 +106,8 @@ Settings → **Linked brokerages** → **Connect a brokerage** → pick Robinhoo
 - Update the code: edit `brokerage-worker/src/`, run `npm run typecheck`, then `npx wrangler deploy`.
 - Rotate a key: run the same `wrangler secret put` again. For the service account, create a new key, load it, then delete the old key in Google Cloud.
 - Import window: `IMPORT_DAYS` in `wrangler.toml` (default 90).
+- SnapTrade endpoints: the Worker uses `/accounts/all`, `/accounts/{id}/positions/all`, `/accounts/{id}/balances` and `/accounts/{id}/activities`. The older `/accounts/{id}/holdings` returns **410 Gone** for SnapTrade customers who signed up after May 11, 2026, and `/accounts` is deprecated.
 
 ## Moving to Cloud Functions later
 
-If you upgrade to Blaze, the Cloud Functions in `functions/src/snaptrade/` do the same job. Deploy them, set `serverFunctionsEnabled`, and point `BrokerageService` back at `CloudFunctions` (see git history). The Firestore data is the same either way, so linked accounts carry over.
+If you upgrade to Blaze, the Cloud Functions in `functions/src/snaptrade/` do the same job, but they still call the retired `getUserHoldings` and don't write the account totals. Port the Worker's `sync` (brokerage-worker/src/brokerage.ts) to them first. Deploy them, set `serverFunctionsEnabled`, and point `BrokerageService` back at `CloudFunctions` (see git history). The Firestore data is the same either way, so linked accounts carry over.

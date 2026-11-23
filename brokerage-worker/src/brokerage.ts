@@ -4,7 +4,7 @@
 //
 //   snaptradeUsers/{uid}                          { snaptradeUserId, userSecret, createdAt } (server only)
 //   snaptradeUsers/{uid}/processedActivities/{id}  import dedupe
-//   users/{uid}/brokerageConnections/{id}          read by the owner
+//   users/{uid}/brokerageConnections/{id}          read by the owner; includes cashBalance, holdingsValue, totalValue, valueHistory
 //   users/{uid}/brokerageHoldings/{id}             read by the owner
 //   trades/st_<activityId>                         imported, isVerified: true
 //
@@ -76,83 +76,139 @@ export async function sync(ctx: Context): Promise<{ importedTrades: number; hold
   // 1. Connections
   const auths = await snaptrade.authorizations(user);
   const existingConnections = await db.list(`users/${uid}/brokerageConnections`);
-  const connectionNames = new Map<string, string>();
-  const liveIds = new Set<string>();
-  const connectionWrites: Write[] = [];
+  const connections = new Map<
+    string,
+    {
+      name: string;
+      data: Data;
+      cash: number;
+      holdingsValue: number;
+      totalValue: number;
+      syncing: boolean;
+      /** SnapTrade's estimated history, summed across accounts, by date */
+      estimated: Map<string, number>;
+    }
+  >();
   for (const a of auths) {
     if (!a.id) continue;
-    liveIds.add(a.id);
     const name = a.brokerage?.display_name || a.brokerage?.name || a.name || "Brokerage";
-    connectionNames.set(a.id, name);
     const created = a.created_date ? new Date(a.created_date) : now;
-    connectionWrites.push(
-      db.set(
-        `users/${uid}/brokerageConnections/${a.id}`,
-        {
-          brokerageName: name,
-          status: a.disabled ? "broken" : "connected",
-          createdAt: Number.isNaN(created.getTime()) ? now : created,
-          lastSyncAt: now,
-        },
-        ["brokerageName", "status", "createdAt", "lastSyncAt"],
-      ),
-    );
+    connections.set(a.id, {
+      name,
+      data: {
+        brokerageName: name,
+        status: a.disabled ? "broken" : "connected",
+        createdAt: Number.isNaN(created.getTime()) ? now : created,
+        lastSyncAt: now,
+      },
+      cash: 0,
+      holdingsValue: 0,
+      totalValue: 0,
+      syncing: false,
+      estimated: new Map(),
+    });
   }
-  for (const doc of existingConnections) if (!liveIds.has(doc.id)) connectionWrites.push(db.delete(doc.path));
-  await db.commit(connectionWrites);
 
-  // 2. Accounts, holdings and activities
+  // 2. Accounts, positions, cash and activities
   const accounts = await snaptrade.accounts(user);
   const holdingDocs = new Map<string, Data>();
   const activities: Array<{ a: Activity; accountId: string; connectionId: string }> = [];
   const start = new Date(Date.now() - ctx.importDays * 86_400_000).toISOString().slice(0, 10);
   const end = now.toISOString().slice(0, 10);
+  const accountLog: Data[] = [];
 
   for (const account of accounts) {
-    const connectionId = account.brokerage_authorization;
-    if (!liveIds.has(connectionId)) continue;
-    const brokerageName = connectionNames.get(connectionId) ?? account.institution_name ?? "Brokerage";
+    const connectionId = account.connection_id;
+    const connection = connections.get(connectionId);
+    if (!connection) continue;
+    const brokerageName = connection.name;
 
-    const holdings = await snaptrade.holdings(user, account.id);
-    for (const p of holdings.positions ?? []) {
-      const sym = p.symbol?.symbol;
-      const symbol = sym?.symbol;
-      const quantity = Number(p.units ?? p.fractional_units ?? 0);
-      if (!symbol || !quantity || p.cash_equivalent) continue;
-      const price = Number(p.price ?? 0);
-      holdingDocs.set(docId(`${account.id}_${sym?.id ?? symbol}`), {
+    // SnapTrade pulls a new connection's data in the background; until then the account looks empty
+    const syncing = !account.sync_status?.positions || account.sync_status?.transactions?.initial_sync_completed === false;
+    if (syncing) connection.syncing = true;
+
+    let accountHoldingsValue = 0;
+    const positions = await snaptrade.positions(user, account.id);
+    accountLog.push({
+      type: account.raw_type ?? null,
+      positions: positions.length,
+      positionsSyncedAt: account.sync_status?.positions ?? null,
+      transactionsReady: account.sync_status?.transactions?.initial_sync_completed ?? null,
+    });
+    for (const p of positions) {
+      const inst = p.instrument;
+      const kind = inst?.kind ?? "";
+      // Cash and cash-equivalents (money market funds) are already in the cash balance
+      if (!inst || kind === "cash" || p.cash_equivalent) continue;
+      const quantity = num(p.units);
+      const isOption = kind === "option" || kind === "future_option";
+      const symbol = (isOption ? inst.symbol : inst.symbol || inst.raw_symbol)?.trim();
+      if (!symbol || !quantity) continue;
+      const price = num(p.price);
+      const multiplier = isOption ? num(inst.multiplier) || 100 : 1;
+      const marketValue = Math.round(price * quantity * multiplier * 100) / 100;
+      accountHoldingsValue += marketValue;
+      holdingDocs.set(docId(`${account.id}_${inst.id ?? symbol}`), {
         symbol,
-        assetType: assetTypeFromCode(sym?.type?.code),
+        assetType: isOption ? "option" : kind === "crypto" ? "crypto" : "stock",
         quantity,
-        averagePrice: Number(p.average_purchase_price ?? 0),
+        averagePrice: num(p.cost_basis),
         currentPrice: price,
-        marketValue: Math.round(price * quantity * 100) / 100,
+        marketValue,
         connectionId,
         brokerageName,
         updatedAt: now,
       });
     }
-    for (const o of holdings.option_positions ?? []) {
-      const opt = o.symbol?.option_symbol;
-      if (!opt?.ticker || !o.units) continue;
-      const price = Number(o.price ?? 0);
-      holdingDocs.set(docId(`${account.id}_${opt.id ?? opt.ticker}`), {
-        symbol: opt.ticker,
-        assetType: "option",
-        quantity: Number(o.units),
-        averagePrice: Number(o.average_purchase_price ?? 0),
-        currentPrice: price,
-        marketValue: Math.round(price * Number(o.units) * 100 * 100) / 100, // 100 shares per contract
-        connectionId,
-        brokerageName,
-        updatedAt: now,
-      });
+
+    let accountCash = 0;
+    try {
+      for (const b of await snaptrade.balances(user, account.id)) accountCash += num(b.cash);
+    } catch (error) {
+      // Cash is a nice-to-have; positions and trades still sync without it
+      console.log(JSON.stringify({ event: "balances-failed", uid, error: String(error) }));
+    }
+
+    const netValue = account.net_value?.amount;
+    connection.cash += accountCash;
+    connection.holdingsValue += accountHoldingsValue;
+    connection.totalValue += typeof netValue === "number" && Number.isFinite(netValue) ? netValue : accountCash + accountHoldingsValue;
+
+    // Estimated past values, when the SnapTrade add-on is on. Only needed until Arkad has its own history.
+    if (wantsEstimates(existingConnections.find((d) => d.id === connectionId)?.data)) {
+      try {
+        for (const h of await snaptrade.valueHistory(user, account.id)) {
+          connection.estimated.set(h.date, (connection.estimated.get(h.date) ?? 0) + h.value);
+        }
+      } catch {
+        // Add-on off: the chart fills in from daily syncs instead
+      }
     }
 
     for (const a of await snaptrade.activities(user, account.id, start, end)) {
       activities.push({ a, accountId: account.id, connectionId });
     }
   }
+
+  // Connections, with their cash and total value
+  const connectionWrites: Write[] = [];
+  const today = now.toISOString().slice(0, 10);
+  for (const [id, c] of connections) {
+    const previous = existingConnections.find((d) => d.id === id)?.data;
+    connectionWrites.push(
+      db.set(`users/${uid}/brokerageConnections/${id}`, {
+        ...c.data,
+        valueHistory: mergeHistory(previous?.valueHistory, c.estimated, today, money(c.totalValue)),
+        cashBalance: money(c.cash),
+        holdingsValue: money(c.holdingsValue),
+        totalValue: money(c.totalValue),
+        accountCount: accounts.filter((a) => a.connection_id === id).length,
+        initialSyncPending: c.syncing,
+      }),
+    );
+  }
+  for (const doc of existingConnections) if (!connections.has(doc.id)) connectionWrites.push(db.delete(doc.path));
+  await db.commit(connectionWrites);
 
   // Replace holdings
   const oldHoldings = await db.list(`users/${uid}/brokerageHoldings`);
@@ -162,7 +218,7 @@ export async function sync(ctx: Context): Promise<{ importedTrades: number; hold
   await db.commit(holdingWrites);
 
   const importedTrades = await importActivities(ctx, activities);
-  console.log(JSON.stringify({ event: "sync", uid, connections: liveIds.size, holdings: holdingDocs.size, importedTrades }));
+  console.log(JSON.stringify({ event: "sync", uid, connections: connections.size, accounts: accounts.length, holdings: holdingDocs.size, importedTrades, accountLog }));
   return { importedTrades, holdings: holdingDocs.size };
 }
 
@@ -318,6 +374,51 @@ function dateMs(a: Activity): number {
   const raw = a.trade_date ?? a.settlement_date;
   const ms = raw ? Date.parse(raw) : NaN;
   return Number.isFinite(ms) ? ms : Date.now();
+}
+
+// MARK: - Value history
+
+/** Daily account values kept on the connection doc for the Portfolio chart (about two years) */
+const HISTORY_DAYS = 730;
+
+type HistoryPoint = { date: string; value: number };
+
+function readHistory(raw: unknown): HistoryPoint[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((p) => {
+    const point = p as { date?: unknown; value?: unknown };
+    return typeof point?.date === "string" && typeof point.value === "number" ? [{ date: point.date, value: point.value }] : [];
+  });
+}
+
+/** Ask SnapTrade for estimated history only while ours is short */
+function wantsEstimates(previous: Data | undefined): boolean {
+  return readHistory(previous?.valueHistory).length < 30;
+}
+
+/**
+ * Today's value replaces any earlier value for today. SnapTrade's estimates fill only days we
+ * have nothing for, so a recorded value always wins.
+ */
+function mergeHistory(raw: unknown, estimated: Map<string, number>, today: string, value: number): HistoryPoint[] {
+  const byDate = new Map<string, number>();
+  for (const [date, v] of estimated) if (date < today) byDate.set(date, money(v));
+  for (const p of readHistory(raw)) byDate.set(p.date, p.value);
+  byDate.set(today, value);
+  return [...byDate.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .slice(-HISTORY_DAYS)
+    .map(([date, v]) => ({ date, value: v }));
+}
+
+/** SnapTrade sends some numbers as strings */
+function num(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function money(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function round(q: number): number {
