@@ -9,7 +9,9 @@ import FirebaseFirestore
 @MainActor
 class ChannelChatViewModel: ObservableObject {
     // MARK: - Published Properties
-    @Published var messages: [CommunityMessage] = []
+    @Published var messages: [CommunityMessage] = [] {
+        didSet { rebuildMessageIndex() }
+    }
     @Published var isLoading = false
     @Published var errorMessage = ""
     @Published var canUserPost = true
@@ -39,6 +41,10 @@ class ChannelChatViewModel: ObservableObject {
     private let blockStore = BlockStore.shared
     /// Clears `mutedUntil` when the mute runs out while the chat is open
     private var muteExpiryTask: Task<Void, Never>?
+    /// Position of each loaded message, by id (for replies and callout updates)
+    private var indexById: [String: Int] = [:]
+    /// Loaded `calloutUpdate` messages for each callout, oldest first, keyed by the callout's message id
+    private(set) var calloutUpdatesByParent: [String: [CommunityMessage]] = [:]
     
     // MARK: - Computed Properties
     var currentUserId: String? {
@@ -57,6 +63,43 @@ class ChannelChatViewModel: ObservableObject {
 
     /// Owners, admins and moderators can pin, and delete anyone's messages
     var canPinMessages: Bool { canUserManageChannel }
+
+    /// Owners, admins and moderators
+    var isStaff: Bool { canUserManageChannel }
+
+    /// Game plans: staff anywhere they can post, and anyone who can post in a callouts channel.
+    var canPostGamePlan: Bool {
+        canUserPost && !isMuted && (isStaff || channel?.type == .callouts)
+    }
+
+    /// A loaded message, by id
+    func message(withId id: String) -> CommunityMessage? {
+        indexById[id].flatMap { $0 < messages.count ? messages[$0] : nil }
+    }
+
+    /// The callout a `calloutUpdate` or `calloutResult` message refers to, when it's loaded.
+    func parentCallout(of message: CommunityMessage) -> TradeCallout? {
+        guard let parentId = message.calloutUpdate?.parentMessageId ?? message.calloutResult?.parentMessageId else { return nil }
+        return self.message(withId: parentId)?.callout
+    }
+
+    /// Updates posted on a callout that are in the loaded messages, oldest first.
+    func calloutUpdates(for messageId: String) -> [CommunityMessage] {
+        calloutUpdatesByParent[messageId] ?? []
+    }
+
+    private func rebuildMessageIndex() {
+        var index: [String: Int] = [:]
+        var updates: [String: [CommunityMessage]] = [:]
+        for (position, message) in messages.enumerated() {
+            index[message.id] = position
+            if !message.isDeleted, let parentId = message.calloutUpdate?.parentMessageId {
+                updates[parentId, default: []].append(message)
+            }
+        }
+        indexById = index
+        calloutUpdatesByParent = updates
+    }
 
     /// Pinned messages, newest pin first
     var pinnedMessages: [CommunityMessage] {
@@ -102,7 +145,8 @@ class ChannelChatViewModel: ObservableObject {
     }
     
     /// Send a message to the channel
-    func sendMessage(content: String) {
+    /// - Parameter replyTo: the message being replied to; stored as `replyTo` and its author is notified.
+    func sendMessage(content: String, replyTo: CommunityMessage? = nil) {
         guard let community = community,
               let channel = channel,
               let currentUser = authService.currentUser,
@@ -111,18 +155,23 @@ class ChannelChatViewModel: ObservableObject {
         }
         
         // Create the message
-        let message = CommunityMessage(
-            content: content,
+        var message = CommunityMessage(
+            content: ChatText.clip(content, max: ChatText.contentLimit),
             authorId: currentUser.id,
             authorUsername: currentUser.username,
             channelId: channel.id,
             communityId: community.id,
             authorAvatarURL: currentUser.profileImageUrl
         )
+        if let replyTo, !replyTo.isDeleted {
+            message.replyTo = MessageReplyRef(to: replyTo)
+        }
+        let sent = message
         
         Task {
             do {
-                try await firebaseService.sendCommunityMessage(message)
+                try await firebaseService.sendCommunityMessage(sent)
+                await notifyMentions(in: content, messageId: sent.id, repliedTo: sent.replyTo)
                 
                 // Create activity for sending message
                 try await authService.createActivity(
@@ -152,17 +201,109 @@ class ChannelChatViewModel: ObservableObject {
             communityId: community.id,
             authorAvatarURL: currentUser.profileImageUrl
         )
-        message.callout = callout.stamped(authorId: currentUser.id, communityId: community.id, postedAt: message.createdAt)
+        var stamped = callout.stamped(authorId: currentUser.id, communityId: community.id, postedAt: message.createdAt)
+        // The create form sets the price check; anything else counts as not checked.
+        if stamped.priceCheck != .live {
+            stamped.priceCheck = .unchecked
+            stamped.quoteAtPost = nil
+        }
+        message.callout = stamped
+        let posted = message
+        let postedCallout = stamped
         Task {
             do {
-                try await firebaseService.sendCommunityMessage(message)
+                try await firebaseService.sendCommunityMessage(posted)
             } catch {
                 await handleError(error, context: "posting callout")
+                return
             }
+            // Free mode: mirror doc, stats and the members' `callout` notifications
+            await TrackRecordWriter.shared.calloutPosted(
+                postedCallout,
+                authorId: currentUser.id,
+                communityId: community.id,
+                communityName: community.name,
+                channelId: channel.id,
+                messageId: posted.id
+            )
+            await notifyMentions(in: postedCallout.note ?? "", messageId: posted.id)
+        }
+    }
+
+    /// Free mode: `mention` notifications for `@username`s in a message this user just sent, and
+    /// for the author of the message it replies to ("… replied to you").
+    /// Only people who are in the community are notified, since others can't open the channel.
+    private func notifyMentions(in text: String, messageId: String, repliedTo: MessageReplyRef? = nil) async {
+        guard !AppConfig.serverFunctionsEnabled,
+              let community = community, let channel = channel,
+              let currentUser = authService.currentUser else { return }
+        var ids: [String] = []
+        if text.contains("@") {
+            ids = await firebaseService.userIdsMentioned(in: text)
+        }
+        if !memberRoles.isEmpty {
+            ids = ids.filter { memberRoles[$0] != nil }
+        }
+        ids.removeAll { $0 == currentUser.id }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = trimmed.count > 140 ? String(trimmed.prefix(140)) + "…" : trimmed
+        let route = TrackRecordWriter.channelRoute(communityId: community.id, channelId: channel.id, messageId: messageId)
+
+        if let repliedTo, !repliedTo.authorId.isEmpty, repliedTo.authorId != currentUser.id,
+           !ids.contains(repliedTo.authorId),
+           memberRoles.isEmpty || memberRoles[repliedTo.authorId] != nil {
+            await firebaseService.createNotification(
+                to: repliedTo.authorId,
+                type: "mention",
+                title: "\(currentUser.username) replied to you in #\(channel.name)",
+                body: body,
+                data: route
+            )
+        }
+
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            await firebaseService.createNotification(
+                to: id,
+                type: "mention",
+                title: "\(currentUser.username) mentioned you in #\(channel.name)",
+                body: body,
+                data: route
+            )
         }
     }
     
     
+    // MARK: - Game plan
+
+    /// Posts a game plan: up to 15 tickers with a bias, plus a text summary as `content`.
+    func sendGamePlan(_ plan: GamePlan) {
+        guard let community = community, let channel = channel,
+              let currentUser = authService.currentUser, canPostGamePlan else { return }
+        var clean = plan
+        clean.title = ChatText.clip(plan.title.trimmingCharacters(in: .whitespacesAndNewlines), max: ChatText.gamePlanTitleLimit)
+        clean.tickers = Array(plan.tickers.prefix(GamePlan.maxTickers))
+        guard !clean.title.isEmpty, !clean.tickers.isEmpty else { return }
+
+        var message = CommunityMessage(
+            content: ChatText.clip(clean.summary, max: ChatText.contentLimit),
+            authorId: currentUser.id,
+            authorUsername: currentUser.username,
+            channelId: channel.id,
+            communityId: community.id,
+            authorAvatarURL: currentUser.profileImageUrl
+        )
+        message.gamePlan = clean
+        let posted = message
+        Task {
+            do {
+                try await firebaseService.sendCommunityMessage(posted)
+            } catch {
+                await handleError(error, context: "posting game plan")
+            }
+        }
+    }
+
     /// Add a callout to the current user's portfolio as an open trade.
     func trackCallout(_ callout: TradeCallout, entryPrice: Double, quantity: Double) async throws {
         guard let currentUser = authService.currentUser else { throw FirestoreError.unauthorized }
@@ -265,11 +406,13 @@ class ChannelChatViewModel: ObservableObject {
     
     // MARK: - Message Management
 
-    /// Authors can edit their own text messages for five minutes after sending
+    /// Authors can edit their own text messages for five minutes after sending.
+    /// Callouts, updates, results, trade shares and game plans can't be edited: their text is a
+    /// generated summary of the structured data.
     func canEditMessage(_ message: CommunityMessage) -> Bool {
         guard let currentUserId = currentUserId,
               message.authorId == currentUserId,
-              !message.isDeleted, message.callout == nil else { return false }
+              !message.isDeleted, !message.hasStructuredKind else { return false }
 
         let editTimeLimit: TimeInterval = 5 * 60
         return Date().timeIntervalSince(message.createdAt) <= editTimeLimit
@@ -316,6 +459,11 @@ class ChannelChatViewModel: ObservableObject {
             messages[index].isDeleted = true  // optimistic; the listener confirms
             messages[index].content = ""
             messages[index].callout = nil
+            messages[index].calloutUpdate = nil
+            messages[index].calloutResult = nil
+            messages[index].tradeShare = nil
+            messages[index].gamePlan = nil
+            messages[index].replyTo = nil
             messages[index].deletedBy = currentUserId
         }
         Task {
@@ -326,8 +474,28 @@ class ChannelChatViewModel: ObservableObject {
             } catch {
                 restore(message)
                 await handleError(error, context: "deleting message")
+                return
             }
+            await closeDeletedCallout(in: message, communityId: community.id, channelId: channel.id)
         }
+    }
+
+    /// Free mode: deleting your own open callout doesn't erase it from your record. It closes
+    /// in your mirror doc at its last price (or entry, 0%) and your stats are rebuilt.
+    /// When a moderator deletes someone else's callout, the author's CalloutAutoTracker does this.
+    private func closeDeletedCallout(in message: CommunityMessage, communityId: String, channelId: String) async {
+        guard TrackRecordWriter.isActive,
+              let callout = message.callout, callout.isOpen,
+              let currentUserId = currentUserId,
+              (callout.authorId ?? message.authorId) == currentUserId else { return }
+        let writer = TrackRecordWriter.shared
+        do {
+            try await writer.closeDeleted(callout, authorId: currentUserId, communityId: communityId,
+                                          channelId: channelId, messageId: message.id)
+        } catch {
+            return  // CalloutAutoTracker closes it on its next run
+        }
+        await writer.recomputeStats()
     }
 
     func togglePin(_ message: CommunityMessage) {

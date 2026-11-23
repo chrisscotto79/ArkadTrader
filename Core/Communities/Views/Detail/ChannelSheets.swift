@@ -16,8 +16,8 @@ struct EnhancedChannelRow: View {
     var body: some View {
         HStack(spacing: DS.Spacing.m) {
             IconWell(
-                systemName: isCallouts ? "megaphone.fill" : "number",
-                tint: isCallouts ? .goldText : .secondary,
+                systemName: channel.displayIcon,
+                tint: channel.displayTint,
                 size: 36
             )
             
@@ -69,16 +69,50 @@ struct EnhancedChannelRow: View {
 }
 
 /// Creates a new channel, or edits an existing one when `editing` is set.
+/// The "Announcements" preset is an admin-only text channel with a megaphone icon.
 struct CreateChannelSheet: View {
     let community: Community
     var editing: Channel?
     @Environment(\.dismiss) private var dismiss
 
     @State private var channelName = ""
-    @State private var selectedType: ChannelType = .text
+    @State private var preset: Preset = .text
     @State private var isAdminOnly = false
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    /// What the Type picker offers: the two channel types, plus Announcements.
+    private enum Preset: String, CaseIterable, Identifiable {
+        case text, callouts, announcements
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .text: return ChannelType.text.displayName
+            case .callouts: return ChannelType.callouts.displayName
+            case .announcements: return "Announcements"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .text: return ChannelType.text.icon
+            case .callouts: return ChannelType.callouts.icon
+            case .announcements: return "megaphone"
+            }
+        }
+
+        var channelType: ChannelType { self == .callouts ? .callouts : .text }
+
+        init(channel: Channel) {
+            if channel.type == .callouts {
+                self = .callouts
+            } else {
+                self = channel.isAnnouncements ? .announcements : .text
+            }
+        }
+    }
 
     private var cleanedName: String {
         channelName.lowercased()
@@ -97,9 +131,9 @@ struct CreateChannelSheet: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                     }
-                    Picker("Type", selection: $selectedType) {
-                        ForEach(ChannelType.selectableTypes, id: \.self) { type in
-                            Label(type.displayName, systemImage: type.icon).tag(type)
+                    Picker("Type", selection: $preset) {
+                        ForEach(Preset.allCases) { option in
+                            Label(option.title, systemImage: option.icon).tag(option)
                         }
                     }
                 }
@@ -107,8 +141,11 @@ struct CreateChannelSheet: View {
 
                 Section {
                     Toggle("Only admins can post", isOn: $isAdminOnly)
+                        .disabled(preset == .announcements)
                 } footer: {
-                    Text("Members can still read and react. Use this for announcements and trade callouts.")
+                    Text(preset == .announcements
+                         ? "Only owners and admins post announcements. Members can read and react."
+                         : "Members can still read and react. Use this for announcements and trade callouts.")
                 }
                 .listRowBackground(Color.surface)
 
@@ -142,10 +179,23 @@ struct CreateChannelSheet: View {
                 guard let editing else { return }
                 channelName = editing.name
                 // Legacy voice channels are edited (and saved) as text channels
-                selectedType = editing.type == .voice ? .text : editing.type
+                preset = Preset(channel: editing)
                 isAdminOnly = editing.adminOnly
             }
+            .onChange(of: preset) { oldValue, newValue in
+                if newValue == .announcements {
+                    isAdminOnly = true
+                    if channelName.trimmingCharacters(in: .whitespaces).isEmpty { channelName = "announcements" }
+                } else if oldValue == .announcements, cleanedName == "announcements", editing == nil {
+                    channelName = ""
+                }
+            }
         }
+    }
+
+    /// The icon to store: the megaphone for Announcements, the type's own icon otherwise.
+    private var iconForSave: String? {
+        preset == .announcements ? Channel.announcementsIcon : nil
     }
 
     private func save() {
@@ -153,19 +203,22 @@ struct CreateChannelSheet: View {
         errorMessage = nil
         Task {
             do {
+                let adminOnly = preset == .announcements ? true : isAdminOnly
                 if var channel = editing {
                     channel.name = cleanedName
-                    channel.type = selectedType
-                    channel.adminOnly = isAdminOnly
+                    channel.type = preset.channelType
+                    channel.adminOnly = adminOnly
+                    channel.icon = iconForSave
                     try await FirebaseServices.shared.updateChannel(channel)
                 } else {
-                    let channel = Channel(
+                    var channel = Channel(
                         name: cleanedName,
-                        type: selectedType,
+                        type: preset.channelType,
                         communityId: community.id,
                         isDefault: false,
-                        adminOnly: isAdminOnly
+                        adminOnly: adminOnly
                     )
+                    channel.icon = iconForSave
                     try await FirebaseServices.shared.createChannel(channel)
                 }
                 dismiss()

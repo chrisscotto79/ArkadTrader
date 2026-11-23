@@ -1,5 +1,6 @@
 // File: Core/TrackRecord/TraderStatsService.swift
-// Reads server-written callout records (`traderStats`). Read only: the app never writes these.
+// Reads callout records (`traderStats`). Read only: the server writes them, or in free mode
+// the author's app does through TrackRecordWriter.
 
 import Foundation
 import FirebaseFirestore

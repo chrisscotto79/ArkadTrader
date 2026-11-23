@@ -236,4 +236,155 @@ extension FirebaseServices {
             try? User.fromFirestore(data: document.data(), id: document.documentID)
         }
     }
+
+    // MARK: - Account deletion (free mode)
+
+    /// `users/{uid}` subcollections removed when an account is deleted. The first nine are the
+    /// ones in docs/backend-contracts.md, section 0; the rest are older per-user lists the app
+    /// also writes (likes, bookmarks, comment likes).
+    static let accountSubcollections = [
+        "watchlist", "priceAlerts", "learnProgress", "callouts", "fcmTokens",
+        "following", "followers", "blockedUsers", "reportedPosts",
+        "likedPosts", "likes", "bookmarks", "commentLikes", "communityLessonProgress"
+    ]
+
+    /// Free mode (docs/backend-contracts.md, section 0): removes what the user created, before
+    /// FirebaseAuthService deletes `users/{uid}`. Trades are removed afterwards, by
+    /// `deleteAccountTrades`. Best-effort: each step is wrapped so one failure doesn't stop
+    /// the rest. Community chat messages are left as they are.
+    ///
+    /// Runs while `users/{uid}` still exists: unfollowing and leaving update its counts and
+    /// `communityIds`, and those updates fail on a deleted document.
+    func deleteAccountData(userId: String) async {
+        let profile = try? await getUserById(userId: userId)
+
+        // Posts, with their comments and likes
+        await bestEffort("posts") {
+            let snapshot = try await db.collection("posts")
+                .whereField("authorId", isEqualTo: userId)
+                .getDocuments()
+            for document in snapshot.documents {
+                do {
+                    try await deletePost(postId: document.documentID)
+                } catch {
+                    // The comments or likes couldn't all be removed; remove the post itself.
+                    try? await document.reference.delete()
+                }
+            }
+        }
+
+        // Follows in both directions, through unfollow so everyone's counts stay right
+        await bestEffort("following") {
+            for followedId in try await getUserFollowing(userId: userId) {
+                try? await unfollowUser(userId: followedId, followerId: userId)
+            }
+        }
+        await bestEffort("followers") {
+            for followerId in try await getUserFollowers(userId: userId) {
+                try? await unfollowUser(userId: userId, followerId: followerId)
+            }
+        }
+
+        // Communities: leave the ones you joined, delete the ones you own
+        var ownedIds: [String] = []
+        await bestEffort("owned communities") {
+            ownedIds = try await db.collection("communities")
+                .whereField("createdBy", isEqualTo: userId)
+                .getDocuments()
+                .documents.map(\.documentID)
+        }
+        for communityId in (profile?.communityIds ?? []) where !ownedIds.contains(communityId) {
+            // The community leaderboard entry first: the rules allow it only while a member
+            await bestEffort("community \(communityId) traderStats") {
+                try await db.collection("communities").document(communityId)
+                    .collection("traderStats").document(userId)
+                    .delete()
+            }
+            await bestEffort("leave community \(communityId)") {
+                try await leaveCommunity(communityId: communityId, userId: userId)
+            }
+        }
+        for communityId in ownedIds {
+            // Its photos first (images/community_*_{cid}), while the community still exists
+            await bestEffort("community \(communityId) avatar image") {
+                try await ImageStore.shared.deleteImage(id: ImageStore.communityAvatarId(communityId: communityId))
+            }
+            await bestEffort("community \(communityId) banner image") {
+                try await ImageStore.shared.deleteImage(id: ImageStore.communityBannerId(communityId: communityId))
+            }
+            await bestEffort("delete community \(communityId)") {
+                try await deleteCommunity(communityId: communityId)
+            }
+        }
+
+        // Everything under users/{uid}
+        let userRef = db.collection("users").document(userId)
+        for name in Self.accountSubcollections {
+            await bestEffort("users/\(userId)/\(name)") {
+                let snapshot = try await userRef.collection(name).getDocuments()
+                try await deleteDocuments(snapshot.documents.map(\.reference))
+            }
+        }
+
+        // Track record
+        await bestEffort("traderStats") {
+            try await db.collection("traderStats").document(userId).delete()
+        }
+
+        // Your own inbox
+        await bestEffort("notifications") {
+            let snapshot = try await db.collection("notifications")
+                .whereField("userId", isEqualTo: userId)
+                .getDocuments()
+            try await deleteDocuments(snapshot.documents.map(\.reference))
+        }
+
+        // Profile photo in Firestore (images/avatar_{uid})
+        await bestEffort("profile image") {
+            try await ImageStore.shared.deleteImage(id: ImageStore.avatarId(userId: userId))
+        }
+
+        // Legacy profile photo in Cloud Storage, at the path uploadProfileImage used. Only when
+        // Storage is available; on the free plan the request would just fail.
+        if AppConfig.mediaUploadsEnabled, let url = profile?.profileImageUrl, ImageStore.imageId(from: url) == nil {
+            await bestEffort("legacy profile image") {
+                try await Storage.storage().reference()
+                    .child("profile_images").child("\(userId).jpg")
+                    .delete()
+            }
+        }
+    }
+
+    /// Free mode: removes the user's trades. Call after `users/{uid}` is deleted: the rules
+    /// only let price-checked trades be deleted later than 15 minutes after logging once the
+    /// profile is gone. Best-effort, one trade at a time so one refusal doesn't block the rest.
+    func deleteAccountTrades(userId: String) async {
+        await bestEffort("trades") {
+            let snapshot = try await db.collection("trades")
+                .whereField("userId", isEqualTo: userId)
+                .getDocuments()
+            for document in snapshot.documents {
+                try? await document.reference.delete()
+            }
+        }
+    }
+
+    /// Deletes documents in batches of 450.
+    private func deleteDocuments(_ references: [DocumentReference]) async throws {
+        for chunk in references.chunked(into: 450) {
+            let batch = db.batch()
+            for reference in chunk {
+                batch.deleteDocument(reference)
+            }
+            try await batch.commit()
+        }
+    }
+
+    private func bestEffort(_ step: String, _ work: () async throws -> Void) async {
+        do {
+            try await work()
+        } catch {
+            print("⚠️ Account deletion: \(step) failed: \(error.localizedDescription)")
+        }
+    }
 }

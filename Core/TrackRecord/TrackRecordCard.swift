@@ -33,6 +33,12 @@ struct TrackRecordCard: View {
 
     // MARK: - Header
 
+    private var subtitle: String {
+        if communityId != nil { return "Callouts in this community" }
+        // Free mode records are kept by the author's app, so don't call them verified.
+        return AppConfig.serverFunctionsEnabled ? "Verified from posted callouts" : "From price-checked callouts"
+    }
+
     private var header: some View {
         HStack(spacing: DS.Spacing.m) {
             IconWell(systemName: "checkmark.seal.fill", size: 32)
@@ -40,7 +46,7 @@ struct TrackRecordCard: View {
                 Text("Callout record")
                     .font(.headline)
                     .foregroundStyle(Color.primary)
-                Text(communityId == nil ? "Verified from posted callouts" : "Callouts in this community")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -96,7 +102,7 @@ struct TrackRecordCard: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("No callouts yet")
                 .font(.subheadline.weight(.semibold))
-            Text("Results from trade callouts posted in communities show up here.")
+            Text("Results from trade callouts posted in communities show up here. Only callouts with an entry near the live price count.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -176,9 +176,11 @@ struct ProfilePerformanceCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Total P&L")
+                    Text("Total P&L · price-checked & verified")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     Text(summary.totalProfitLoss.asCurrencyWithSign)
                         .arkadNumber(32)
                         .foregroundStyle(Self.color(for: summary.totalProfitLoss))
@@ -191,6 +193,16 @@ struct ProfilePerformanceCard: View {
                     metric("Open positions", "\(summary.openPositions)", .primary)
                     metric("Best trade", bestTrade?.profitLoss.asCurrencyWithSign ?? "—",
                            bestTrade.map { Self.color(for: $0.profitLoss) } ?? .secondary)
+                }
+
+                if summary.selfReportedTrades > 0 {
+                    Label(
+                        "\(summary.selfReportedTrades) self-reported trade\(summary.selfReportedTrades == 1 ? "" : "s") not counted.",
+                        systemImage: TradeProof.selfReported.systemImage
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -381,10 +393,11 @@ struct UserTradesTab: View {
         Array(portfolioViewModel.trades.prefix(10))
     }
 
+    /// Best closed trades that count: price-checked and verified only
     private var topTrades: [Trade] {
         Array(
             portfolioViewModel.trades
-                .filter { !$0.isOpen && $0.profitLoss > 0 }
+                .filter { !$0.isOpen && $0.profitLoss > 0 && $0.countsTowardStats }
                 .sorted { $0.profitLoss > $1.profitLoss }
                 .prefix(5)
         )

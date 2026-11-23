@@ -36,23 +36,12 @@ struct ProfileImageView: View {
     }
 
     var body: some View {
-        Group {
-            if let imageUrl = user?.profileImageUrl, !imageUrl.isEmpty, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    case .empty:
-                        loadingImageView
-                    default:
-                        fallbackImageView
-                    }
-                }
-            } else {
-                fallbackImageView
-            }
+        ArkadAsyncImage(urlString: user?.profileImageUrl) { image in
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } placeholder: {
+            fallbackImageView
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
@@ -82,16 +71,6 @@ struct ProfileImageView: View {
                     .font(.system(size: size * 0.38, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.onGold)
                     .minimumScaleFactor(0.5)
-            )
-    }
-
-    private var loadingImageView: some View {
-        Circle()
-            .fill(Color.surfaceRaised)
-            .overlay(
-                ProgressView()
-                    .tint(Color.goldText)
-                    .scaleEffect(size < 40 ? 0.6 : 0.9)
             )
     }
 

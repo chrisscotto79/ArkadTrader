@@ -1,6 +1,7 @@
 // File: Core/Notifications/AppDelegate.swift
 // UIKit hooks that SwiftUI doesn't offer: APNs registration, the FCM token, and showing and
 // handling notifications. Attached in ArkadTraderApp with @UIApplicationDelegateAdaptor.
+// In free mode (no Cloud Functions) only the local-notification parts are used.
 //
 // Firebase method swizzling is left on (the default), so Messaging also receives the APNs
 // token automatically; setting it below as well keeps things working if swizzling is turned off.
@@ -24,7 +25,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
         // Registering doesn't prompt the user; it only gets an APNs token. Permission is asked
         // later, at the end of onboarding or from Settings > Notifications.
-        application.registerForRemoteNotifications()
+        // Free mode has no remote push, so there's no token to get. The notification center
+        // delegate above still shows local notifications (price alerts) and routes their taps.
+        if AppConfig.serverFunctionsEnabled {
+            application.registerForRemoteNotifications()
+        }
         return true
     }
 

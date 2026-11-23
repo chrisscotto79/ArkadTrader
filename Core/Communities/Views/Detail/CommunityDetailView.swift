@@ -1,7 +1,9 @@
 // File: Core/Communities/Views/Detail/CommunityDetailView.swift
-// A community's home page: hero header with the join / subscribe / manage action, shortcuts to members
-// and the leaderboard, and the channel list. Non-members of a paid community see a preview instead
-// of the channels: price, trial, the owner's track record and the rules.
+// A community's home page: hero header with the join / subscribe / manage action, then a section
+// switcher: Chat (shortcuts to members and the leaderboard, and the channel list), Classroom
+// (courses), Events (live sessions) and About (the landing page: leader's track record, what's
+// inside, recent results). Non-members of a paid community see a preview instead: price, trial,
+// the owner's track record and the rules.
 
 import SwiftUI
 
@@ -24,6 +26,14 @@ struct CommunityDetailView: View {
     @State private var showReport = false
     @State private var showWelcome = false
     @StateObject private var subscription = CommunitySubscriptionController()
+
+    // Sections
+    @State private var section: CommunitySection = .chat
+    /// Set once the viewer picks a section, so loading never overrides their choice
+    @State private var didPickSection = false
+    @State private var aboutReloadToken = 0
+    @StateObject private var classroom = ClassroomViewModel()
+    @StateObject private var events = EventsViewModel()
 
     /// Latest copy of the community (refreshed after settings change), falling back to the one passed in.
     private var current: Community { viewModel.community ?? community }
@@ -49,8 +59,8 @@ struct CommunityDetailView: View {
                     if showsPaidPreview {
                         paidPreview
                     } else {
-                        shortcuts
-                        channelsSection
+                        CommunitySectionBar(selection: sectionBinding)
+                        sectionContent
                     }
                 }
                 .padding(.horizontal, DS.pageMargin)
@@ -59,6 +69,7 @@ struct CommunityDetailView: View {
             }
             .refreshable {
                 await viewModel.refreshAfterSubscriptionChange()
+                await refreshCurrentSection()
             }
             .alert(
                 "Couldn't subscribe",
@@ -86,6 +97,12 @@ struct CommunityDetailView: View {
         .navigationBarHidden(true)
         .onAppear {
             viewModel.loadCommunityData(community: community)
+        }
+        .onChange(of: viewModel.isLoading) { _, isLoading in
+            // People who haven't joined land on About, the community's pitch
+            if !isLoading && !viewModel.isUserMember && !didPickSection {
+                section = .about
+            }
         }
         .sheet(isPresented: $showMembersList) {
             EnhancedMembersListSheet(community: community)
@@ -247,13 +264,11 @@ extension CommunityDetailView {
 extension CommunityDetailView {
     private var heroCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let urlString = current.bannerURL, !urlString.isEmpty, let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        CommunityPalette.color(for: current.name).opacity(0.18)
-                    }
+            if let urlString = current.bannerURL, !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ArkadAsyncImage(urlString: urlString) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    CommunityPalette.color(for: current.name).opacity(0.18)
                 }
                 .frame(height: 120)
                 .frame(maxWidth: .infinity)
@@ -333,7 +348,7 @@ extension CommunityDetailView {
                     HapticManager.shared.notification(type: .success)
                     viewModel.joinCommunity()
                 } label: {
-                    Label("Join community", systemImage: "person.badge.plus")
+                    Label("Join free", systemImage: "person.badge.plus")
                 }
                 .buttonStyle(PrimaryButtonStyle())
             }
@@ -452,6 +467,121 @@ extension CommunityDetailView {
             }
             .cardStyle()
         }
+    }
+}
+
+// MARK: - Sections
+extension CommunityDetailView {
+    private var sectionBinding: Binding<CommunitySection> {
+        Binding(
+            get: { section },
+            set: { newValue in
+                didPickSection = true
+                section = newValue
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch section {
+        case .chat:
+            shortcuts
+            channelsSection
+        case .classroom:
+            ClassroomSectionView(community: current, viewModel: classroom, isStaff: viewModel.isStaff)
+        case .events:
+            EventsSectionView(
+                community: current,
+                viewModel: events,
+                isStaff: viewModel.isStaff,
+                canRSVP: viewModel.isUserMember
+            )
+        case .about:
+            CommunityAboutView(community: current, reloadToken: aboutReloadToken)
+        }
+    }
+
+    /// Pull to refresh reloads the section on screen.
+    private func refreshCurrentSection() async {
+        switch section {
+        case .chat:
+            break // the channels reload with the community
+        case .classroom:
+            await classroom.reload()
+        case .events:
+            await events.reload()
+        case .about:
+            aboutReloadToken += 1
+        }
+    }
+}
+
+/// The parts of a community, picked with the bar under the header.
+enum CommunitySection: String, CaseIterable, Identifiable {
+    case chat, classroom, events, about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .classroom: return "Classroom"
+        case .events: return "Events"
+        case .about: return "About"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .chat: return "bubble.left.and.bubble.right.fill"
+        case .classroom: return "graduationcap.fill"
+        case .events: return "calendar"
+        case .about: return "info.circle.fill"
+        }
+    }
+}
+
+/// Capsule section switcher in the style of the app's SegmentedPicker, with text that
+/// shrinks a little rather than truncating "Classroom" on small phones.
+private struct CommunitySectionBar: View {
+    @Binding var selection: CommunitySection
+    @Namespace private var namespace
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(CommunitySection.allCases) { option in
+                let isSelected = option == selection
+                Button {
+                    guard option != selection else { return }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    withAnimation(.snappy(duration: 0.25)) { selection = option }
+                } label: {
+                    Text(option.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.inverseText : Color.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.horizontal, 4)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(Color.inverseFill)
+                                    .matchedGeometryEffect(id: "community-section", in: namespace)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(Color.surfaceRaised))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Community sections")
     }
 }
 

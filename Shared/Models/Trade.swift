@@ -40,6 +40,41 @@ struct Trade: Identifiable, Codable {
 
     /// Imported trades are read-only in the app
     var isImported: Bool { source == "brokerage" }
+
+    // MARK: - Proof label (docs/backend-contracts.md, section 0: "Proof labels")
+    /// How much the trade can be trusted. A missing `proof` field means self-reported.
+    var proof: TradeProof = .selfReported
+    /// Server time the trade was logged (`FieldValue.serverTimestamp()` on create).
+    /// Nil on old trades, and briefly nil locally until the server has set it.
+    var loggedAt: Date?
+    /// The day range the entry price was checked against, for price-checked trades.
+    var priceCheck: TradePriceCheck?
+    /// How the exit was checked ("price_checked" or "self_reported"); nil while open and on old trades.
+    var exitProof: TradeProof?
+    /// Server time the trade was closed in the app.
+    var exitLoggedAt: Date?
+
+    /// Only price-checked and verified trades count toward win rate, P&L and performance.
+    var countsTowardStats: Bool { proof.countsTowardStats }
+
+    /// How long after `loggedAt` a price-checked trade can still be deleted (the rules allow 15 minutes).
+    static let priceCheckedDeleteWindow: TimeInterval = 15 * 60
+
+    /// When a price-checked trade stops being deletable, or nil when it can always be deleted.
+    /// A small margin keeps the app from offering a delete the server would just refuse.
+    var deleteDeadline: Date? {
+        guard proof == .priceChecked else { return nil }
+        // Not yet confirmed by the server: it was logged moments ago
+        let logged = loggedAt ?? Date()
+        return logged.addingTimeInterval(Trade.priceCheckedDeleteWindow - 30)
+    }
+
+    /// Imported trades are never deleted here; price-checked trades only shortly after logging.
+    func canDelete(at now: Date = Date()) -> Bool {
+        guard !isImported, proof != .verified else { return false }
+        guard let deadline = deleteDeadline else { return true }
+        return now < deadline
+    }
     
     // MARK: - Computed Properties
     
@@ -194,8 +229,13 @@ struct Trade: Identifiable, Codable {
     
     // MARK: - Firebase Integration
     
+    /// The data for creating the trade document (FirebaseServices.addTrade).
     /// The brokerage fields (`source`, `isVerified`, `externalId`, `brokerageConnectionId`) are left out
-    /// on purpose: only the server writes them, and merge updates keep the stored values.
+    /// on purpose: only the server writes them.
+    /// Proof: `proof`, `loggedAt` (server time) and, for price-checked entries, `priceCheck`.
+    /// A trade created already closed has an unchecked exit, so it's self-reported overall.
+    /// Updates don't use this: see FirebaseServices.updateTrade / closeTrade, which never rewrite
+    /// the fields the rules lock after create.
     func toFirestore() -> [String: Any] {
         var data: [String: Any] = [
             "userId": userId,
@@ -235,6 +275,19 @@ struct Trade: Identifiable, Codable {
         if let sector = sector {
             data["sector"] = sector
         }
+
+        // Proof. The rules only accept "price_checked" or "self_reported" from the app.
+        var createProof: TradeProof = proof == .priceChecked ? .priceChecked : .selfReported
+        if !isOpen {
+            createProof = .selfReported
+            data["exitProof"] = TradeProof.selfReported.rawValue
+            data["exitLoggedAt"] = FieldValue.serverTimestamp()
+        }
+        data["proof"] = createProof.rawValue
+        data["loggedAt"] = FieldValue.serverTimestamp()
+        if createProof == .priceChecked, let priceCheck {
+            data["priceCheck"] = priceCheck.toFirestore()
+        }
         
         return data
     }
@@ -270,9 +323,150 @@ struct Trade: Identifiable, Codable {
         trade.isVerified = data["isVerified"] as? Bool
         trade.externalId = data["externalId"] as? String
         trade.brokerageConnectionId = data["brokerageConnectionId"] as? String
+
+        // Missing proof = self-reported. Brokerage imports written before proof existed count as verified.
+        if let raw = data["proof"] as? String, let proof = TradeProof(rawValue: raw) {
+            trade.proof = proof
+        } else {
+            trade.proof = (trade.isImported && trade.isVerified == true) ? .verified : .selfReported
+        }
+        trade.loggedAt = (data["loggedAt"] as? Timestamp)?.dateValue()
+        trade.priceCheck = (data["priceCheck"] as? [String: Any]).flatMap(TradePriceCheck.fromFirestore)
+        trade.exitProof = (data["exitProof"] as? String).flatMap(TradeProof.init(rawValue:))
+        trade.exitLoggedAt = (data["exitLoggedAt"] as? Timestamp)?.dateValue()
         
         return trade
     }
+}
+
+// MARK: - Proof labels
+
+/// How much a trade (or a trade-result post) can be trusted. Stored as `proof` on trades.
+enum TradeProof: String, Codable, CaseIterable {
+    /// Imported from a linked brokerage
+    case verified = "verified"
+    /// Logged as it happened, at a price inside the day's range from a live quote
+    case priceChecked = "price_checked"
+    /// Anything else (and any trade without a `proof` field)
+    case selfReported = "self_reported"
+
+    init(firestoreValue: Any?) {
+        self = (firestoreValue as? String).flatMap(TradeProof.init(rawValue:)) ?? .selfReported
+    }
+
+    var countsTowardStats: Bool { self != .selfReported }
+
+    var label: String {
+        switch self {
+        case .verified: return "Verified"
+        case .priceChecked: return "Price checked"
+        case .selfReported: return "Self-reported"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .verified: return "checkmark.seal.fill"
+        case .priceChecked: return "checkmark.shield.fill"
+        case .selfReported: return "questionmark.circle"
+        }
+    }
+
+    /// Design-system colours that work in light and dark mode
+    var tint: Color {
+        switch self {
+        case .verified: return .marketGreen
+        case .priceChecked: return .goldText
+        case .selfReported: return .secondary
+        }
+    }
+
+    /// One line for detail screens and accessibility
+    var explanation: String {
+        switch self {
+        case .verified: return "Imported from a linked brokerage."
+        case .priceChecked: return "Logged as it happened, at a price inside the day's market range."
+        case .selfReported: return "Entered by the trader and not checked against market prices. Doesn't count toward win rate or P&L."
+        }
+    }
+}
+
+/// The day range a price was checked against: `priceCheck: { low, high, checkedAt }`.
+struct TradePriceCheck: Codable, Equatable {
+    /// Finnhub's day low and high (before the 0.5% widening for quote delay)
+    var low: Double
+    var high: Double
+    var checkedAt: Date
+
+    func toFirestore() -> [String: Any] {
+        ["low": low, "high": high, "checkedAt": Timestamp(date: checkedAt)]
+    }
+
+    static func fromFirestore(_ data: [String: Any]) -> TradePriceCheck? {
+        guard let low = (data["low"] as? NSNumber)?.doubleValue,
+              let high = (data["high"] as? NSNumber)?.doubleValue else { return nil }
+        let checkedAt = (data["checkedAt"] as? Timestamp)?.dateValue() ?? Date.distantPast
+        return TradePriceCheck(low: low, high: high, checkedAt: checkedAt)
+    }
+}
+
+/// Win rate and P&L over a set of trades. Use `TradeStats(counted: trades)` for anything shown as
+/// performance (only price-checked and verified trades), and `TradeStats(selfReported: trades)` for
+/// the separately labelled self-reported totals.
+struct TradeStats: Equatable {
+    var closedCount = 0
+    var winCount = 0
+    var lossCount = 0
+    var openCount = 0
+    /// Sum of closed trades' P&L
+    var realizedPL: Double = 0
+    /// Sum of open stock positions' P&L at the live price (0 without one)
+    var unrealizedPL: Double = 0
+    /// Closed trades' P&L for trades closed today
+    var closedTodayPL: Double = 0
+    var bestTradeId: String?
+    var bestTradePL: Double?
+
+    var tradeCount: Int { closedCount + openCount }
+    var hasClosedTrades: Bool { closedCount > 0 }
+    /// 0–100; 0 without closed trades (check `hasClosedTrades` before showing it)
+    var winRate: Double { closedCount > 0 ? Double(winCount) / Double(closedCount) * 100 : 0 }
+    var totalPL: Double { realizedPL + unrealizedPL }
+
+    init(trades: [Trade]) {
+        let calendar = Calendar.current
+        var best: Trade?
+        for trade in trades {
+            if trade.isOpen {
+                openCount += 1
+                unrealizedPL += trade.unrealizedPL
+            } else {
+                closedCount += 1
+                let pl = trade.profitLoss
+                realizedPL += pl
+                if pl > 0 { winCount += 1 } else if pl < 0 { lossCount += 1 }
+                if let exit = trade.exitDate, calendar.isDateInToday(exit) { closedTodayPL += pl }
+                if best == nil || pl > best!.profitLoss { best = trade }
+            }
+        }
+        bestTradeId = best?.id
+        bestTradePL = best?.profitLoss
+    }
+
+    /// Only price-checked and verified trades
+    init(counted trades: [Trade]) {
+        self.init(trades: trades.filter(\.countsTowardStats))
+    }
+
+    /// Only self-reported trades
+    init(selfReported trades: [Trade]) {
+        self.init(trades: trades.filter { !$0.countsTowardStats })
+    }
+}
+
+extension Array where Element == Trade {
+    /// Trades that count toward win rate, P&L and performance
+    var countedForStats: [Trade] { filter(\.countsTowardStats) }
 }
 
 // MARK: - Keep Your Existing TradeType Enum

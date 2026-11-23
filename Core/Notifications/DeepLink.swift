@@ -1,7 +1,8 @@
 // File: Core/Notifications/DeepLink.swift
 // A place in the app that a notification can open. Built from the `data` map that Cloud
 // Functions put on each notification and copy into the push payload
-// (docs/backend-contracts.md, section 2: route, communityId, channelId, messageId, postId, userId, symbol).
+// (docs/backend-contracts.md, section 2: route, communityId, channelId, messageId, postId, userId, symbol;
+// section 11 adds eventId, which opens the community for now).
 
 import Foundation
 
@@ -26,8 +27,14 @@ enum DeepLink: Equatable, Sendable {
 
         switch route {
         case "community":
+            // callout_update, trade_share and community_event use route "community" and may name
+            // a channel and message (docs/backend-contracts.md, section 11).
             guard let communityId = value("communityId") else { return nil }
-            self = .community(id: communityId)
+            if let channelId = value("channelId") {
+                self = .channel(communityId: communityId, channelId: channelId, messageId: value("messageId"))
+            } else {
+                self = .community(id: communityId)
+            }
         case "channel":
             guard let communityId = value("communityId") else { return nil }
             if let channelId = value("channelId") {

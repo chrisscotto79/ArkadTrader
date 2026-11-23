@@ -10,12 +10,40 @@ import SwiftUI
 extension FirebaseServices {
     // MARK: - Post Management
     
+    /// Creates a post. A trade-result post (`tradeId` set) gets its `tradeSnapshot` copied from the
+    /// trade document as stored, so it matches what firestore.rules compare (snapshotMatches).
     func createPost(_ post: Post) async throws {
-        try await db.collection("posts").document(post.id).setData(post.toFirestore())
+        var data = post.toFirestore()
+        if let tradeId = post.tradeId {
+            data["tradeId"] = tradeId
+            data["tradeSnapshot"] = try await tradeSnapshotData(tradeId: tradeId, authorId: post.authorId)
+        } else {
+            data.removeValue(forKey: "tradeSnapshot")
+        }
+        try await db.collection("posts").document(post.id).setData(data)
+        notifyPostMentions(postId: post.id, authorUsername: post.authorUsername, content: post.content)
+    }
+
+    /// The snapshot of the author's own closed trade, straight from the trade document.
+    private func tradeSnapshotData(tradeId: String, authorId: String) async throws -> [String: Any] {
+        let document = try await db.collection("trades").document(tradeId).getDocument(source: .server)
+        guard let trade = document.data(), trade["userId"] as? String == authorId else {
+            throw NSError(domain: "TradeResultPost", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "That trade couldn't be found in your portfolio."])
+        }
+        guard let snapshot = TradeSnapshot.firestoreData(fromTradeDocument: trade) else {
+            throw NSError(domain: "TradeResultPost", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Only closed trades can be shared as a trade result."])
+        }
+        return snapshot
     }
     
+    /// Never rewrites `tradeId` / `tradeSnapshot`: the rules fix them once posted.
     func updatePost(_ post: Post) async throws {
-        try await db.collection("posts").document(post.id).setData(post.toFirestore(), merge: true)
+        var data = post.toFirestore()
+        data.removeValue(forKey: "tradeId")
+        data.removeValue(forKey: "tradeSnapshot")
+        try await db.collection("posts").document(post.id).setData(data, merge: true)
     }
     
     func deletePost(postId: String) async throws {
@@ -128,6 +156,7 @@ extension FirebaseServices {
         
         try await batch.commit()
         print("✅ Like batch committed successfully!")
+        notifyPostLiked(postId: postId)
     }
     
     func unlikePost(postId: String, userId: String) async throws {
@@ -569,6 +598,7 @@ extension FirebaseServices {
         }
         
         try await batch.commit()
+        notifyPostCommented(postId: postId, commenterUsername: authorUsername, content: content)
     }
     
     func getComments(postId: String) async throws -> [Comment] {

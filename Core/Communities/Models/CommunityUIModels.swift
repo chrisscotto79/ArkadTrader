@@ -20,6 +20,28 @@ struct Channel: Identifiable, Codable {
     var isDefault: Bool // #general and #callouts are default channels
     var adminOnly: Bool // For #callouts channel
     var createdAt: Date
+    /// Optional SF Symbol name stored as `icon`. The Announcements preset sets "megaphone.fill";
+    /// nil means the type's own icon.
+    var icon: String? = nil
+
+    /// Icon used by the Announcements preset (an admin-only text channel).
+    static let announcementsIcon = "megaphone.fill"
+
+    /// An admin-only text channel created from the Announcements preset.
+    var isAnnouncements: Bool { type != .callouts && adminOnly && icon == Channel.announcementsIcon }
+
+    /// The icon to draw for this channel: its own, else the type's.
+    var displayIcon: String {
+        if let icon, !icon.isEmpty { return icon }
+        return type == .callouts ? "megaphone.fill" : "number"
+    }
+
+    /// Callouts are gold, announcements blue, everything else neutral.
+    var displayTint: Color {
+        if type == .callouts { return .goldText }
+        if isAnnouncements { return .info }
+        return .secondary
+    }
     
     init(name: String, type: ChannelType, communityId: String, isDefault: Bool = false, adminOnly: Bool = false) {
         self.id = UUID().uuidString
@@ -33,7 +55,7 @@ struct Channel: Identifiable, Codable {
     
     // Firebase conversion
     func toFirestore() -> [String: Any] {
-        return [
+        var data: [String: Any] = [
             "name": name,
             "type": type.rawValue,
             "communityId": communityId,
@@ -41,6 +63,8 @@ struct Channel: Identifiable, Codable {
             "adminOnly": adminOnly,
             "createdAt": Timestamp(date: createdAt)
         ]
+        if let icon, !icon.isEmpty { data["icon"] = icon }
+        return data
     }
     
     static func fromFirestore(data: [String: Any], id: String) throws -> Channel {
@@ -57,6 +81,7 @@ struct Channel: Identifiable, Codable {
         var channel = Channel(name: name, type: type, communityId: communityId, isDefault: isDefault, adminOnly: adminOnly)
         channel.id = id
         channel.createdAt = createdAtTimestamp.dateValue()
+        channel.icon = (data["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         return channel
     }
 }
@@ -101,6 +126,42 @@ struct CommunityMessage: Identifiable, Codable {
     /// Structured trade callout, when this message is one
     var callout: TradeCallout?
 
+    // Trade posting kinds (docs/backend-contracts.md, section 11). A message carries at most one
+    // of callout, calloutUpdate, calloutResult, tradeShare or gamePlan; `content` is always a
+    // plain-text summary so older app versions still show something.
+    /// The message this one replies to
+    var replyTo: MessageReplyRef?
+    /// The author's follow-up on their own open callout (trim, add, move stop / target, note)
+    var calloutUpdate: CalloutUpdate?
+    /// The author's result post after one of their callouts closed
+    var calloutResult: CalloutResult?
+    /// One of the author's logged trades, copied from `trades/{tradeId}`
+    var tradeShare: TradeShareInfo?
+    /// A leader's daily watchlist
+    var gamePlan: GamePlan?
+
+    /// True for callouts, updates, results, trade shares and game plans. Their `content` is a
+    /// generated summary, so they aren't edited as text.
+    var hasStructuredKind: Bool {
+        callout != nil || calloutUpdate != nil || calloutResult != nil || tradeShare != nil || gamePlan != nil
+    }
+
+    /// One line describing the message, for reply quotes, banners, pins and search.
+    var previewText: String {
+        if isDeleted { return "Message deleted" }
+        if let callout { return "\(callout.direction.displayName) $\(callout.ticker) callout" }
+        if let gamePlan { return gamePlan.title }
+        if content.hasPrefix("[MEDIA:IMAGE]") { return "Photo" }
+        if content.hasPrefix("[MEDIA:VIDEO]") { return "Video" }
+        if content.hasPrefix("[MEDIA:DOCUMENT]") {
+            let parts = String(content.dropFirst(16)).components(separatedBy: "|")
+            return parts.count >= 2 ? parts[1] : "Document"
+        }
+        return content
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // Editing and moderation (docs/backend-contracts.md, section 1)
     var editedAt: Date?
     /// Soft delete: the content is cleared and the row shows "Message deleted"
@@ -138,6 +199,11 @@ struct CommunityMessage: Identifiable, Codable {
         ]
         if let authorAvatarURL, !authorAvatarURL.isEmpty { data["authorAvatarURL"] = authorAvatarURL }
         if let callout { data["callout"] = callout.toFirestore() }
+        if let replyTo { data["replyTo"] = replyTo.toFirestore() }
+        if let calloutUpdate { data["calloutUpdate"] = calloutUpdate.toFirestore() }
+        if let calloutResult { data["calloutResult"] = calloutResult.toFirestore() }
+        if let tradeShare { data["tradeShare"] = tradeShare.toFirestore() }
+        if let gamePlan { data["gamePlan"] = gamePlan.toFirestore() }
         if let editedAt { data["editedAt"] = Timestamp(date: editedAt) }
         return data
     }
@@ -169,10 +235,286 @@ struct CommunityMessage: Identifiable, Codable {
         message.isPinned = data["isPinned"] as? Bool ?? false
         message.pinnedBy = data["pinnedBy"] as? String
         message.pinnedAt = (data["pinnedAt"] as? Timestamp)?.dateValue()
-        if !message.isDeleted, let calloutData = data["callout"] as? [String: Any] {
-            message.callout = TradeCallout.fromFirestore(calloutData)
+        if !message.isDeleted {
+            if let calloutData = data["callout"] as? [String: Any] {
+                message.callout = TradeCallout.fromFirestore(calloutData)
+            }
+            message.replyTo = (data["replyTo"] as? [String: Any]).flatMap(MessageReplyRef.fromFirestore)
+            message.calloutUpdate = (data["calloutUpdate"] as? [String: Any]).flatMap(CalloutUpdate.fromFirestore)
+            message.calloutResult = (data["calloutResult"] as? [String: Any]).flatMap(CalloutResult.fromFirestore)
+            message.tradeShare = (data["tradeShare"] as? [String: Any]).flatMap(TradeShareInfo.fromFirestore)
+            message.gamePlan = (data["gamePlan"] as? [String: Any]).flatMap(GamePlan.fromFirestore)
         }
         return message
+    }
+}
+
+// MARK: - Chat text limits
+
+/// Keeps text inside the rules' size limits (`content` 4000, `replyTo.preview` 200,
+/// `gamePlan.title` 100). Counts UTF-8 bytes, which is never less than the characters
+/// the rules count, so a clipped string always passes.
+enum ChatText {
+    static let contentLimit = 4000
+    static let previewLimit = 200
+    static let gamePlanTitleLimit = 100
+
+    static func clip(_ text: String, max: Int) -> String {
+        guard text.utf8.count > max else { return text }
+        let ellipsis = "…"
+        let budget = max - ellipsis.utf8.count
+        var result = ""
+        var used = 0
+        for character in text {
+            let size = String(character).utf8.count
+            if used + size > budget { break }
+            result.append(character)
+            used += size
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines) + ellipsis
+    }
+}
+
+// MARK: - Reply reference
+
+/// `replyTo: { messageId, authorId, authorUsername, preview }` on a channel message.
+struct MessageReplyRef: Codable, Equatable {
+    var messageId: String
+    var authorId: String
+    var authorUsername: String
+    /// At most 200 characters
+    var preview: String
+
+    init(messageId: String, authorId: String, authorUsername: String, preview: String) {
+        self.messageId = messageId
+        self.authorId = authorId
+        self.authorUsername = authorUsername
+        self.preview = ChatText.clip(preview, max: ChatText.previewLimit)
+    }
+
+    /// A reference to `message`, with its one-line preview.
+    init(to message: CommunityMessage) {
+        self.init(messageId: message.id, authorId: message.authorId,
+                  authorUsername: message.authorUsername, preview: message.previewText)
+    }
+
+    func toFirestore() -> [String: Any] {
+        [
+            "messageId": messageId,
+            "authorId": authorId,
+            "authorUsername": authorUsername,
+            "preview": ChatText.clip(preview, max: ChatText.previewLimit)
+        ]
+    }
+
+    static func fromFirestore(_ data: [String: Any]) -> MessageReplyRef? {
+        guard let messageId = data["messageId"] as? String, !messageId.isEmpty else { return nil }
+        return MessageReplyRef(
+            messageId: messageId,
+            authorId: data["authorId"] as? String ?? "",
+            authorUsername: data["authorUsername"] as? String ?? "",
+            preview: data["preview"] as? String ?? ""
+        )
+    }
+}
+
+// MARK: - Trade share
+
+/// `tradeShare: { tradeId, ticker, tradeType, entryPrice, quantity, isOpen, exitPrice?, proof, note? }`,
+/// copied from the author's own `trades/{tradeId}`. The rules compare every field with the trade doc,
+/// so sending builds the map from the raw document (`firestoreData(fromTradeDoc:)`), never from this struct.
+struct TradeShareInfo: Codable, Equatable {
+    var tradeId: String
+    var ticker: String
+    /// The trade's `tradeType` as stored: "stock", "option", "crypto" or "forex"
+    var tradeType: String
+    var entryPrice: Double
+    var quantity: Double
+    var isOpen: Bool
+    var exitPrice: Double?
+    var proof: TradeProof
+    var note: String?
+
+    var assetType: TradeType? { TradeType(rawValue: tradeType) }
+
+    /// Closed trades only. Same math as the portfolio (`Trade.profitLossPercentage`).
+    var resultPercent: Double? {
+        guard !isOpen, let exitPrice, entryPrice > 0 else { return nil }
+        return (exitPrice - entryPrice) / entryPrice * 100
+    }
+
+    /// Plain-text summary used as the message's `content`.
+    var summary: String {
+        var parts = ["📊 $\(ticker)", assetType?.displayName ?? tradeType.capitalized,
+                     "Entry \(TradeCallout.formatPrice(entryPrice))"]
+        if isOpen {
+            parts.append("Open")
+        } else if let exitPrice {
+            var exit = "Exit \(TradeCallout.formatPrice(exitPrice))"
+            if let result = resultPercent { exit += " (\(TradeCallout.formatPercent(result)))" }
+            parts.append(exit)
+        }
+        parts.append(proof.label)
+        var text = parts.joined(separator: " · ")
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            text += "\n\(note)"
+        }
+        return text
+    }
+
+    func toFirestore() -> [String: Any] {
+        var data: [String: Any] = [
+            "tradeId": tradeId,
+            "ticker": ticker,
+            "tradeType": tradeType,
+            "entryPrice": entryPrice,
+            "quantity": quantity,
+            "isOpen": isOpen,
+            "proof": proof.rawValue
+        ]
+        if let exitPrice { data["exitPrice"] = exitPrice }
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { data["note"] = note }
+        return data
+    }
+
+    /// The `tradeShare` map for sending, with each compared value copied as stored on the trade
+    /// (same Firestore type), and a missing `proof` read as "self_reported" like the rules do.
+    /// Nil when the document is missing a field the rules compare.
+    static func firestoreData(fromTradeDoc trade: [String: Any], tradeId: String, note: String?) -> [String: Any]? {
+        guard let ticker = trade["ticker"] as? String,
+              let tradeType = trade["tradeType"] as? String,
+              let entryPrice = trade["entryPrice"], TrackRecordDecode.double(entryPrice) != nil,
+              let quantity = trade["quantity"], TrackRecordDecode.double(quantity) != nil,
+              let isOpen = trade["isOpen"] as? Bool else { return nil }
+        var data: [String: Any] = [
+            "tradeId": tradeId,
+            "ticker": ticker,
+            "tradeType": tradeType,
+            "entryPrice": entryPrice,
+            "quantity": quantity,
+            "isOpen": isOpen,
+            "proof": proofValue(trade["proof"])
+        ]
+        if !isOpen {
+            guard let exitPrice = trade["exitPrice"], TrackRecordDecode.double(exitPrice) != nil else { return nil }
+            data["exitPrice"] = exitPrice
+        }
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            data["note"] = ChatText.clip(note, max: 500)
+        }
+        return data
+    }
+
+    /// The trade's stored `proof` exactly as stored, or "self_reported" when the field is missing
+    /// (`trade.get('proof', 'self_reported')` in the rules).
+    static func proofValue(_ stored: Any?) -> String {
+        (stored as? String) ?? TradeProof.selfReported.rawValue
+    }
+
+    static func fromFirestore(_ data: [String: Any]) -> TradeShareInfo? {
+        guard let tradeId = data["tradeId"] as? String,
+              let ticker = data["ticker"] as? String,
+              let entryPrice = TrackRecordDecode.double(data["entryPrice"]) else { return nil }
+        return TradeShareInfo(
+            tradeId: tradeId,
+            ticker: ticker,
+            tradeType: data["tradeType"] as? String ?? TradeType.stock.rawValue,
+            entryPrice: entryPrice,
+            quantity: TrackRecordDecode.double(data["quantity"]) ?? 0,
+            isOpen: data["isOpen"] as? Bool ?? true,
+            exitPrice: TrackRecordDecode.double(data["exitPrice"]),
+            proof: TradeProof(firestoreValue: data["proof"]),
+            note: data["note"] as? String
+        )
+    }
+}
+
+// MARK: - Game plan
+
+/// `gamePlan: { title, tickers: [{ symbol, bias, levels?, note? }] }`, 1–15 tickers.
+/// A daily watchlist template for leaders, posted from the composer's "+" menu.
+struct GamePlan: Codable, Equatable {
+    static let maxTickers = 15
+
+    enum Bias: String, Codable, CaseIterable, Identifiable {
+        case bullish, bearish, neutral
+
+        var id: String { rawValue }
+        var displayName: String { rawValue.capitalized }
+
+        var color: Color {
+            switch self {
+            case .bullish: return .marketGreen
+            case .bearish: return .marketRed
+            case .neutral: return .secondary
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .bullish: return "arrow.up.right"
+            case .bearish: return "arrow.down.right"
+            case .neutral: return "arrow.left.and.right"
+            }
+        }
+    }
+
+    struct Entry: Codable, Equatable, Identifiable {
+        var id = UUID()
+        var symbol: String
+        var bias: Bias
+        /// Free text, e.g. "180 support / 192 breakout"
+        var levels: String?
+        var note: String?
+
+        private enum CodingKeys: String, CodingKey { case symbol, bias, levels, note }
+    }
+
+    var title: String
+    var tickers: [Entry]
+
+    /// "Game plan for Sun, Nov 22"
+    static func defaultTitle(for date: Date = Date()) -> String {
+        "Game plan for \(date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))"
+    }
+
+    /// Plain-text summary used as the message's `content`.
+    var summary: String {
+        var lines = ["🗺️ \(title)"]
+        for entry in tickers {
+            var line = "$\(entry.symbol) \(entry.bias.rawValue)"
+            if let levels = entry.levels, !levels.isEmpty { line += " · \(levels)" }
+            if let note = entry.note, !note.isEmpty { line += " · \(note)" }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func toFirestore() -> [String: Any] {
+        [
+            "title": ChatText.clip(title, max: ChatText.gamePlanTitleLimit),
+            "tickers": tickers.prefix(Self.maxTickers).map { entry -> [String: Any] in
+                var data: [String: Any] = ["symbol": entry.symbol, "bias": entry.bias.rawValue]
+                if let levels = entry.levels, !levels.isEmpty { data["levels"] = levels }
+                if let note = entry.note, !note.isEmpty { data["note"] = note }
+                return data
+            }
+        ]
+    }
+
+    static func fromFirestore(_ data: [String: Any]) -> GamePlan? {
+        guard let title = data["title"] as? String,
+              let rows = data["tickers"] as? [[String: Any]] else { return nil }
+        let tickers = rows.compactMap { row -> Entry? in
+            guard let symbol = row["symbol"] as? String, !symbol.isEmpty else { return nil }
+            return Entry(
+                symbol: symbol,
+                bias: Bias(rawValue: row["bias"] as? String ?? "") ?? .neutral,
+                levels: row["levels"] as? String,
+                note: row["note"] as? String
+            )
+        }
+        return GamePlan(title: title, tickers: tickers)
     }
 }
 

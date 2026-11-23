@@ -1,5 +1,6 @@
 // File: Shared/Components/UserAvatar.swift
-// Circular profile photo with a gold initials fallback.
+// Circular profile photo with a gold initials fallback. Resolves https:// and
+// arkad-image:// photos through ArkadAsyncImage.
 
 import SwiftUI
 
@@ -9,21 +10,10 @@ struct UserAvatar: View {
     var size: CGFloat = 40
 
     var body: some View {
-        Group {
-            if let imageURL, !imageURL.isEmpty, let url = URL(string: imageURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .empty:
-                        Circle().fill(Color.surfaceRaised)
-                    default:
-                        initials
-                    }
-                }
-            } else {
-                initials
-            }
+        ArkadAsyncImage(urlString: imageURL) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            initials
         }
         .frame(width: size, height: size)
         .clipShape(Circle())

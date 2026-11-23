@@ -194,8 +194,11 @@ class CommunitiesViewModel: ObservableObject {
                     userId: userId
                 )
                 
-                // A first join is a good moment to ask about notifications
-                await PushNotificationManager.shared.requestAuthorizationIfNeeded()
+                // A first join is a good moment to ask about notifications. Without the
+                // server there's no remote push, so only ask when it's on.
+                if AppConfig.serverFunctionsEnabled {
+                    await PushNotificationManager.shared.requestAuthorizationIfNeeded()
+                }
 
                 // Refresh data after joining
                 await loadUserCommunities()

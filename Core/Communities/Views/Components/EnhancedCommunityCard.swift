@@ -80,14 +80,12 @@ struct CommunityAvatar: View {
             Text(CommunityPalette.initials(for: name))
                 .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
-            if let imageURL, !imageURL.isEmpty, let url = URL(string: imageURL) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    }
-                }
-                .frame(width: size, height: size)
+            ArkadAsyncImage(urlString: imageURL) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                Color.clear
             }
+            .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .clipShape(shape)
@@ -241,15 +239,9 @@ struct EnhancedCommunityCard: View {
     @ViewBuilder
     private var bannerFill: some View {
         let tint = CommunityPalette.color(for: community.name)
-        if let urlString = community.bannerURL, !urlString.isEmpty, let url = URL(string: urlString) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    tint.opacity(0.18)
-                }
-            }
-        } else {
+        ArkadAsyncImage(urlString: community.bannerURL) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
             tint.opacity(0.18)
         }
     }

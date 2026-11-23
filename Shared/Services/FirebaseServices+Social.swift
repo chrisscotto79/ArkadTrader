@@ -35,6 +35,7 @@ extension FirebaseServices {
         batch.updateData(["followingCount": FieldValue.increment(Int64(1))], forDocument: followerUserRef)
         
         try await batch.commit()
+        notifyFollowed(userId: userId, followerId: followerId)
     }
     
     func unfollowUser(userId: String, followerId: String) async throws {

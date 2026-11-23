@@ -1,6 +1,8 @@
 // File: Core/Notifications/NotificationSettingsView.swift
 // Settings > Notifications: the system permission, and a toggle for each
 // `notificationPrefs` key. Pushed inside the Settings NavigationStack.
+// In free mode there's no remote push: the toggles choose what the inbox shows, and the system
+// permission is only used for price alert banners while Arkad is open.
 
 import SwiftUI
 import UIKit
@@ -29,7 +31,7 @@ struct NotificationSettingsView: View {
                     }
                 }
 
-                Text("Arkad only sends notifications about communities you're in, people you follow and alerts you set.")
+                Text(footerText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -69,7 +71,7 @@ struct NotificationSettingsView: View {
     private var permissionSection: some View {
         switch pushManager.authorizationStatus {
         case .denied:
-            SettingsGroupCard(footer: "Notifications are turned off for Arkad on this device. Your choices below are saved, but nothing is delivered until you turn them on.") {
+            SettingsGroupCard(footer: deniedFooter) {
                 SettingsListRow(
                     icon: "bell.slash.fill",
                     title: "Turn on in Settings",
@@ -84,8 +86,10 @@ struct NotificationSettingsView: View {
             SettingsGroupCard(footer: "You'll be asked to allow notifications from Arkad.") {
                 SettingsListRow(
                     icon: "bell.badge.fill",
-                    title: "Turn on notifications",
-                    subtitle: "Callouts, replies and price alerts as they happen",
+                    title: usesRemotePush ? "Turn on notifications" : "Get price alerts",
+                    subtitle: usesRemotePush
+                        ? "Callouts, replies and price alerts as they happen"
+                        : "A banner when an alert you set triggers, while Arkad is open",
                     accessory: .none
                 ) {
                     Task { await pushManager.requestAuthorization() }
@@ -94,6 +98,20 @@ struct NotificationSettingsView: View {
         default:
             EmptyView()
         }
+    }
+
+    private var usesRemotePush: Bool { AppConfig.serverFunctionsEnabled }
+
+    private var deniedFooter: String {
+        usesRemotePush
+            ? "Notifications are turned off for Arkad on this device. Your choices below are saved, but nothing is delivered until you turn them on."
+            : "Notifications are turned off for Arkad on this device, so price alerts can't show a banner. Everything still appears in your inbox."
+    }
+
+    private var footerText: String {
+        usesRemotePush
+            ? "Arkad only sends notifications about communities you're in, people you follow and alerts you set."
+            : "These choices control what appears in your inbox, the bell on Home. Price alerts also show a banner while Arkad is open."
     }
 
     private func openSystemSettings() {

@@ -1,6 +1,7 @@
 // File: Core/Home/Views/HomeView.swift
-// The Home tab: Arkad header with the notifications bell and compose button,
-// For You / Following / News, and the feed.
+// The Home tab: Arkad header with the Learn button, notifications bell and compose button,
+// For You / Following / News, and the feed. The feed starts with a dismissible "Keep learning"
+// card (HomeLearnCard). Learn opens in this NavigationStack; Discover keeps its own entry.
 
 import SwiftUI
 
@@ -13,6 +14,7 @@ struct HomeView: View {
     @State private var selectedTab: HomeFeedTab = .feed
     @State private var showCreatePost = false
     @State private var showNotifications = false
+    @State private var showLearn = false
     @State private var linkedPost: LinkedPost?
 
     /// A post opened from a notification
@@ -46,6 +48,7 @@ struct HomeView: View {
             }
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(isPresented: $showLearn) { LearnHubView() }
         }
         .sheet(isPresented: $showCreatePost) {
             CreatePostView { draft in
@@ -91,6 +94,9 @@ struct HomeView: View {
             HStack(spacing: DS.Spacing.m) {
                 ArkadLogo(height: 26)
                 Spacer(minLength: 0)
+                IconButton(systemName: "book", accessibilityLabel: "Learn") {
+                    showLearn = true
+                }
                 notificationsButton
                 IconButton(systemName: "square.and.pencil", accessibilityLabel: "New post", filled: true) {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -166,9 +172,7 @@ struct HomeView: View {
 
     private var feedContent: some View {
         LazyVStack(spacing: DS.Spacing.m) {
-            if authService.currentUser?.experienceLevel == "new" {
-                LearnPromoCard()
-            }
+            HomeLearnCard()
 
             if homeViewModel.isLoading && homeViewModel.posts.isEmpty {
                 HomeFeedLoadingView(message: "Loading posts…")

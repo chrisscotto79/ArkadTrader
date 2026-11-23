@@ -1,7 +1,8 @@
 // File: Core/Watchlist/PriceAlertSheet.swift
 // "Set alert" for a watchlist symbol: above or below a target price.
-// Creates users/{uid}/priceAlerts/{id}. A server function checks alerts every few minutes
-// and sends a notification when one triggers.
+// Creates users/{uid}/priceAlerts/{id}. In free mode PriceAlertChecker checks alerts while
+// Arkad is open; with Cloud Functions deployed a server function checks them every few minutes
+// and sends a push when one triggers.
 
 import SwiftUI
 
@@ -116,6 +117,13 @@ struct PriceAlertSheet: View {
                 )
             }
 
+            if let warning = noLiveQuoteWarning {
+                Label(warning, systemImage: "info.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let warning = alreadyCrossedWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -214,7 +222,7 @@ struct PriceAlertSheet: View {
 
     private var howItWorks: some View {
         Label {
-            Text("Alerts are checked every few minutes, while the market is open for stocks and around the clock for crypto, and arrive as notifications. Price can move past your target between checks. Turn on notifications for Arkad to get them.")
+            Text(howItWorksText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -225,7 +233,20 @@ struct PriceAlertSheet: View {
         }
     }
 
+    private var howItWorksText: String {
+        if AppConfig.serverFunctionsEnabled {
+            return "Alerts are checked every few minutes, while the market is open for stocks and around the clock for crypto, and arrive as notifications. Price can move past your target between checks. Turn on notifications for Arkad to get them."
+        }
+        return "Alerts are checked while Arkad is open: when you open it, and every 5 minutes after that. When one triggers it appears in your notifications, with a banner if you've turned notifications on. Price can move past your target between checks."
+    }
+
     // MARK: - Logic
+
+    /// Free mode checks alerts with stock quotes only.
+    private var noLiveQuoteWarning: String? {
+        guard !AppConfig.serverFunctionsEnabled, !item.hasLiveQuote else { return nil }
+        return "Live prices are only available for stocks right now, so an alert on \(item.symbol) won't trigger yet."
+    }
 
     private var targetPrice: Double? {
         let trimmed = priceText.trimmingCharacters(in: .whitespaces)
@@ -260,6 +281,11 @@ struct PriceAlertSheet: View {
                 try await store.createAlert(for: item, condition: condition, targetPrice: targetPrice)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
+                if !AppConfig.serverFunctionsEnabled {
+                    // Banners need permission; a first alert is the moment it clearly helps.
+                    await PushNotificationManager.shared.requestAuthorizationIfNeeded()
+                    await PriceAlertChecker.shared.checkNow()
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }

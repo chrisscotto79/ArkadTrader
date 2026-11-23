@@ -12,6 +12,7 @@ struct ArkadTraderApp: App {
     @StateObject private var authService = FirebaseAuthService.shared
     @State private var isLaunching = true
     @AppStorage(AppAppearance.storageKey) private var appearance: String = AppAppearance.system.rawValue
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Crashlytics starts automatically once Firebase is configured.
@@ -34,6 +35,23 @@ struct ArkadTraderApp: App {
             }
             .preferredColorScheme(AppAppearance(rawValue: appearance)?.colorScheme)
             .task { await finishLaunch() }
+            // Free mode: the phone does the work a server would (callout tracking, price alerts).
+            .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
+            .onChange(of: authService.isAuthenticated) { _, _ in handleScenePhase(scenePhase) }
+        }
+    }
+
+    /// Runs the on-phone checks while the app is open and signed in, and stops them in the background.
+    private func handleScenePhase(_ phase: ScenePhase) {
+        guard !AppConfig.serverFunctionsEnabled else { return }
+        switch phase {
+        case .active where authService.isAuthenticated:
+            PriceAlertChecker.shared.start()
+            Task { await CalloutAutoTracker.shared.checkMyOpenCallouts() }
+        case .background:
+            PriceAlertChecker.shared.stop()
+        default:
+            if !authService.isAuthenticated { PriceAlertChecker.shared.stop() }
         }
     }
 

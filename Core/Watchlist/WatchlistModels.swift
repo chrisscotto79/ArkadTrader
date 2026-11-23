@@ -2,7 +2,8 @@
 // Watchlist symbols, price alerts and quotes.
 //
 // users/{uid}/watchlist/{symbol}: { symbol, assetType, addedAt }
-// users/{uid}/priceAlerts/{id}: { symbol, assetType, condition, targetPrice, isActive, createdAt, triggeredAt? }
+// users/{uid}/priceAlerts/{id}: { symbol, assetType, condition, targetPrice, isActive, createdAt,
+//                                triggeredAt?, triggeredPrice? }
 
 import Foundation
 
@@ -52,6 +53,19 @@ struct PriceAlert: Identifiable, Hashable, Sendable {
     let isActive: Bool
     let createdAt: Date
     let triggeredAt: Date?
+    /// The price that triggered the alert, when known.
+    var triggeredPrice: Double? = nil
+
+    /// Whether `price` meets the alert's condition.
+    func isMet(by price: Double) -> Bool {
+        switch condition {
+        case .above: return price >= targetPrice
+        case .below: return price <= targetPrice
+        }
+    }
+
+    /// Only stocks have live quotes, so only stock alerts can trigger for now.
+    var canTrigger: Bool { assetType == .stock }
 }
 
 struct WatchlistQuote: Hashable, Sendable {

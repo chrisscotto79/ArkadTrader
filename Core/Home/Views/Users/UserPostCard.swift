@@ -101,6 +101,9 @@ struct UserPostCard: View {
                             if post.postType != .text {
                                 Tag(text: post.postType.displayName, systemImage: postTypeIcon)
                             }
+                            if let sentiment = post.sentiment {
+                                SentimentBadge(sentiment: sentiment)
+                            }
                         }
                         Text(bylineText)
                             .font(.caption)
@@ -172,16 +175,23 @@ struct UserPostCard: View {
         if !post.tickers.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
+                    // Each opens the ticker's page (needs a NavigationStack above the card)
                     ForEach(post.tickers, id: \.self) { ticker in
-                        Tag(text: "$\(ticker)")
+                        TickerLink(symbol: ticker)
                     }
                 }
             }
             .scrollClipDisabled()
         }
 
-        if let trade = post.tradeSummary {
-            TradeSummaryCard(trade: trade)
+        if let snapshot = post.tradeSnapshot {
+            TradeSummaryCard(snapshot: snapshot)
+        } else if let trade = post.tradeSummary {
+            // Older trade posts with typed-in numbers
+            TradeSummaryCard(trade: trade, proof: .selfReported)
+        } else if post.postType == .tradeResult {
+            // Older trade posts without numbers
+            TradeProofBadge(proof: .selfReported)
         }
     }
 
@@ -557,9 +567,36 @@ private struct PostActionButton: View {
 
 // MARK: - Trade summary
 
-/// The numbers from a trade post: P&L, ticker, entry → exit and size. Also used on Profile.
+/// The numbers from a trade post: P&L, ticker, entry → exit, size and the proof label. Also used on
+/// Profile and in the composer. New posts render from the post's `tradeSnapshot`; older posts with
+/// typed-in numbers render from `TradingData` and are labelled self-reported.
 struct TradeSummaryCard: View {
     let trade: TradingData
+    var proof: TradeProof = .selfReported
+    /// "Stock", "Option"… for snapshots; older posts use TradingData's own type
+    private var assetLabel: String? = nil
+    private var priceTerms: AssetTerms? = nil
+
+    init(trade: TradingData, proof: TradeProof = .selfReported) {
+        self.trade = trade
+        self.proof = proof
+    }
+
+    /// From a trade-result post's snapshot: P&L computed from its entry, exit and size.
+    init(snapshot: TradeSnapshot) {
+        var data = TradingData()
+        data.ticker = snapshot.ticker
+        data.entryPrice = snapshot.entryPrice
+        data.exitPrice = snapshot.exitPrice
+        data.profitLoss = snapshot.profitLoss
+        let type = snapshot.assetType ?? .stock
+        let terms = AssetTerms(type)
+        data.positionSize = terms.quantityText(snapshot.quantity, symbol: snapshot.ticker)
+        self.trade = data
+        self.proof = snapshot.proof
+        self.assetLabel = type == .stock ? nil : type.displayName
+        self.priceTerms = terms
+    }
 
     private var tint: Color { trade.isProfitable ? .marketGreen : .marketRed }
 
@@ -571,15 +608,17 @@ struct TradeSummaryCard: View {
                 size: 38
             )
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(titleText)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.primary)
-                    if let type = trade.tradeType {
-                        Text(type.displayName)
+                        .lineLimit(1)
+                    if let typeText {
+                        Text(typeText)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
                 if let details {
@@ -589,6 +628,7 @@ struct TradeSummaryCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
+                TradeProofBadge(proof: proof, compact: true)
             }
 
             Spacer(minLength: DS.Spacing.s)
@@ -612,11 +652,19 @@ struct TradeSummaryCard: View {
         return "Trade result"
     }
 
+    private var typeText: String? {
+        assetLabel ?? trade.tradeType?.displayName
+    }
+
     /// "$200.00 → $250.00 · 10 shares"
     private var details: String? {
         var parts: [String] = []
         if let entry = trade.entryPrice, let exit = trade.exitPrice {
-            parts.append("\(entry.formatted(.currency(code: "USD"))) → \(exit.formatted(.currency(code: "USD")))")
+            if let priceTerms {
+                parts.append("\(priceTerms.price(entry)) → \(priceTerms.price(exit))")
+            } else {
+                parts.append("\(entry.formatted(.currency(code: "USD"))) → \(exit.formatted(.currency(code: "USD")))")
+            }
         }
         if let size = trade.positionSize, !size.isEmpty {
             parts.append(size)

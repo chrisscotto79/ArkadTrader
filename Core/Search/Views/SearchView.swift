@@ -18,6 +18,10 @@ struct SearchView: View {
     @State private var watchlistError: String?
     @State private var showLearnFromLink = false
     @State private var showWatchlistFromLink = false
+    /// A ticker opened from Trending tickers
+    @State private var trendingTicker: String?
+    /// Bumped by pull to refresh so Trending tickers skips its cache
+    @State private var trendingRefresh = 0
 
     /// Result scopes, communities first because they're the heart of Arkad.
     private let scopes: [SearchType] = [.all, .groups, .users, .posts, .stocks]
@@ -42,6 +46,7 @@ struct SearchView: View {
                     .padding(.top, DS.Spacing.s)
                     .navigationDestination(isPresented: $showLearnFromLink) { LearnHubView() }
                     .navigationDestination(isPresented: $showWatchlistFromLink) { WatchlistView() }
+                    .navigationDestination(item: $trendingTicker) { symbol in TickerPageView(ticker: symbol) }
                     .onAppear { openLinkedScreen(tabRouter.pendingDeepLink) }
                     .onChange(of: tabRouter.pendingDeepLink) { _, link in openLinkedScreen(link) }
             }
@@ -178,6 +183,10 @@ struct SearchView: View {
             VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                 shortcutsSection
 
+                TrendingTickersSection(refreshID: trendingRefresh) { symbol in
+                    trendingTicker = symbol
+                }
+
                 if !searchViewModel.searchHistory.isEmpty {
                     recentSearchesSection
                 }
@@ -207,6 +216,7 @@ struct SearchView: View {
         }
         .scrollDismissesKeyboard(.immediately)
         .refreshable {
+            trendingRefresh += 1
             await searchViewModel.loadDiscoverSuggestions()
             await watchlist.load()
         }
@@ -441,6 +451,12 @@ struct SearchView: View {
 
     private var noResultsState: some View {
         ScrollView {
+            if let symbol = typedTicker {
+                viewTickerRow(symbol)
+                    .padding(.horizontal, DS.pageMargin)
+                    .padding(.top, DS.Spacing.m)
+            }
+
             if selectedSearchType != .all && !searchViewModel.searchResults.isEmpty {
                 EmptyStateView(
                     systemImage: "line.3.horizontal.decrease.circle",
@@ -468,6 +484,15 @@ struct SearchView: View {
             LazyVStack(alignment: .leading, spacing: DS.Spacing.xl) {
                 let tickers = searchViewModel.resultTickers
                 let showTickersFirst = selectedSearchType == .stocks || queryIsTicker(in: tickers)
+                // Typed tickers already listed under Tickers open from their own row
+                let extraTicker = typedTicker.flatMap { symbol in
+                    tickers.contains { $0.symbol == symbol } ? nil : symbol
+                }
+                let extraTickerFirst = showTickersFirst || queryLooksLikeTicker
+
+                if let extraTicker, extraTickerFirst {
+                    viewTickerRow(extraTicker)
+                }
 
                 if showTickersFirst && !tickers.isEmpty {
                     tickersSection(tickers)
@@ -486,6 +511,10 @@ struct SearchView: View {
                     }
                 } else {
                     resultsSection(scope: selectedSearchType, results: filteredResults, limit: nil)
+                }
+
+                if let extraTicker, !extraTickerFirst {
+                    viewTickerRow(extraTicker)
                 }
             }
             .padding(.horizontal, DS.pageMargin)
@@ -552,16 +581,26 @@ struct SearchView: View {
         let isWatching = watchlist.contains(ticker.symbol)
 
         return HStack(spacing: DS.Spacing.m) {
-            IconWell(systemName: ticker.assetType.icon, tint: ticker.assetType.color, size: 40)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ticker.symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.primary)
-                Text(ticker.assetType.displayName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            NavigationLink {
+                TickerPageView(ticker: ticker.symbol)
+            } label: {
+                HStack(spacing: DS.Spacing.m) {
+                    IconWell(systemName: ticker.assetType.icon, tint: ticker.assetType.color, size: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ticker.symbol)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.primary)
+                        Text(ticker.assetType.displayName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: DS.Spacing.s)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: DS.Spacing.s)
+            .buttonStyle(PressableStyle())
+            .accessibilityHint("Opens the $\(ticker.symbol) page")
+
             Button {
                 toggleWatch(ticker, isWatching: isWatching)
             } label: {
@@ -589,6 +628,46 @@ struct SearchView: View {
                 watchlistError = error.localizedDescription
             }
         }
+    }
+
+    /// The query as a cashtag symbol ("aapl", "$TSLA" -> "TSLA"), when it could be one.
+    private var typedTicker: String? {
+        let symbol = TickerFeedService.normalize(trimmedQuery)
+        return TickerFeedService.isTickerSymbol(symbol) ? symbol : nil
+    }
+
+    /// Typed with a "$" or in capitals, so the ticker page leads the results.
+    private var queryLooksLikeTicker: Bool {
+        guard typedTicker != nil else { return false }
+        return trimmedQuery.hasPrefix("$") || trimmedQuery == trimmedQuery.uppercased()
+    }
+
+    /// "Posts about $AAPL": opens the ticker page for a typed ticker.
+    private func viewTickerRow(_ symbol: String) -> some View {
+        NavigationLink {
+            TickerPageView(ticker: symbol)
+        } label: {
+            HStack(spacing: DS.Spacing.m) {
+                IconWell(systemName: "number", size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("$\(symbol)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.primary)
+                    Text("Posts, sentiment and price")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .cardStyle(padding: 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the $\(symbol) page")
     }
 
     private func rowDivider(inset: CGFloat = DS.Spacing.l + 44 + DS.Spacing.m) -> some View {

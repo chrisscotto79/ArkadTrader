@@ -60,6 +60,7 @@ struct ChannelChatView: View {
     @State var showingDocumentPicker = false
     @State var showingMediaOptions = false
     @State var showCreateCallout = false
+    @State var showGamePlanSheet = false
     @State var calloutToTrack: CommunityMessage?
     @State var selectedImage: UIImage?
     @State var selectedDocumentURL: URL?
@@ -147,6 +148,11 @@ struct ChannelChatView: View {
         .sheet(isPresented: $showCreateCallout) {
             CreateCalloutSheet(channelName: channel.name) { callout in
                 viewModel.sendCallout(callout)
+            }
+        }
+        .sheet(isPresented: $showGamePlanSheet) {
+            GamePlanSheet(channelName: channel.name) { plan in
+                viewModel.sendGamePlan(plan)
             }
         }
         .sheet(item: $calloutToTrack) { message in
@@ -280,19 +286,9 @@ extension ChannelChatView {
         }
     }
 
-    var channelColor: Color {
-        switch channel.type {
-        case .text, .voice: return .secondary
-        case .callouts: return .goldText
-        }
-    }
+    var channelColor: Color { channel.displayTint }
 
-    var channelIcon: String {
-        switch channel.type {
-        case .text, .voice: return "number"
-        case .callouts: return "megaphone.fill"
-        }
-    }
+    var channelIcon: String { channel.displayIcon }
 }
 
 // MARK: - Pinned bar
@@ -440,8 +436,18 @@ extension ChannelChatView {
             isLastInGroup: isLastInGroup(at: index),
             canPin: viewModel.canPin(message),
             onTogglePin: { viewModel.togglePin(message) },
-            onReport: reportAction(for: message)
+            onReport: reportAction(for: message),
+            calloutUpdates: message.callout == nil ? [] : viewModel.calloutUpdates(for: message.id),
+            parentCallout: viewModel.parentCallout(of: message),
+            isMessageLoaded: { viewModel.message(withId: $0) != nil },
+            onJumpToMessage: { jumpToMessage($0) }
         )
+    }
+
+    /// Scrolls to a loaded message and briefly highlights it (reply quotes, "↳ update" rows).
+    func jumpToMessage(_ id: String) {
+        guard viewModel.message(withId: id) != nil else { return }
+        scrollTargetMessageId = id
     }
 
     /// Report option for other people's messages
@@ -481,7 +487,7 @@ extension ChannelChatView {
 
     var emptyChannelState: some View {
         VStack(spacing: DS.Spacing.l) {
-            IconWell(systemName: channelIcon, tint: channel.type == .callouts ? .goldText : .secondary, size: 64)
+            IconWell(systemName: channelIcon, tint: channelColor, size: 64)
             VStack(spacing: 6) {
                 Text("Welcome to #\(channel.name)")
                     .font(.title3.weight(.bold))
@@ -501,6 +507,9 @@ extension ChannelChatView {
     var channelDescription: String {
         switch channel.type {
         case .text, .voice:
+            if channel.isAnnouncements {
+                return "Announcements from the community's owners and admins show up here."
+            }
             return "This is the start of #\(channel.name). Say hello to the community."
         case .callouts:
             return channel.adminOnly
@@ -512,12 +521,13 @@ extension ChannelChatView {
 
 // MARK: - Grouping
 extension ChannelChatView {
-    /// Messages from the same author within five minutes are drawn as one group
+    /// Messages from the same author within five minutes are drawn as one group.
+    /// Callouts, updates, results, trade shares and game plans always start their own.
     func belongsToSameGroup(_ earlier: CommunityMessage, _ later: CommunityMessage) -> Bool {
         earlier.authorId == later.authorId
             && later.createdAt.timeIntervalSince(earlier.createdAt) <= 300
             && Calendar.current.isDate(earlier.createdAt, inSameDayAs: later.createdAt)
-            && earlier.callout == nil && later.callout == nil
+            && !earlier.hasStructuredKind && !later.hasStructuredKind
     }
 
     func isFirstInGroup(at index: Int) -> Bool {
@@ -546,17 +556,7 @@ extension ChannelChatView {
 
     /// One-line description of a message for reply / edit banners
     func previewText(for message: CommunityMessage) -> String {
-        if message.isDeleted { return "Message deleted" }
-        if let callout = message.callout {
-            return "\(callout.direction.displayName) $\(callout.ticker) callout"
-        }
-        if message.content.hasPrefix("[MEDIA:IMAGE]") { return "Photo" }
-        if message.content.hasPrefix("[MEDIA:VIDEO]") { return "Video" }
-        if message.content.hasPrefix("[MEDIA:DOCUMENT]") {
-            let parts = String(message.content.dropFirst(16)).components(separatedBy: "|")
-            return parts.count >= 2 ? parts[1] : "Document"
-        }
-        return message.content
+        message.previewText
     }
 }
 

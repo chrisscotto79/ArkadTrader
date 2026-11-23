@@ -1,6 +1,6 @@
 // File: Core/Communities/Views/Detail/ChannelChatView+Composer.swift
-// Channel chat composer: capsule text field with attachment, callout and send buttons,
-// @mentions, reply/edit banners and message actions.
+// Channel chat composer: capsule text field with the "+" menu (attachments, game plan),
+// callout and send buttons, @mentions, reply/edit banners and message actions.
 
 import SwiftUI
 import UIKit
@@ -29,7 +29,11 @@ extension ChannelChatView {
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: DS.Spacing.s) {
             if editingMessage == nil {
-                attachmentMenu
+                // Photo and file attachments need Cloud Storage (off in free mode);
+                // game plans are for staff, and anyone who can post in a callouts channel.
+                if AppConfig.mediaUploadsEnabled || viewModel.canPostGamePlan {
+                    attachmentMenu
+                }
 
                 // New trade callout (callout channels, people who can post there)
                 if channel.type == .callouts && viewModel.canUserPost {
@@ -53,22 +57,31 @@ extension ChannelChatView {
 
     private var attachmentMenu: some View {
         Menu {
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            if viewModel.canPostGamePlan {
                 Button {
-                    showingCamera = true
+                    showGamePlanSheet = true
                 } label: {
-                    Label("Camera", systemImage: "camera")
+                    Label("Game plan", systemImage: "map")
                 }
             }
-            Button {
-                showingImagePicker = true
-            } label: {
-                Label("Photo Library", systemImage: "photo.on.rectangle")
-            }
-            Button {
-                showingDocumentPicker = true
-            } label: {
-                Label("Document", systemImage: "doc")
+            if AppConfig.mediaUploadsEnabled {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button {
+                        showingCamera = true
+                    } label: {
+                        Label("Camera", systemImage: "camera")
+                    }
+                }
+                Button {
+                    showingImagePicker = true
+                } label: {
+                    Label("Photo Library", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    showingDocumentPicker = true
+                } label: {
+                    Label("Document", systemImage: "doc")
+                }
             }
         } label: {
             ZStack {
@@ -84,7 +97,7 @@ extension ChannelChatView {
             .frame(width: 36, height: 36)
         }
         .disabled(isUploadingMedia)
-        .accessibilityLabel("Attach a photo or file")
+        .accessibilityLabel(AppConfig.mediaUploadsEnabled ? "Attach a photo, file or game plan" : "Post a game plan")
     }
 
     private var inputField: some View {
@@ -216,12 +229,11 @@ extension ChannelChatView {
         let trimmedMessage = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else { return }
 
-        let finalMessage = replyingTo.map { "@\($0.authorUsername) \(trimmedMessage)" } ?? trimmedMessage
-
         stopTyping()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
-        viewModel.sendMessage(content: finalMessage)
+        // Replies carry `replyTo` (shown as a quote) instead of an "@username" prefix
+        viewModel.sendMessage(content: trimmedMessage, replyTo: replyingTo)
         messageText = ""
         replyingTo = nil
     }

@@ -1,9 +1,15 @@
 // File: Core/Payments/CommunityDashboardView.swift
 // Owner dashboard for a community: members, subscribers and revenue (paid communities),
 // the owner's callout record and recent members. Revenue comes from communities/{cid}/private/revenue,
-// which only the server writes.
+// which only the server writes. In free mode (AppConfig.paidCommunitiesEnabled off) every community
+// gets the free layout: members, activity, the callout record and recent members.
 
 import SwiftUI
+
+private extension Community {
+    /// Subscribers, revenue and payouts apply: paid communities are on and this one is paid
+    var hasPaidDashboard: Bool { AppConfig.paidCommunitiesEnabled && isPaid }
+}
 
 @MainActor
 final class CommunityDashboardViewModel: ObservableObject {
@@ -22,7 +28,7 @@ final class CommunityDashboardViewModel: ObservableObject {
     @Published private(set) var payoutStatus: StripeAccountStatus?
 
     func load(community: Community) async {
-        if community.isPaid {
+        if community.hasPaidDashboard {
             async let revenueTask: Void = loadRevenue(communityId: community.id)
             async let payoutsTask: Void = loadPayoutStatus()
             await loadMembers(communityId: community.id)
@@ -31,6 +37,12 @@ final class CommunityDashboardViewModel: ObservableObject {
         } else {
             await loadMembers(communityId: community.id)
         }
+    }
+
+    /// Members who joined in the last 7 days, owner excluded
+    var newMembersThisWeek: Int {
+        let weekAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        return members.filter { $0.role != .owner && $0.joinedAt > weekAgo }.count
     }
 
     /// Members who joined most recently, owner excluded
@@ -79,7 +91,7 @@ struct CommunityDashboardView: View {
             VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                 header
                 membersSection
-                if community.isPaid {
+                if community.hasPaidDashboard {
                     revenueSection
                     payoutsRow
                 } else {
@@ -109,13 +121,19 @@ struct CommunityDashboardView: View {
                 Text(community.name)
                     .font(.headline)
                     .lineLimit(1)
-                Text(community.priceTagText.map { "Paid · \($0)" } ?? "Free community")
+                Text(headerSubtitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
         .cardStyle()
+    }
+
+    /// "Paid · $9.99/mo" or "Free community" with paid communities on; "Day Trading · 128 members" in free mode
+    private var headerSubtitle: String {
+        guard AppConfig.paidCommunitiesEnabled else { return CommunityFormat.summary(community) }
+        return community.priceTagText.map { "Paid · \($0)" } ?? "Free community"
     }
 
     // MARK: - Members
@@ -129,7 +147,7 @@ struct CommunityDashboardView: View {
                     value: community.memberCount.formatted(),
                     footnote: "Including you"
                 )
-                if community.isPaid {
+                if community.hasPaidDashboard {
                     StatTile(
                         title: "Active subscribers",
                         value: revenue.map { $0.activeSubscribers.formatted() } ?? "–"
@@ -137,6 +155,13 @@ struct CommunityDashboardView: View {
                     StatTile(
                         title: "On free trial",
                         value: revenue.map { $0.trialingSubscribers.formatted() } ?? "–"
+                    )
+                } else {
+                    StatTile(
+                        title: "New this week",
+                        value: viewModel.isLoadingMembers || viewModel.membersFailed
+                            ? "–"
+                            : viewModel.newMembersThisWeek.formatted()
                     )
                 }
             }

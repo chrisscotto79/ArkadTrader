@@ -32,6 +32,15 @@ struct Post: Identifiable, Codable {
     /// Set on the server copy after repeated reports; hidden posts stay out of feeds
     var isHidden = false
 
+    // Trade-result posts (docs/backend-contracts.md, section 0): the author's own closed trade and a
+    // copy of its numbers and proof label, which the rules check against the trade document.
+    // Both are fixed once posted.
+    var tradeId: String?
+    var tradeSnapshot: TradeSnapshot?
+
+    /// Optional Bullish/Bearish tag ("bullish" / "bearish" in Firestore; missing means none)
+    var sentiment: PostSentiment?
+
     // Basic initializer
     init(content: String, authorId: String, authorUsername: String) {
         self.id = UUID().uuidString
@@ -98,9 +107,19 @@ struct Post: Identifiable, Codable {
             data["authorAvatarURL"] = authorAvatarURL
         }
 
-        // Add trading data if exists
+        // Add trading data if exists (older trade posts; new ones use tradeSnapshot)
         if let tradingData = tradingData {
             data["tradingData"] = tradingData.toFirestore()
+        }
+
+        // FirebaseServices.createPost replaces the snapshot with one copied from the trade document
+        if let tradeId, let tradeSnapshot {
+            data["tradeId"] = tradeId
+            data["tradeSnapshot"] = tradeSnapshot.toFirestore()
+        }
+
+        if let sentiment {
+            data[PostSentiment.firestoreField] = sentiment.rawValue
         }
         
         return data
@@ -138,12 +157,114 @@ struct Post: Identifiable, Codable {
         if let tradingDataDict = data["tradingData"] as? [String: Any] {
             post.tradingData = TradingData.fromFirestore(tradingDataDict)
         }
+        post.tradeId = data["tradeId"] as? String
+        post.tradeSnapshot = (data["tradeSnapshot"] as? [String: Any]).flatMap(TradeSnapshot.fromFirestore)
+        post.sentiment = PostSentiment(firestoreValue: data[PostSentiment.firestoreField])
 
         return post
     }
 }
 
-// ✅ Trading Data Structure
+// MARK: - Trade snapshot
+
+/// `tradeSnapshot` on a trade-result post: copied from the author's closed trade when posting.
+/// The card shows these numbers (P&L computed from them) and the proof label; nothing is typed in.
+struct TradeSnapshot: Codable, Equatable {
+    var ticker: String
+    /// `TradeType` raw value ("stock", "option", "crypto", "forex")
+    var tradeType: String
+    var entryPrice: Double
+    var exitPrice: Double
+    var quantity: Double
+    var entryDate: Date
+    var exitDate: Date
+    var proof: TradeProof
+
+    var assetType: TradeType? { TradeType(rawValue: tradeType) }
+    var profitLoss: Double { (exitPrice - entryPrice) * quantity }
+    var profitLossPercentage: Double { entryPrice > 0 ? (exitPrice - entryPrice) / entryPrice * 100 : 0 }
+
+    /// From a closed trade. Nil while the trade is open.
+    init?(trade: Trade) {
+        guard !trade.isOpen, let exitPrice = trade.exitPrice else { return nil }
+        self.ticker = trade.ticker
+        self.tradeType = trade.tradeType.rawValue
+        self.entryPrice = trade.entryPrice
+        self.exitPrice = exitPrice
+        self.quantity = trade.quantity
+        self.entryDate = trade.entryDate
+        self.exitDate = trade.exitDate ?? trade.entryDate
+        self.proof = trade.proof
+    }
+
+    init(ticker: String, tradeType: String, entryPrice: Double, exitPrice: Double, quantity: Double,
+         entryDate: Date, exitDate: Date, proof: TradeProof) {
+        self.ticker = ticker
+        self.tradeType = tradeType
+        self.entryPrice = entryPrice
+        self.exitPrice = exitPrice
+        self.quantity = quantity
+        self.entryDate = entryDate
+        self.exitDate = exitDate
+        self.proof = proof
+    }
+
+    func toFirestore() -> [String: Any] {
+        [
+            "ticker": ticker,
+            "tradeType": tradeType,
+            "entryPrice": entryPrice,
+            "exitPrice": exitPrice,
+            "quantity": quantity,
+            "entryDate": Timestamp(date: entryDate),
+            "exitDate": Timestamp(date: exitDate),
+            "proof": proof.rawValue
+        ]
+    }
+
+    /// The snapshot exactly as the rules compare it, built from the raw trade document: same
+    /// value types as stored (numbers, Timestamps), and `proof` defaulting to "self_reported".
+    /// Nil unless the trade is closed and has an exit price.
+    static func firestoreData(fromTradeDocument trade: [String: Any]) -> [String: Any]? {
+        guard trade["isOpen"] as? Bool == false,
+              let ticker = trade["ticker"] as? String,
+              let tradeType = trade["tradeType"] as? String,
+              let entryPrice = trade["entryPrice"] as? NSNumber,
+              let exitPrice = trade["exitPrice"] as? NSNumber,
+              let quantity = trade["quantity"] as? NSNumber,
+              let entryDate = trade["entryDate"] as? Timestamp else { return nil }
+        return [
+            "ticker": ticker,
+            "tradeType": tradeType,
+            "entryPrice": entryPrice,
+            "exitPrice": exitPrice,
+            "quantity": quantity,
+            "entryDate": entryDate,
+            "exitDate": (trade["exitDate"] as? Timestamp) ?? entryDate,
+            "proof": (trade["proof"] as? String) ?? TradeProof.selfReported.rawValue
+        ]
+    }
+
+    static func fromFirestore(_ data: [String: Any]) -> TradeSnapshot? {
+        guard let ticker = data["ticker"] as? String,
+              let entryPrice = (data["entryPrice"] as? NSNumber)?.doubleValue,
+              let exitPrice = (data["exitPrice"] as? NSNumber)?.doubleValue,
+              let quantity = (data["quantity"] as? NSNumber)?.doubleValue else { return nil }
+        let entryDate = (data["entryDate"] as? Timestamp)?.dateValue() ?? Date.distantPast
+        return TradeSnapshot(
+            ticker: ticker,
+            tradeType: data["tradeType"] as? String ?? TradeType.stock.rawValue,
+            entryPrice: entryPrice,
+            exitPrice: exitPrice,
+            quantity: quantity,
+            entryDate: entryDate,
+            exitDate: (data["exitDate"] as? Timestamp)?.dateValue() ?? entryDate,
+            proof: TradeProof(firestoreValue: data["proof"])
+        )
+    }
+}
+
+// ✅ Trading Data Structure (older trade posts with typed-in numbers; shown as self-reported)
 struct TradingData: Codable {
     var profitLoss: Double?
     var profitLossString: String?
@@ -363,9 +484,26 @@ extension Post {
         return result
     }
 
-    /// Trade numbers to show on the card. Nil unless there's an actual P&L, so a trade post
-    /// without numbers no longer shows a "$0.00" card. Falls back to the "P&L:" line in older posts.
+    /// The proof label of a trade-result post: the snapshot's, or self-reported for older posts
+    /// whose numbers were typed in.
+    var tradeProof: TradeProof {
+        tradeSnapshot?.proof ?? .selfReported
+    }
+
+    /// Trade numbers to show on the card. New trade posts use the snapshot of the author's closed
+    /// trade. Older posts: nil unless there's an actual P&L, so a trade post without numbers doesn't
+    /// show a "$0.00" card; falls back to the "P&L:" line in the text.
     var tradeSummary: TradingData? {
+        if let tradeSnapshot {
+            var data = TradingData()
+            data.ticker = tradeSnapshot.ticker
+            data.entryPrice = tradeSnapshot.entryPrice
+            data.exitPrice = tradeSnapshot.exitPrice
+            data.profitLoss = tradeSnapshot.profitLoss
+            let terms = AssetTerms(tradeSnapshot.assetType ?? .stock)
+            data.positionSize = terms.quantityText(tradeSnapshot.quantity, symbol: tradeSnapshot.ticker)
+            return data
+        }
         if let tradingData, tradingData.profitLossValue != nil { return tradingData }
         guard postType == .tradeResult,
               let range = displayContent.range(of: #"P&L:\s*[+-]?\$?-?[0-9][0-9,]*(\.[0-9]+)?"#, options: .regularExpression),

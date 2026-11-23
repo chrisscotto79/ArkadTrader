@@ -1,5 +1,8 @@
 // File: Core/Home/Views/CreatePostView.swift
-// The post composer sheet: post type, text, photos, tickers, hashtags and (for trade results) trade numbers.
+// The post composer sheet: post type, text, photos, tickers, hashtags and, for trade results, one of
+// your own closed trades. A trade result's numbers and proof label come from that trade (copied into
+// the post's tradeSnapshot); there's no typed-in P&L. Photos are hidden while
+// AppConfig.mediaUploadsEnabled is off.
 
 import SwiftUI
 import PhotosUI
@@ -10,8 +13,10 @@ struct PostDraft {
     var tickers: [String]
     var images: [UIImage]
     var postType: PostType
-    /// The Trade Details fields, for trade result posts that filled any in
-    var tradingData: TradingData?
+    /// For trade result posts: the author's closed trade being shared
+    var trade: Trade?
+    /// Optional Bullish/Bearish tag (only offered when the post mentions a ticker)
+    var sentiment: PostSentiment? = nil
 }
 
 struct CreatePostView: View {
@@ -26,15 +31,18 @@ struct CreatePostView: View {
     @State private var characterCount = 0
     @State private var isPosting = false
 
-    // Trade details
+    // Trade result
     @State private var detectedTickers: [String] = []
-    @State private var profitLoss: String = ""
-    @State private var positionSize: String = ""
-    @State private var entryPrice: String = ""
-    @State private var exitPrice: String = ""
-    @State private var tradeTicker: String = ""
-    @State private var tradeType: TradingData.TradeType?
-    @State private var lastTemplate: TemplateType?
+    /// Bullish/Bearish tag for the post's tickers
+    @State private var sentiment: PostSentiment?
+    /// The author's closed trades, newest first, to pick from
+    @State private var closedTrades: [Trade] = []
+    @State private var isLoadingTrades = false
+    @State private var tradesLoadFailed = false
+    @State private var selectedTrade: Trade?
+    @State private var showTradePicker = false
+    /// The starter text last inserted, so picking another trade can replace it
+    @State private var lastTemplateText: String?
 
     // Media
     @State private var selectedImages: [PhotosPickerItem] = []
@@ -49,7 +57,7 @@ struct CreatePostView: View {
     @FocusState private var focusedField: ComposerField?
 
     private enum ComposerField: Hashable {
-        case message, ticker, profitLoss, size, entry, exit
+        case message
     }
 
     // MARK: - Constants
@@ -85,6 +93,11 @@ struct CreatePostView: View {
                         tickerSection
                     }
 
+                    if showsSentimentPicker {
+                        sentimentSection
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
                     if !suggestedHashtags.isEmpty {
                         hashtagSection
                     }
@@ -99,6 +112,7 @@ struct CreatePostView: View {
                 .padding(.bottom, DS.Spacing.xxl)
                 .animation(.snappy(duration: 0.3), value: selectedPostType)
                 .animation(.snappy(duration: 0.3), value: shouldShowPreview)
+                .animation(.snappy(duration: 0.3), value: showsSentimentPicker)
             }
             .scrollDismissesKeyboard(.interactively)
             .screenBackground()
@@ -114,6 +128,11 @@ struct CreatePostView: View {
             }
             .onChange(of: content) { _, _ in handleContentChange() }
             .onChange(of: selectedImages) { _, _ in loadSelectedImages() }
+            .sheet(isPresented: $showTradePicker) {
+                ClosedTradePickerSheet(trades: closedTrades, selectedId: selectedTrade?.id) { trade in
+                    selectTrade(trade)
+                }
+            }
             .confirmationDialog("Discard this post?", isPresented: $showDiscardConfirmation, titleVisibility: .visible) {
                 Button("Discard", role: .destructive) { dismiss() }
                 Button("Keep editing", role: .cancel) { }
@@ -174,7 +193,7 @@ struct CreatePostView: View {
                 editor
             }
 
-            if !selectedUIImages.isEmpty {
+            if AppConfig.mediaUploadsEnabled && !selectedUIImages.isEmpty {
                 selectedImagesStrip
             }
 
@@ -219,15 +238,17 @@ struct CreatePostView: View {
     /// Photos, $ticker, #hashtag, preview and the character count.
     private var attachmentBar: some View {
         HStack(spacing: DS.Spacing.xs) {
-            PhotosPicker(
-                selection: $selectedImages,
-                maxSelectionCount: max(1, Constants.maxImages - selectedUIImages.count),
-                matching: .images
-            ) {
-                composerToolIcon("photo.on.rectangle.angled")
+            if AppConfig.mediaUploadsEnabled {
+                PhotosPicker(
+                    selection: $selectedImages,
+                    maxSelectionCount: max(1, Constants.maxImages - selectedUIImages.count),
+                    matching: .images
+                ) {
+                    composerToolIcon("photo.on.rectangle.angled")
+                }
+                .disabled(selectedUIImages.count >= Constants.maxImages)
+                .accessibilityLabel("Add photos")
             }
-            .disabled(selectedUIImages.count >= Constants.maxImages)
-            .accessibilityLabel("Add photos")
 
             Button { insertToken("$") } label: { composerToolIcon("dollarsign") }
                 .accessibilityLabel("Add a ticker")
@@ -288,65 +309,97 @@ struct CreatePostView: View {
         }
     }
 
-    // MARK: - Trade details
+    // MARK: - Trade result
 
+    /// Pick one of your closed trades; the card shows its numbers and proof label.
     private var tradeResultSection: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
             HStack {
-                Text("Trade details")
+                Text("Trade")
                     .font(.headline)
                 Spacer()
-                Menu {
-                    Button("Profit") { insertTemplate(.profit) }
-                    Button("Loss") { insertTemplate(.loss) }
-                    Button("Options") { insertTemplate(.options) }
-                } label: {
-                    Label("Templates", systemImage: "doc.text")
+                if selectedTrade != nil, closedTrades.count > 1 {
+                    Button("Change") { showTradePicker = true }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.goldText)
                 }
             }
 
-            VStack(spacing: DS.Spacing.m) {
-                TradeFieldBox(label: "Ticker") {
-                    TextField(detectedTickers.first ?? "AAPL", text: $tradeTicker)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .ticker)
+            if let selectedTrade, let snapshot = TradeSnapshot(trade: selectedTrade) {
+                Button { showTradePicker = true } label: {
+                    TradeSummaryCard(snapshot: snapshot)
                 }
-
-                HStack(spacing: DS.Spacing.m) {
-                    TradeFieldBox(label: "Profit / loss") {
-                        TextField(computedProfitLoss.map { String(format: "%.2f", $0) } ?? "0.00", text: $profitLoss)
-                            .keyboardType(.numbersAndPunctuation)
-                            .focused($focusedField, equals: .profitLoss)
-                    }
-                    TradeFieldBox(label: "Position size") {
-                        TextField(tradeType == .options ? "2 contracts" : "100 shares", text: $positionSize)
-                            .focused($focusedField, equals: .size)
-                    }
+                .buttonStyle(PressableStyle())
+                .disabled(closedTrades.count <= 1)
+                .accessibilityHint(closedTrades.count > 1 ? "Choose another trade" : "")
+            } else if isLoadingTrades {
+                HStack(spacing: DS.Spacing.s) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading your closed trades…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-
-                HStack(spacing: DS.Spacing.m) {
-                    TradeFieldBox(label: "Entry price") {
-                        TextField("0.00", text: $entryPrice)
-                            .keyboardType(.decimalPad)
-                            .focused($focusedField, equals: .entry)
-                    }
-                    TradeFieldBox(label: "Exit price") {
-                        TextField("0.00", text: $exitPrice)
-                            .keyboardType(.decimalPad)
-                            .focused($focusedField, equals: .exit)
-                    }
+                .frame(maxWidth: .infinity, minHeight: 60)
+            } else if tradesLoadFailed {
+                VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                    Text("Couldn't load your trades. Check your connection.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button("Try again") { Task { await loadClosedTrades() } }
+                        .buttonStyle(PillButtonStyle(kind: .neutral))
                 }
+            } else if closedTrades.isEmpty {
+                Label("Close a trade in your portfolio to share its result here.", systemImage: "tray")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Button("Choose a closed trade") { showTradePicker = true }
+                    .buttonStyle(SecondaryButtonStyle())
             }
 
-            Text("These numbers show as a trade card on your post. Leave P&L blank to work it out from entry, exit and size; use a minus sign for a loss.")
+            Text("Trade results come from your own closed trades: the numbers and the proof label are copied from the trade and can't be edited.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .cardStyle()
+        .task { if closedTrades.isEmpty && !isLoadingTrades { await loadClosedTrades() } }
+    }
+
+    @MainActor
+    private func loadClosedTrades() async {
+        guard let userId = authService.currentUser?.id else { return }
+        isLoadingTrades = true
+        tradesLoadFailed = false
+        do {
+            let trades = try await FirebaseServices.shared.getUserTradesSimple(userId: userId)
+            closedTrades = trades
+                .filter { !$0.isOpen && $0.exitPrice != nil && $0.userId == userId }
+                .sorted { ($0.exitDate ?? $0.entryDate) > ($1.exitDate ?? $1.entryDate) }
+            if selectedTrade == nil, let latest = closedTrades.first {
+                selectTrade(latest)
+            }
+        } catch {
+            tradesLoadFailed = true
+        }
+        isLoadingTrades = false
+    }
+
+    private func selectTrade(_ trade: Trade) {
+        withAnimation(.snappy(duration: 0.25)) {
+            selectedTrade = trade
+        }
+        // Start or refresh the post text, unless the user has written their own
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || content == lastTemplateText {
+            let symbol = (trade.tradeType == .stock || trade.tradeType == .option) ? "$\(trade.ticker)" : trade.ticker
+            let starter = trade.profitLoss >= 0
+                ? "🎉 Closed \(symbol) for a profit.\n\nWhat worked: "
+                : "📉 Closed \(symbol) for a loss.\n\nLesson learned: "
+            content = starter
+            lastTemplateText = starter
+        }
     }
 
     // MARK: - Tickers
@@ -389,6 +442,29 @@ struct CreatePostView: View {
         .cardStyle()
     }
 
+    // MARK: - Sentiment
+
+    /// Offered once the post mentions a ticker (typed, added, or from the shared trade).
+    private var showsSentimentPicker: Bool {
+        !detectedTickers.isEmpty || (selectedPostType == .tradeResult && selectedTrade != nil)
+    }
+
+    private var sentimentSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sentiment")
+                    .font(.headline)
+                Text("Optional. It counts toward each ticker's Bullish/Bearish meter.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            SentimentPicker(selection: $sentiment)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
     // MARK: - Hashtags
 
     private var hashtagSection: some View {
@@ -422,9 +498,10 @@ struct CreatePostView: View {
             ComposerPreviewCard(
                 content: content,
                 user: authService.currentUser,
-                images: selectedUIImages,
+                images: AppConfig.mediaUploadsEnabled ? selectedUIImages : [],
                 postType: selectedPostType,
-                tradingData: buildTradingData()
+                snapshot: selectedPostType == .tradeResult ? selectedTrade.flatMap(TradeSnapshot.init(trade:)) : nil,
+                sentiment: showsSentimentPicker ? sentiment : nil
             )
         }
     }
@@ -455,11 +532,13 @@ struct CreatePostView: View {
     private var canPost: Bool {
         !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         characterCount <= Constants.maxCharacters &&
+        (selectedPostType != .tradeResult || selectedTrade != nil) &&
         !isPosting
     }
 
     private var hasDraft: Bool {
-        !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedUIImages.isEmpty
+        let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (!text.isEmpty && content != lastTemplateText) || !selectedUIImages.isEmpty
     }
 
     private var shouldShowTickerSection: Bool {
@@ -467,7 +546,7 @@ struct CreatePostView: View {
     }
 
     private var shouldShowPreview: Bool {
-        showPreview && (!content.isEmpty || !selectedUIImages.isEmpty)
+        showPreview && (!content.isEmpty || (AppConfig.mediaUploadsEnabled && !selectedUIImages.isEmpty))
     }
 
     private var placeholderText: String {
@@ -510,8 +589,8 @@ struct CreatePostView: View {
     private func selectPostType(_ type: PostType) {
         withAnimation(.snappy(duration: 0.3)) {
             selectedPostType = type
-            if type == .tradeResult && content.isEmpty {
-                insertTradeTemplate()
+            if type == .tradeResult, let selectedTrade {
+                selectTrade(selectedTrade)
             }
         }
         generateHashtagSuggestions()
@@ -642,72 +721,6 @@ struct CreatePostView: View {
         }
     }
 
-    private enum TemplateType {
-        case profit, loss, options
-    }
-
-    /// Starts the post text. The numbers go in the Trade Details fields, not the text, so nothing
-    /// is left as "$[Entry]" if someone types inside a placeholder.
-    private func insertTemplate(_ type: TemplateType) {
-        switch type {
-        case .profit:
-            content = "🎉 Just closed a profitable trade!\n\nWhat worked: "
-            if tradeType == .options { tradeType = nil }
-        case .loss:
-            content = "📉 Closed a position for a loss.\n\nLesson learned: "
-            if tradeType == .options { tradeType = nil }
-        case .options:
-            content = "⚡ Options trade update\n\nStrategy: "
-            tradeType = .options
-        }
-        lastTemplate = type
-    }
-
-    /// P&L worked out from entry, exit and size, used when the P&L field is blank
-    private var computedProfitLoss: Double? {
-        guard let entry = TradingData.parseAmount(entryPrice),
-              let exit = TradingData.parseAmount(exitPrice),
-              let firstWord = positionSize.split(separator: " ").first,
-              let quantity = TradingData.parseAmount(String(firstWord)), quantity > 0
-        else { return nil }
-        let multiplier: Double = tradeType == .options ? 100 : 1
-        return (exit - entry) * quantity * multiplier
-    }
-
-    /// The Trade Details fields as TradingData, or nil when it isn't a trade post or nothing was filled in
-    private func buildTradingData() -> TradingData? {
-        guard selectedPostType == .tradeResult else { return nil }
-
-        var pnl = TradingData.parseAmount(profitLoss)
-        if let typed = pnl, lastTemplate == .loss, typed > 0, !profitLoss.contains("+") {
-            pnl = -typed   // "50" on a loss post means -$50
-        }
-        if pnl == nil { pnl = computedProfitLoss }
-
-        let ticker = (tradeTicker.isEmpty ? detectedTickers.first ?? "" : tradeTicker)
-            .replacingOccurrences(of: "$", with: "")
-            .trimmingCharacters(in: .whitespaces)
-            .uppercased()
-        let size = positionSize.trimmingCharacters(in: .whitespaces)
-        let entry = TradingData.parseAmount(entryPrice)
-        let exit = TradingData.parseAmount(exitPrice)
-
-        guard pnl != nil || entry != nil || exit != nil || !size.isEmpty || !ticker.isEmpty else { return nil }
-
-        var data = TradingData()
-        data.profitLoss = pnl
-        data.entryPrice = entry
-        data.exitPrice = exit
-        data.positionSize = size.isEmpty ? nil : size
-        data.ticker = ticker.isEmpty ? nil : ticker
-        data.tradeType = tradeType
-        return data
-    }
-
-    private func insertTradeTemplate() {
-        insertTemplate(.profit)
-    }
-
     private func createPost() {
         guard canPost else { return }
 
@@ -718,17 +731,19 @@ struct CreatePostView: View {
 
         // Short pause so the button state is visible
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            let tradingData = buildTradingData()
+            let trade = selectedPostType == .tradeResult ? selectedTrade : nil
             var tickers = detectedTickers
-            if let ticker = tradingData?.ticker, !tickers.contains(ticker) {
+            if let ticker = trade?.ticker, !tickers.contains(ticker) {
                 tickers.insert(ticker, at: 0)
             }
             onPost(PostDraft(
                 content: content,
                 tickers: tickers,
-                images: selectedUIImages,
+                images: AppConfig.mediaUploadsEnabled ? selectedUIImages : [],
                 postType: selectedPostType,
-                tradingData: tradingData
+                trade: trade,
+                // No tag without a ticker to apply it to
+                sentiment: tickers.isEmpty ? nil : sentiment
             ))
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -739,29 +754,6 @@ struct CreatePostView: View {
 }
 
 // MARK: - Supporting Views
-
-/// Labelled input on a raised fill, for the Trade Details fields.
-private struct TradeFieldBox<Field: View>: View {
-    let label: String
-    @ViewBuilder var field: () -> Field
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            field()
-                .font(.body.monospacedDigit())
-                .padding(.horizontal, DS.Spacing.m)
-                .frame(height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous)
-                        .fill(Color.surfaceRaised)
-                )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
 
 /// A picked photo in the composer, with a remove button.
 private struct ComposerImageThumbnail: View {
@@ -794,7 +786,8 @@ private struct ComposerPreviewCard: View {
     let user: User?
     let images: [UIImage]
     let postType: PostType
-    var tradingData: TradingData? = nil
+    var snapshot: TradeSnapshot? = nil
+    var sentiment: PostSentiment? = nil
 
     private var displayName: String {
         if let name = user?.fullName, !name.isEmpty { return name }
@@ -814,6 +807,9 @@ private struct ComposerPreviewCard: View {
                         if postType != .text {
                             Tag(text: postType.displayName)
                         }
+                        if let sentiment {
+                            SentimentBadge(sentiment: sentiment)
+                        }
                     }
                     Text("@\(user?.username ?? "you") · now")
                         .font(.caption)
@@ -830,8 +826,8 @@ private struct ComposerPreviewCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let tradingData, tradingData.profitLossValue != nil {
-                TradeSummaryCard(trade: tradingData)
+            if let snapshot {
+                TradeSummaryCard(snapshot: snapshot)
             }
 
             if let first = images.first {
@@ -856,6 +852,52 @@ private struct ComposerPreviewCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
+    }
+}
+
+/// Your closed trades, newest first, each with its result and proof label.
+private struct ClosedTradePickerSheet: View {
+    let trades: [Trade]
+    let selectedId: String?
+    let onSelect: (Trade) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: DS.Spacing.s) {
+                    ForEach(trades) { trade in
+                        if let snapshot = TradeSnapshot(trade: trade) {
+                            Button {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                onSelect(trade)
+                                dismiss()
+                            } label: {
+                                TradeSummaryCard(snapshot: snapshot)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                                            .strokeBorder(trade.id == selectedId ? Color.arkadGold : Color.clear, lineWidth: 2)
+                                    )
+                            }
+                            .buttonStyle(PressableStyle())
+                            .accessibilityAddTraits(trade.id == selectedId ? .isSelected : [])
+                        }
+                    }
+                }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.vertical, DS.Spacing.s)
+            }
+            .screenBackground()
+            .navigationTitle("Choose a trade")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.primary)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

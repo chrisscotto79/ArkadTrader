@@ -149,7 +149,8 @@ final class OnboardingViewModel: ObservableObject {
 
     // MARK: - Finish
 
-    /// Last step. Optionally asks for notification permission, then saves the answers.
+    /// Last step. Optionally asks for notification permission (in free mode only price alerts
+    /// use it, as local notifications), then saves the answers.
     func finish(enableNotifications: Bool) async {
         if enableNotifications {
             await PushNotificationManager.shared.requestAuthorization()

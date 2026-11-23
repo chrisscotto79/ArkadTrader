@@ -1,6 +1,10 @@
 // File: Core/Portfolio/Views/TradeManagementViews.swift
-// Trade detail sheet: see a trade, edit it, close it, or delete it.
+// Trade detail sheet: see a trade, edit its journal, close it, or delete it.
 // Trades imported from a linked brokerage are read-only.
+// Proof labels (docs/backend-contracts.md, section 0): the entry (symbol, type, price, size, date)
+// is locked once logged, and the exit once closed. Closing checks the exit against today's range;
+// a price-checked trade stays price-checked only if its exit is too. A price-checked trade can be
+// deleted only within 15 minutes of logging. "Share to community" opens ShareTradeToCommunitySheet.
 
 import SwiftUI
 
@@ -18,30 +22,26 @@ struct TradeActionsSheet: View {
     @State private var dismissAfterAlert = false
     @State private var isLoading = false
     @State private var showDeleteConfirmation = false
+    @State private var showShareToCommunity = false
 
-    // Edit state
-    @State private var ticker: String
-    @State private var tradeType: TradeType
-    @State private var entryPrice: String
-    @State private var quantity: String
+    // Edit state (journal and plan only; the entry is locked)
     @State private var strategy: String
     @State private var notes: String
-    @State private var entryDate: Date
+    @State private var stopLossPrice: String
+    @State private var takeProfitPrice: String
 
     // Close state
     @State private var exitPrice = ""
     @State private var exitDate = Date()
     @State private var closingNotes = ""
+    @StateObject private var priceChecker = TradePriceChecker()
 
     init(trade: Trade) {
         _current = State(initialValue: trade)
-        _ticker = State(initialValue: trade.ticker)
-        _tradeType = State(initialValue: trade.tradeType)
-        _entryPrice = State(initialValue: AssetTerms.inputString(trade.entryPrice))
-        _quantity = State(initialValue: AssetTerms.inputString(trade.quantity))
         _strategy = State(initialValue: trade.strategy ?? "")
         _notes = State(initialValue: trade.notes ?? "")
-        _entryDate = State(initialValue: trade.entryDate)
+        _stopLossPrice = State(initialValue: trade.stopLossPrice.map(AssetTerms.inputString) ?? "")
+        _takeProfitPrice = State(initialValue: trade.takeProfitPrice.map(AssetTerms.inputString) ?? "")
     }
 
     var body: some View {
@@ -87,6 +87,13 @@ struct TradeActionsSheet: View {
         } message: {
             Text("It will be removed from your portfolio and stats. This can't be undone.")
         }
+        .onChange(of: selectedAction) { _, action in
+            if action == .close { loadExitQuote() }
+        }
+        .sheet(isPresented: $showShareToCommunity) {
+            ShareTradeToCommunitySheet(trade: current)
+                .environmentObject(FirebaseAuthService.shared)
+        }
     }
 
     private var availableActions: [TradeAction] {
@@ -124,7 +131,7 @@ struct TradeActionsSheet: View {
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(isLoading || !isActionValid)
+            .disabled(isLoading || !isActionValid || (selectedAction == .close && exitOutcome.isChecking))
             .padding(.horizontal, DS.pageMargin)
             .padding(.top, DS.Spacing.m)
             .padding(.bottom, DS.Spacing.s)
@@ -160,18 +167,85 @@ struct TradeActionsSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cardStyle()
             }
+            proofCard
+            Button {
+                showShareToCommunity = true
+            } label: {
+                Label("Share to community", systemImage: "person.3")
+            }
+            .buttonStyle(SecondaryButtonStyle())
             if current.isImported {
                 importedNote
             } else {
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    Label("Delete trade", systemImage: "trash")
-                        .foregroundStyle(Color.marketRed)
-                }
-                .buttonStyle(SecondaryButtonStyle())
+                deleteSection
             }
         }
+    }
+
+    /// The trade's proof label and what it means
+    private var proofCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            HStack {
+                Text("Proof label")
+                    .font(.headline)
+                Spacer()
+                TradeProofBadge(proof: current.proof)
+            }
+            Text(current.proof.explanation)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let check = current.priceCheck {
+                Text("Entry checked against the day's range \(terms.price(check.low))–\(terms.price(check.high)).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !current.isOpen, let exitProof = current.exitProof {
+                Text(exitProof == .priceChecked
+                     ? "Exit price-checked when it was closed."
+                     : "Exit self-reported.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    /// Price-checked trades can be deleted only within 15 minutes of logging, so losing trades
+    /// can't be removed later.
+    private var deleteSection: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let canDelete = current.canDelete(at: context.date)
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                if canDelete {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label("Delete trade", systemImage: "trash")
+                            .foregroundStyle(Color.marketRed)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                if let note = deleteNote(at: context.date, canDelete: canDelete) {
+                    Label(note, systemImage: canDelete ? "clock" : "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func deleteNote(at now: Date, canDelete: Bool) -> String? {
+        guard let deadline = current.deleteDeadline else { return nil }
+        if canDelete {
+            let minutes = max(1, Int((deadline.timeIntervalSince(now) / 60).rounded(.up)))
+            return "You can delete this price-checked trade for \(minutes) more minute\(minutes == 1 ? "" : "s")."
+        }
+        return "Price-checked trades can only be deleted within 15 minutes of logging, so results can't be removed later."
     }
 
     /// Imported trades come from the brokerage, so they can't be edited, closed or deleted here
@@ -233,17 +307,31 @@ struct TradeActionsSheet: View {
 
     // MARK: - Edit
 
-    private var editTerms: AssetTerms { AssetTerms(tradeType) }
-
     private var editContent: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
-            if !current.isOpen {
-                Label("This trade is closed, so only the strategy and notes can be changed.", systemImage: "info.circle")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            lockedEntryCard
+            if current.isOpen {
+                VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                    TradeCardTitle(title: "Risk plan", detail: "Optional")
+                    HStack(alignment: .top, spacing: DS.Spacing.m) {
+                        TradeInputField(
+                            title: "Stop loss",
+                            text: $stopLossPrice,
+                            placeholder: "",
+                            keyboard: .decimalPad,
+                            prefix: terms.pricePrefix
+                        )
+                        TradeInputField(
+                            title: "Take profit",
+                            text: $takeProfitPrice,
+                            placeholder: "",
+                            keyboard: .decimalPad,
+                            prefix: terms.pricePrefix
+                        )
+                    }
+                }
+                .cardStyle()
             }
-            editPositionCard
             VStack(alignment: .leading, spacing: DS.Spacing.l) {
                 TradeInputField(title: "Strategy", text: $strategy, placeholder: "Swing trade, breakout…")
                 TradeNotesField(title: "Notes", text: $notes, placeholder: "Add notes about this trade…")
@@ -257,93 +345,39 @@ struct TradeActionsSheet: View {
         }
     }
 
-    private var editPositionCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.l) {
-            TradeInputField(
-                title: editTerms.symbolTitle,
-                text: $ticker,
-                placeholder: editTerms.symbolPlaceholder,
-                isSymbol: true,
-                isEnabled: current.isOpen
-            )
-
-            VStack(alignment: .leading, spacing: 6) {
-                TradeFieldLabel(text: "Asset")
-                if current.isOpen {
-                    SegmentedPicker(options: TradeType.allCases, selection: $tradeType) { $0.displayName }
-                } else {
-                    Text(tradeType.displayName)
-                        .foregroundStyle(.secondary)
-                }
+    /// The entry (and exit, once closed) can't be edited, so the label means something.
+    private var lockedEntryCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack(spacing: DS.Spacing.s) {
+                Image(systemName: "lock.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(current.isOpen ? "Entry locked" : "Entry and exit locked")
+                    .font(.subheadline.weight(.semibold))
             }
-
-            HStack(alignment: .top, spacing: DS.Spacing.m) {
-                TradeInputField(
-                    title: editTerms.quantityTitle,
-                    text: $quantity,
-                    placeholder: editTerms.quantityPlaceholder,
-                    keyboard: editTerms.quantityKeyboard,
-                    isEnabled: current.isOpen
-                )
-                TradeInputField(
-                    title: editTerms.entryPriceTitle,
-                    text: $entryPrice,
-                    placeholder: editTerms.pricePlaceholder,
-                    keyboard: .decimalPad,
-                    prefix: editTerms.pricePrefix,
-                    isEnabled: current.isOpen
-                )
-            }
-
-            Divider().overlay(Color.hairline)
-
-            if current.isOpen {
-                DatePicker(selection: $entryDate, in: ...Date(), displayedComponents: .date) {
-                    Label("Entry date", systemImage: "calendar")
-                        .font(.subheadline)
-                }
-                .tint(Color.arkadGold)
-            } else {
-                HStack {
-                    Label("Entry date", systemImage: "calendar")
-                        .font(.subheadline)
-                    Spacer()
-                    Text(formatDate(current.entryDate))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if current.isOpen, let price = editedEntryPrice, let amount = editedQuantity {
-                HStack {
-                    Text("Position cost")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text((price * amount).asCurrency)
-                        .arkadNumber(17, weight: .semibold)
-                }
-            }
+            Text("\(current.ticker) · \(current.tradeType.displayName) · \(terms.quantityText(current.quantity, symbol: current.ticker)) at \(terms.price(current.entryPrice)) on \(formatDate(current.entryDate))")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(current.isOpen
+                 ? "The symbol, size, entry price and date can't change after logging. If something's wrong, delete the trade and log it again\(current.proof == .priceChecked ? " (price-checked trades only within 15 minutes)" : "")."
+                 : "A closed trade's entry and exit can't change. You can still edit the strategy and notes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
-    }
-
-    private var editedEntryPrice: Double? {
-        guard let value = AssetTerms.parseNumber(entryPrice), value > 0 else { return nil }
-        return value
-    }
-
-    private var editedQuantity: Double? {
-        editTerms.parseQuantity(quantity)
     }
 
     private var editValidationMessage: String? {
         guard current.isOpen else { return nil }
-        if ticker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return editTerms.missingSymbolMessage }
-        if quantity.trimmingCharacters(in: .whitespaces).isEmpty { return editTerms.missingQuantityMessage }
-        if editedQuantity == nil { return editTerms.invalidQuantityMessage }
-        if entryPrice.trimmingCharacters(in: .whitespaces).isEmpty { return editTerms.missingPriceMessage }
-        if editedEntryPrice == nil { return editTerms.invalidPriceMessage }
+        if !stopLossPrice.trimmingCharacters(in: .whitespaces).isEmpty && (AssetTerms.parseNumber(stopLossPrice) ?? 0) <= 0 {
+            return "Stop loss must be a number above 0."
+        }
+        if !takeProfitPrice.trimmingCharacters(in: .whitespaces).isEmpty && (AssetTerms.parseNumber(takeProfitPrice) ?? 0) <= 0 {
+            return "Take profit must be a number above 0."
+        }
         return nil
     }
 
@@ -355,7 +389,7 @@ struct TradeActionsSheet: View {
                 TradeInputField(
                     title: terms.exitPriceTitle,
                     text: $exitPrice,
-                    placeholder: livePrice.map { AssetTerms.inputString(roundedPrice($0)) } ?? terms.pricePlaceholder,
+                    placeholder: exitLivePrice.map { AssetTerms.inputString(roundedPrice($0)) } ?? terms.pricePlaceholder,
                     keyboard: .decimalPad,
                     prefix: terms.pricePrefix
                 )
@@ -374,13 +408,71 @@ struct TradeActionsSheet: View {
                 ProjectedPLCard(trade: current, exitPrice: price)
                     .transition(.opacity)
             }
+
+            TradeProofCheckCard(
+                outcome: exitOutcome,
+                message: exitProofMessage,
+                currentPriceText: priceChecker.quote.map { terms.price($0.current) },
+                showsUseCurrentPrice: canUseCurrentExitPrice,
+                onUseCurrentPrice: { if let quote = priceChecker.quote { setExitPrice(quote.current) } }
+            )
+
+            Label("Closing is final: the exit price and date can't be changed afterwards.", systemImage: "lock")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Exit proof
+
+    /// The exit's own check (date today, price inside today's range)
+    private var exitOutcome: PriceCheckOutcome {
+        priceChecker.outcome(price: parsedExitPrice, date: exitDate, type: current.tradeType)
+    }
+
+    /// The label the whole trade ends up with after closing
+    private var proofAfterClose: TradeProof {
+        if current.proof == .priceChecked && exitOutcome.proof != .priceChecked { return .selfReported }
+        return current.proof
+    }
+
+    private var exitProofMessage: String {
+        let exitLine = TradePriceCheckRules.message(
+            for: exitOutcome, price: parsedExitPrice, side: "exit", ticker: current.ticker, type: current.tradeType
+        )
+        guard !exitOutcome.isChecking, parsedExitPrice != nil else { return exitLine }
+        switch (current.proof, proofAfterClose) {
+        case (.priceChecked, .priceChecked):
+            return exitLine + " The trade stays price-checked."
+        case (.priceChecked, _):
+            return exitLine + " The trade will become self-reported and stop counting toward your stats."
+        case (.selfReported, _):
+            return exitLine + " The entry was self-reported, so the trade stays self-reported."
+        default:
+            return exitLine
+        }
+    }
+
+    private var canUseCurrentExitPrice: Bool {
+        guard let quote = priceChecker.quote, Calendar.current.isDateInToday(exitDate) else { return false }
+        return parsedExitPrice.map { abs($0 - quote.current) > 0.000_001 } ?? true
+    }
+
+    /// Today's quote for the exit check, or the portfolio's live price for stocks
+    private var exitLivePrice: Double? {
+        priceChecker.quote?.current ?? livePrice
+    }
+
+    private func loadExitQuote() {
+        guard current.isOpen, !current.isImported else { return }
+        priceChecker.load(ticker: current.ticker, type: current.tradeType, debounce: false)
     }
 
     private var quickCloseChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: DS.Spacing.s) {
-                if let live = livePrice {
+                if let live = exitLivePrice {
                     Chip(title: "Live price", systemImage: "dot.radiowaves.left.and.right", isSelected: false) {
                         setExitPrice(live)
                     }
@@ -441,23 +533,14 @@ struct TradeActionsSheet: View {
     @MainActor
     private func saveTradeEdits() async {
         var updatedTrade = current
-        if current.isOpen {
-            guard let price = editedEntryPrice, let amount = editedQuantity else { return }
-            let newTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            // A different symbol or asset type makes any stored live price meaningless
-            if newTicker != current.ticker || tradeType != current.tradeType {
-                updatedTrade.currentPrice = nil
-            }
-            updatedTrade.ticker = newTicker
-            updatedTrade.tradeType = tradeType
-            updatedTrade.entryPrice = price
-            updatedTrade.quantity = amount
-            updatedTrade.entryDate = entryDate
-        }
         let trimmedStrategy = strategy.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         updatedTrade.strategy = trimmedStrategy.isEmpty ? nil : trimmedStrategy
         updatedTrade.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
+        if current.isOpen {
+            updatedTrade.stopLossPrice = AssetTerms.parseNumber(stopLossPrice).flatMap { $0 > 0 ? $0 : nil }
+            updatedTrade.takeProfitPrice = AssetTerms.parseNumber(takeProfitPrice).flatMap { $0 > 0 ? $0 : nil }
+        }
 
         do {
             try await portfolioViewModel.updateTrade(updatedTrade)
@@ -473,27 +556,43 @@ struct TradeActionsSheet: View {
     private func closePosition() async {
         guard let price = parsedExitPrice else { return }
 
-        var closedTrade = current
-        closedTrade.close(at: price, on: exitDate)
+        // Check the exit with a quote at most two minutes old; if the label changed since the
+        // user last saw it, show the new one instead of closing.
+        let shownProof = exitOutcome.proof
+        let outcome = await priceChecker.outcomeForSaving(
+            ticker: current.ticker, price: price, date: exitDate, type: current.tradeType
+        )
+        if outcome.proof != shownProof {
+            present(
+                "Proof label changed",
+                TradePriceCheckRules.message(for: outcome, price: price, side: "exit",
+                                             ticker: current.ticker, type: current.tradeType)
+                    + " Check it, then tap Close position again."
+            )
+            return
+        }
 
+        var notesAfterClose = current.notes
         let closing = closingNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !closing.isEmpty {
             let existing = (current.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            closedTrade.notes = existing.isEmpty ? "Closing notes: \(closing)" : "\(existing)\n\nClosing notes: \(closing)"
+            notesAfterClose = existing.isEmpty ? "Closing notes: \(closing)" : "\(existing)\n\nClosing notes: \(closing)"
         }
 
         do {
-            try await portfolioViewModel.updateTrade(closedTrade)
+            let closedTrade = try await portfolioViewModel.closeTrade(
+                current, exitPrice: price, exitDate: exitDate, exitOutcome: outcome, notes: notesAfterClose
+            )
             current = closedTrade
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             let profit = closedTrade.profitLoss
-            present(
-                "Position closed",
-                profit >= 0
-                    ? "You closed \(closedTrade.ticker) with a profit of \(profit.asCurrency)."
-                    : "You closed \(closedTrade.ticker) with a loss of \(abs(profit).asCurrency).",
-                thenDismiss: true
-            )
+            let result = profit >= 0
+                ? "You closed \(closedTrade.ticker) with a profit of \(profit.asCurrency)."
+                : "You closed \(closedTrade.ticker) with a loss of \(abs(profit).asCurrency)."
+            let label = closedTrade.proof == .priceChecked
+                ? " It's price-checked and counts toward your stats."
+                : " It's self-reported, so it doesn't count toward your stats."
+            present("Position closed", result + label, thenDismiss: true)
         } catch {
             present("Couldn't close position", "Failed to close trade: \(error.localizedDescription)")
         }
@@ -505,7 +604,7 @@ struct TradeActionsSheet: View {
             try await portfolioViewModel.deleteTrade(current)
             dismiss()
         } catch {
-            present("Couldn't delete trade", "Failed to delete trade: \(error.localizedDescription)")
+            present("Couldn't delete trade", error.localizedDescription)
         }
     }
 
@@ -554,9 +653,7 @@ private struct TradeHeroCard: View {
                         Text(trade.ticker)
                             .font(.title3.weight(.bold))
                             .lineLimit(1)
-                        if trade.isVerified == true {
-                            VerifiedTradeBadge()
-                        }
+                        TradeProofBadge(proof: trade.proof, compact: true)
                     }
                     Text("\(trade.tradeType.displayName) · \(terms.quantityText(trade.quantity, symbol: trade.ticker))")
                         .font(.subheadline)

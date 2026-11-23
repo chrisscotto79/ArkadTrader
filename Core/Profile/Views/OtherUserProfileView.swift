@@ -216,7 +216,7 @@ struct OtherUserProfileView: View {
 
     private var statsSection: some View {
         let summary = calculatePortfolioSummary()
-        let hasClosedTrades = userTrades.contains { !$0.isOpen }
+        let hasClosedTrades = summary.countedClosedTrades > 0
         return ProfileStatsCard(items: [
             ProfileStatItem(
                 title: "Followers",
@@ -265,22 +265,25 @@ struct OtherUserProfileView: View {
         isLoadingTrades = false
     }
 
+    /// P&L, win rate and the top performer count only price-checked and verified trades;
+    /// the trade counts include everything (each trade row shows its label).
     private func calculatePortfolioSummary() -> PortfolioSummary {
-        let closedTrades = userTrades.filter { !$0.isOpen }
-        let totalProfitLoss = closedTrades.reduce(0) { $0 + $1.profitLoss }
-        let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
-        let winRate = closedTrades.isEmpty ? 0.0 : Double(winningTrades) / Double(closedTrades.count) * 100
+        let counted = TradeStats(counted: userTrades)
+        let selfReported = TradeStats(selfReported: userTrades)
 
         return PortfolioSummary(
             totalValue: user.totalProfitLoss,
-            totalProfitLoss: totalProfitLoss,
+            totalProfitLoss: counted.realizedPL,
             dayProfitLoss: 0.0, // Not available for other users
-            winRate: winRate,
+            winRate: counted.winRate,
             totalTrades: userTrades.count,
             openPositions: userTrades.filter { $0.isOpen }.count,
             recentTrades: Array(userTrades.prefix(5)),
-            topPerformer: userTrades.max(by: { $0.profitLoss < $1.profitLoss }),
-            lastUpdated: Date()
+            topPerformer: userTrades.filter { !$0.isOpen && $0.countsTowardStats }
+                .max(by: { $0.profitLoss < $1.profitLoss }),
+            lastUpdated: Date(),
+            countedClosedTrades: counted.closedCount,
+            selfReportedTrades: selfReported.tradeCount
         )
     }
 }
@@ -291,8 +294,9 @@ struct OtherUserPortfolioBanner: View {
     let portfolioSummary: PortfolioSummary
     var isLoading: Bool = false
 
+    /// Realized P&L only counts closed price-checked and verified trades
     private var hasClosedTrades: Bool {
-        portfolioSummary.totalTrades > portfolioSummary.openPositions
+        portfolioSummary.countedClosedTrades > 0
     }
 
     var body: some View {
@@ -305,9 +309,11 @@ struct OtherUserPortfolioBanner: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Realized P&L")
+                Text("Realized P&L · price-checked & verified")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 if isLoading {
                     ProgressView()
                         .tint(Color.goldText)
@@ -329,6 +335,16 @@ struct OtherUserPortfolioBanner: View {
                 metric("Public trades", isLoading ? "–" : "\(portfolioSummary.totalTrades)")
                 metric("Open", isLoading ? "–" : "\(portfolioSummary.openPositions)")
                 metric("Closed", isLoading ? "–" : "\(portfolioSummary.totalTrades - portfolioSummary.openPositions)")
+            }
+
+            if !isLoading && portfolioSummary.selfReportedTrades > 0 {
+                Label(
+                    "\(portfolioSummary.selfReportedTrades) self-reported trade\(portfolioSummary.selfReportedTrades == 1 ? "" : "s") not counted in P&L or win rate.",
+                    systemImage: TradeProof.selfReported.systemImage
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

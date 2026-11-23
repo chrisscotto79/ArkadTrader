@@ -1,6 +1,13 @@
 rules_version = '2';
 
-// Arkad Firestore rules. Contract: docs/backend-contracts.md.
+// Arkad Firestore rules: FREE MODE (Spark plan, no Cloud Functions).
+// Contract: docs/backend-contracts.md, section 0. The stricter rules for when the
+// Cloud Functions are deployed are in firestore.server.rules.
+//
+// Free-mode differences: the app writes its own traderStats and callout mirror,
+// tracks and closes its own callouts, creates inbox notifications for others,
+// triggers its own price alerts, counts post reports, and stores small images in
+// /images. Trade proof labels and locked fields are enforced here.
 //
 // Principles
 // - Every read and write needs a signed-in user.
@@ -137,7 +144,8 @@ service cloud.firestore {
       match /{sub}/{docId} {
         allow read, write: if isSelf(userId) && sub in [
           'likedPosts', 'likes', 'bookmarks', 'commentLikes', 'reportedPosts',
-          'watchlist', 'learnProgress', 'blockedUsers', 'fcmTokens'
+          'watchlist', 'learnProgress', 'blockedUsers', 'fcmTokens', 'callouts',
+          'communityLessonProgress'
         ];
       }
 
@@ -149,10 +157,16 @@ service cloud.firestore {
           && incoming().targetPrice is number && incoming().targetPrice > 0
           && incoming().isActive == true
           && !incoming().keys().hasAny(['triggeredAt', 'triggeredPrice', 'disabledReason']);
-        allow update: if isSelf(userId)
-          && !changedKeys().hasAny(['triggeredAt', 'triggeredPrice', 'disabledReason'])
-          && incoming().condition in ['above', 'below']
-          && incoming().targetPrice is number && incoming().targetPrice > 0;
+        allow update: if isSelf(userId) && (
+          (!changedKeys().hasAny(['triggeredAt', 'triggeredPrice', 'disabledReason'])
+            && incoming().condition in ['above', 'below']
+            && incoming().targetPrice is number && incoming().targetPrice > 0)
+          // Free mode: the app triggers the alert itself
+          || (onlyChanged(['isActive', 'triggeredAt', 'triggeredPrice'])
+            && incoming().isActive == false
+            && incoming().triggeredAt is timestamp
+            && incoming().triggeredPrice is number)
+        );
       }
 
       // Server-written (SnapTrade sync); the owner reads them.
@@ -175,14 +189,64 @@ service cloud.firestore {
         && incoming().authorId == me()
         && incoming().get('likesCount', 0) == 0
         && incoming().get('commentsCount', 0) == 0
-        && !incoming().keys().hasAny(['isHidden', 'hiddenAt', 'hiddenReason', 'reportCount']);
+        && !incoming().keys().hasAny(['isHidden', 'hiddenAt', 'hiddenReason', 'reportCount'])
+        && validSentiment()
+        && validTradeSnapshot()
+        // Trade-result posts must come from a real logged trade.
+        && (incoming().get('postType', 'text') != 'trade_result' || 'tradeSnapshot' in incoming());
+
+      // Optional Bullish/Bearish tag.
+      function validSentiment() {
+        return !('sentiment' in incoming()) || incoming().sentiment in ['bullish', 'bearish'];
+      }
+
+      // A trade-result post carries a snapshot that must match the author's own closed trade.
+      function validTradeSnapshot() {
+        return !('tradeSnapshot' in incoming()) || (
+          incoming().tradeId is string
+          && snapshotMatches(incoming().tradeSnapshot,
+               get(/databases/$(database)/documents/trades/$(incoming().tradeId)).data)
+        );
+      }
+      function snapshotMatches(snap, trade) {
+        return trade.userId == me()
+          && trade.isOpen == false
+          && snap.ticker == trade.ticker
+          && snap.tradeType == trade.tradeType
+          && snap.entryPrice == trade.entryPrice
+          && snap.exitPrice == trade.exitPrice
+          && snap.quantity == trade.quantity
+          && snap.get('entryDate', null) == trade.get('entryDate', null)
+          && snap.get('exitDate', null) == trade.get('exitDate', null)
+          && snap.proof == trade.get('proof', 'self_reported');
+      }
 
       allow update: if signedIn() && (
         (resource.data.authorId == me()
-          && !changedKeys().hasAny(['authorId', 'isHidden', 'hiddenAt', 'hiddenReason', 'reportCount']))
+          && !changedKeys().hasAny(['authorId', 'isHidden', 'hiddenAt', 'hiddenReason', 'reportCount',
+                                     'tradeId', 'tradeSnapshot'])
+          && validSentiment())
         || likeDelta()
         || commentDelta()
+        || reportCountDelta()
+        || autoHide()
       );
+
+      // Free mode: a reporter bumps reportCount by 1 in the same batch that creates
+      // their reporters/{me} marker (once per person).
+      function reportCountDelta() {
+        let marker = /databases/$(database)/documents/posts/$(postId)/reporters/$(me());
+        return resource.data.authorId != me()
+          && onlyChanged(['reportCount'])
+          && incoming().reportCount == resource.data.get('reportCount', 0) + 1
+          && !exists(marker) && existsAfter(marker);
+      }
+      // Free mode: anyone may hide a post once it has 3 or more reports.
+      function autoHide() {
+        return resource.data.get('reportCount', 0) >= 3
+          && onlyChanged(['isHidden', 'hiddenAt', 'hiddenReason'])
+          && incoming().isHidden == true;
+      }
 
       allow delete: if signedIn() && resource.data.authorId == me();
 
@@ -222,9 +286,11 @@ service cloud.firestore {
         allow delete: if isSelf(likerId) || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == me();
       }
 
-      // Server-only report dedupe markers.
+      // Report dedupe markers: one per reporter, never changed or removed.
       match /reporters/{reporterId} {
-        allow read, write: if false;
+        allow read: if isSelf(reporterId);
+        allow create: if isSelf(reporterId);
+        allow update, delete: if false;
       }
     }
 
@@ -245,7 +311,17 @@ service cloud.firestore {
         && incoming().userId == me()
         && incoming().get('source', 'manual') == 'manual'
         && incoming().get('isVerified', false) == false
-        && !incoming().keys().hasAny(['externalId', 'brokerageConnectionId', 'brokerageAccountId']);
+        && !incoming().keys().hasAny(['externalId', 'brokerageConnectionId', 'brokerageAccountId'])
+        && validProofOnCreate();
+
+      // "price_checked" needs a server time of now; the price check itself runs in the app.
+      function validProofOnCreate() {
+        let proof = incoming().get('proof', 'self_reported');
+        return proof in ['price_checked', 'self_reported']
+          && (proof == 'self_reported' || (incoming().loggedAt == request.time && incoming().priceCheck is map))
+          && (!('exitProof' in incoming()) || incoming().exitProof == 'self_reported');
+      }
+      function isPriceChecked() { return resource.data.get('proof', 'self_reported') == 'price_checked'; }
 
       allow update: if signedIn()
         && resource.data.userId == me()
@@ -257,9 +333,33 @@ service cloud.firestore {
         && unchanged('brokerageAccountId', null)
         // Verified (brokerage-imported) trades: prices, sizes and dates come from the broker.
         && (resource.data.get('isVerified', false) == false
-            || !changedKeys().hasAny(['ticker', 'tradeType', 'entryPrice', 'exitPrice', 'quantity', 'entryDate', 'exitDate', 'isOpen']));
+            || !changedKeys().hasAny(['ticker', 'tradeType', 'entryPrice', 'exitPrice', 'quantity', 'entryDate', 'exitDate', 'isOpen']))
+        // Entry details never change after logging.
+        && !changedKeys().hasAny(['ticker', 'tradeType', 'entryPrice', 'quantity', 'entryDate', 'loggedAt', 'priceCheck'])
+        // A closed trade's exit never changes.
+        && (resource.data.get('isOpen', true) == true
+            || !changedKeys().hasAny(['exitPrice', 'exitDate', 'exitProof', 'exitLoggedAt', 'isOpen']))
+        && validProofOnUpdate();
 
-      allow delete: if signedIn() && resource.data.userId == me();
+      // proof may only go price_checked -> self_reported (an unchecked exit), never up.
+      // A checked exit needs a server time of now.
+      function validProofOnUpdate() {
+        let before = resource.data.get('proof', 'self_reported');
+        let after = incoming().get('proof', 'self_reported');
+        return (after == before || (before == 'price_checked' && after == 'self_reported'))
+          // A price-checked exit is only set once, when closing (the closed-trade lock keeps it).
+          && (incoming().get('exitProof', 'self_reported') != 'price_checked'
+              || resource.data.get('exitProof', 'self_reported') == 'price_checked'
+              || (!('exitProof' in resource.data) && incoming().exitLoggedAt == request.time));
+      }
+
+      // Price-checked trades can be deleted only shortly after logging, so losers can't be
+      // removed later. Account deletion deletes users/{uid} first, which lifts this.
+      allow delete: if signedIn() && resource.data.userId == me() && (
+        !isPriceChecked()
+        || request.time < resource.data.loggedAt + duration.value(15, 'm')
+        || !exists(/databases/$(database)/documents/users/$(me()))
+      );
     }
 
     // ---------------------------------------------------------------- communities
@@ -371,6 +471,69 @@ service cloud.firestore {
         allow delete: if isAdmin(cid) && resource.data.get('isDefault', false) == false;
       }
 
+      // Classroom (Skool-style courses). Staff write; anyone who can read the community reads.
+      match /courses/{courseId} {
+        allow read: if canRead(cid);
+        allow create, update: if isStaff(cid)
+          && incoming().communityId == cid
+          && incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 120
+          && incoming().get('summary', '') is string && incoming().get('summary', '').size() <= 2000;
+        allow delete: if isStaff(cid);
+
+        match /lessons/{lessonId} {
+          allow read: if canRead(cid);
+          allow create, update: if isStaff(cid)
+            && incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 120
+            && incoming().get('body', '') is string && incoming().get('body', '').size() <= 20000
+            && (!('videoURL' in incoming()) || incoming().videoURL == ''
+                || (incoming().videoURL is string && incoming().videoURL.matches('https://.+')));
+          allow delete: if isStaff(cid);
+        }
+      }
+
+      // Events (live sessions). Staff schedule; members RSVP.
+      match /events/{eventId} {
+        allow read: if canRead(cid);
+        function validEventFields() {
+          return incoming().communityId == cid
+            && incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 120
+            && incoming().get('details', '') is string && incoming().get('details', '').size() <= 4000
+            && incoming().startsAt is timestamp
+            && (!('link' in incoming()) || incoming().link == ''
+                || (incoming().link is string && incoming().link.matches('https://.+')));
+        }
+        allow create: if isStaff(cid)
+          && validEventFields()
+          && incoming().createdBy == me()
+          && incoming().get('rsvpCount', 0) == 0;
+        allow update: if (isStaff(cid) && validEventFields()
+                            && unchanged('createdBy', null) && unchanged('rsvpCount', 0))
+          || rsvpCountDelta();
+        allow delete: if isStaff(cid);
+
+        // rsvpCount moves by 1 in the same batch that creates or deletes rsvps/{me}.
+        function rsvpCountDelta() {
+          let r = /databases/$(database)/documents/communities/$(cid)/events/$(eventId)/rsvps/$(me());
+          let before = resource.data.get('rsvpCount', 0);
+          return signedIn() && onlyChanged(['rsvpCount']) && (
+            (incoming().rsvpCount == before + 1 && !exists(r) && existsAfter(r))
+            || (incoming().rsvpCount == before - 1 && exists(r) && !existsAfter(r))
+          );
+        }
+
+        match /rsvps/{userId} {
+          function eventPath() { return /databases/$(database)/documents/communities/$(cid)/events/$(eventId); }
+          allow read: if canRead(cid);
+          // The event's rsvpCount must move with the RSVP in the same batch.
+          allow create: if isSelf(userId) && hasAccess(cid) && !isBanned(cid)
+            && getAfter(eventPath()).data.get('rsvpCount', 0) == get(eventPath()).data.get('rsvpCount', 0) + 1;
+          allow delete: if (isSelf(userId)
+              && (!existsAfter(eventPath())
+                  || getAfter(eventPath()).data.get('rsvpCount', 0) == get(eventPath()).data.get('rsvpCount', 0) - 1))
+            || isStaff(cid);
+        }
+      }
+
       match /channels/{chid} {
         allow read: if canRead(cid);
         allow create: if isAdmin(cid) && incoming().communityId == cid;
@@ -395,10 +558,66 @@ service cloud.firestore {
             && incoming().get('isDeleted', false) == false
             && incoming().get('isPinned', false) == false
             && !incoming().keys().hasAny(['deletedBy', 'deletedAt', 'pinnedBy', 'pinnedAt'])
-            && (!('callout' in incoming()) || validNewCallout(incoming().callout));
+            && (!('callout' in incoming()) || validNewCallout(incoming().callout))
+            && validMessageExtras();
+
+          // A message carries at most one special kind, and each one is checked.
+          function validMessageExtras() {
+            let m = incoming();
+            let kinds = m.keys().toSet().intersection(['callout', 'calloutUpdate', 'calloutResult', 'tradeShare', 'gamePlan'].toSet());
+            return kinds.size() <= 1
+              && (!('replyTo' in m) || (m.replyTo is map && m.replyTo.messageId is string
+                    && m.replyTo.get('preview', '') is string && m.replyTo.get('preview', '').size() <= 200))
+              && (!('calloutUpdate' in m) || validCalloutUpdate(m.calloutUpdate))
+              && (!('calloutResult' in m) || validCalloutResult(m.calloutResult))
+              && (!('tradeShare' in m) || validTradeShare(m.tradeShare))
+              && (!('gamePlan' in m) || validGamePlan(m.gamePlan));
+          }
+          function parentMessage(pid) {
+            return get(/databases/$(database)/documents/communities/$(cid)/channels/$(chid)/messages/$(pid)).data;
+          }
+          // Follow-ups on your own open callout: trim, add, move stop or target, note.
+          function validCalloutUpdate(u) {
+            let parent = parentMessage(u.parentMessageId);
+            return u is map && u.parentMessageId is string
+              && parent.authorId == me() && 'callout' in parent
+              && parent.callout.get('status', 'open') == 'open'
+              && u.kind in ['trim', 'add', 'move_stop', 'move_target', 'note']
+              && (!('price' in u) || (u.price is number && u.price > 0))
+              && (!('percent' in u) || (u.percent is number && u.percent > 0 && u.percent <= 100));
+          }
+          // The result post for your own callout, after it closed. Numbers must match the callout.
+          function validCalloutResult(r) {
+            let parent = parentMessage(r.parentMessageId);
+            return r is map && r.parentMessageId is string
+              && parent.authorId == me() && 'callout' in parent
+              && parent.callout.get('status', 'open') != 'open'
+              && r.status == parent.callout.status
+              && r.exitPrice == parent.callout.exitPrice
+              && r.resultPercent == parent.callout.resultPercent;
+          }
+          // Sharing one of your own logged trades. The snapshot must match the trade doc.
+          function validTradeShare(t) {
+            let trade = get(/databases/$(database)/documents/trades/$(t.tradeId)).data;
+            return t is map && t.tradeId is string
+              && trade.userId == me()
+              && t.ticker == trade.ticker
+              && t.tradeType == trade.tradeType
+              && t.entryPrice == trade.entryPrice
+              && t.quantity == trade.quantity
+              && t.isOpen == trade.isOpen
+              && t.proof == trade.get('proof', 'self_reported')
+              && (trade.isOpen == true || t.exitPrice == trade.exitPrice);
+          }
+          // A structured daily plan: up to 15 tickers with a bias and levels.
+          function validGamePlan(g) {
+            return g is map
+              && g.title is string && g.title.size() > 0 && g.title.size() <= 100
+              && g.tickers is list && g.tickers.size() > 0 && g.tickers.size() <= 15;
+          }
 
           allow update: if signedIn() && hasAccess(cid) && (
-            authorEdit() || softDelete() || pinChange() || authorClosesCallout()
+            authorEdit() || softDelete() || pinChange() || authorTracksCallout()
           );
 
           // Messages are soft-deleted (isDeleted) so every listener sees the change.
@@ -414,15 +633,21 @@ service cloud.firestore {
               && c.get('communityId', cid) == cid
               && (!('stopPrice' in c) || c.stopPrice is number)
               && (!('targetPrice' in c) || c.targetPrice is number)
-              && !c.keys().hasAny(['lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent', 'closedBy']);
+              && !c.keys().hasAny(['lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent', 'closedBy'])
+              && c.get('priceCheck', 'unchecked') in ['live', 'unchecked']
+              // A "live" entry must sit within 2% of the quote the app saw when posting.
+              && (c.get('priceCheck', 'unchecked') != 'live'
+                  || (c.quoteAtPost is number && c.quoteAtPost > 0
+                      && math.abs(c.entryPrice - c.quoteAtPost) <= c.quoteAtPost * 0.02));
           }
 
           function notDeleted() { return resource.data.get('isDeleted', false) == false; }
 
-          // Authors edit their own text.
+          // Authors edit their own text. A callout's text is its summary, so it can't be edited.
           function authorEdit() {
             return resource.data.authorId == me()
               && notDeleted()
+              && !('callout' in resource.data)
               && onlyChanged(['content', 'editedAt', 'isEdited'])
               && incoming().content is string && incoming().content.size() <= 4000;
           }
@@ -452,21 +677,29 @@ service cloud.firestore {
               && (incoming().isPinned == false || (incoming().pinnedBy == me() && incoming().pinnedAt is timestamp));
           }
 
-          // The author closes their own open callout. Only these four callout fields
-          // may change (use dotted field paths); the server recomputes resultPercent.
-          function authorClosesCallout() {
+          // Free mode: the author's app tracks its own open callout. It may update the last
+          // price, and close it (target_hit, stopped_out or closed) with exit, time and result.
+          // Entry, stop, target and direction never change.
+          function authorTracksCallout() {
             let before = resource.data.callout;
             let after = incoming().callout;
+            let changed = after.diff(before).affectedKeys();
             return resource.data.authorId == me()
               && notDeleted()
               && 'callout' in resource.data
               && before.get('status', 'open') == 'open'
               && onlyChanged(['callout'])
-              && after.diff(before).affectedKeys().hasOnly(['status', 'exitPrice', 'closedAt', 'resultPercent'])
-              && after.status == 'closed'
-              && after.exitPrice is number && after.exitPrice > 0
-              && after.closedAt is timestamp
-              && after.resultPercent is number;
+              && changed.hasOnly(['lastPrice', 'lastPriceAt', 'status', 'exitPrice', 'closedAt', 'resultPercent', 'closedBy',
+                                  'stopPrice', 'targetPrice'])
+              && (!changed.hasAny(['lastPrice']) || (after.lastPrice is number && after.lastPrice > 0))
+              // Moving the stop or target is posted as a calloutUpdate so members see it.
+              && (!changed.hasAny(['stopPrice']) || (after.stopPrice is number && after.stopPrice > 0))
+              && (!changed.hasAny(['targetPrice']) || (after.targetPrice is number && after.targetPrice > 0))
+              && (after.get('status', 'open') == 'open' || (
+                   after.status in ['target_hit', 'stopped_out', 'closed']
+                   && after.exitPrice is number && after.exitPrice > 0
+                   && after.closedAt is timestamp
+                   && after.resultPercent is number));
           }
 
           match /reactions/{reactionId} {
@@ -485,10 +718,10 @@ service cloud.firestore {
         }
       }
 
-      // Server-only.
+      // Free mode: each trader's app writes its own per-community stats.
       match /traderStats/{userId} {
         allow read: if signedIn();
-        allow write: if false;
+        allow write: if isSelf(userId) && (isOwner(cid) || isMember(cid));
       }
       match /private/{docId} {
         allow read: if isOwner(cid);
@@ -498,20 +731,53 @@ service cloud.firestore {
 
     // ---------------------------------------------------------------- notifications
 
-    // Created by Cloud Functions only. The recipient reads them and sets isRead.
+    // Free mode: the acting user's app creates them (fromUserId == me). Blocking is
+    // filtered in the recipient's inbox, so one blocked recipient can't fail a fan-out.
     match /notifications/{notificationId} {
       allow read: if signedIn() && resource.data.userId == me();
       allow update: if signedIn() && resource.data.userId == me()
         && onlyChanged(['isRead']) && incoming().isRead is bool;
-      allow create, delete: if false;
+      allow create: if signedIn()
+        && incoming().fromUserId == me()
+        && incoming().userId is string
+        && (incoming().userId != me() || incoming().type == 'price_alert')
+        && incoming().type in ['callout', 'callout_result', 'callout_update', 'mention', 'reply', 'like',
+                               'follow', 'member_joined', 'price_alert', 'community_event', 'trade_share']
+        && incoming().title is string && incoming().title.size() <= 200
+        && incoming().body is string && incoming().body.size() <= 1000
+        && incoming().isRead == false
+        && incoming().keys().hasOnly(['userId', 'fromUserId', 'type', 'title', 'body', 'data', 'isRead', 'createdAt']);
+      allow delete: if signedIn() && resource.data.userId == me();
     }
 
     // ---------------------------------------------------------------- server-only
 
+    // Free mode: each trader's app writes its own stats.
     match /traderStats/{userId} {
       allow read: if signedIn();
-      allow write: if false;
+      allow write: if isSelf(userId);
     }
+
+    // Free mode: small images stored in Firestore (the Storage bucket needs Blaze).
+    match /images/{imageId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && validImageWrite(imageId);
+      allow delete: if signedIn() && resource.data.ownerId == me();
+
+      function validImageWrite(imageId) {
+        return incoming().ownerId == me()
+          && incoming().data is bytes && incoming().data.size() <= 700 * 1024
+          && (
+            (imageId == 'avatar_' + me() && incoming().kind == 'avatar')
+            || (imageId.matches('community_(avatar|banner)_.+')
+                && incoming().kind in ['community_avatar', 'community_banner']
+                && imageId.matches(incoming().kind + '_.+')
+                && get(/databases/$(database)/documents/communities/$(imageId.split('_')[2])).data.createdBy == me())
+          )
+          && (resource == null || resource.data.ownerId == me());
+      }
+    }
+
     match /stripeAccounts/{userId} {
       allow read: if isSelf(userId);
       allow write: if false;

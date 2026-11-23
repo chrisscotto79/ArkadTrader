@@ -3,7 +3,9 @@
 
 import Foundation
 import Combine
-import SwiftUI  // ← This fixes the Color error
+import SwiftUI
+import UIKit
+import FirebaseFirestore
 
 
 @MainActor
@@ -23,6 +25,11 @@ class CommunityCreationViewModel: ObservableObject {
     @Published var isLoadingPayoutStatus = false
     @Published var payoutStatusFailed = false
     
+    // Optional photos, uploaded once the community doc exists (the image rules check its owner)
+    @Published var avatarImage: UIImage?
+    @Published var bannerImage: UIImage?
+    @Published var photoError: String?
+
     // State
     @Published var isCreating = false
     @Published var showError = false
@@ -170,6 +177,9 @@ class CommunityCreationViewModel: ObservableObject {
     
     // MARK: - Pricing
 
+    /// Paid is only possible when paid communities are switched on (never in free mode)
+    private var wantsPaid: Bool { AppConfig.paidCommunitiesEnabled && isPaid }
+
     /// Paid communities need finished payout setup (`stripeAccounts/{uid}.chargesEnabled`)
     var canChargeMembers: Bool { payoutStatus?.chargesEnabled == true }
 
@@ -177,17 +187,17 @@ class CommunityCreationViewModel: ObservableObject {
 
     /// nil when the price is fine (or the community is free)
     var priceValidationMessage: String? {
-        guard isPaid else { return nil }
+        guard wantsPaid else { return nil }
         return CommunityPricing.validationMessage(for: priceText)
     }
 
     /// The pricing step can continue: free, or paid with payouts ready and a valid price
     var isPricingValid: Bool {
-        !isPaid || (canChargeMembers && priceValidationMessage == nil)
+        !wantsPaid || (canChargeMembers && priceValidationMessage == nil)
     }
 
     func loadPayoutStatus() async {
-        guard let userId = authService.currentUser?.id else { return }
+        guard AppConfig.paidCommunitiesEnabled, let userId = authService.currentUser?.id else { return }
         isLoadingPayoutStatus = true
         payoutStatusFailed = false
         do {
@@ -231,9 +241,12 @@ class CommunityCreationViewModel: ObservableObject {
                 
                 // Every community starts free; a paid price is set through setCommunityPrice afterwards
                 try await communityService.createCommunity(community)
+
+                // Photos go up after the doc exists: the image rules check that you created it
+                let photoProblem = await uploadPhotos(for: community.id)
                 
                 let createdName = community.name
-                if isPaid, let price = self.price {
+                if wantsPaid, let price = self.price {
                     do {
                         try await PaymentsService.setCommunityPrice(
                             communityId: community.id,
@@ -249,6 +262,9 @@ class CommunityCreationViewModel: ObservableObject {
                 } else {
                     successMessage = "\(createdName) is ready. Invite traders to join you."
                 }
+                if let photoProblem {
+                    successMessage += " \(photoProblem) You can add photos later in community settings."
+                }
 
                 // Success!
                 showSuccess = true
@@ -263,6 +279,68 @@ class CommunityCreationViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Photos
+
+    /// Loads a picked avatar. Any shape works: it's centre-cropped to a square on upload.
+    func setAvatar(from data: Data?) {
+        photoError = nil
+        guard let data, let image = UIImage(data: data) else {
+            photoError = "That photo couldn't be read. Try a different one."
+            return
+        }
+        avatarImage = image
+    }
+
+    /// Loads a picked banner. Banners must be wide, as in community settings.
+    func setBanner(from data: Data?) {
+        photoError = nil
+        guard let data, let image = UIImage(data: data), image.size.height > 0 else {
+            photoError = "That photo couldn't be read. Try a different one."
+            return
+        }
+        guard image.size.width / image.size.height >= 2 else {
+            photoError = "Banner should be wide format (at least 2:1 ratio)."
+            return
+        }
+        bannerImage = image
+    }
+
+    /// Uploads the chosen photos for a just-created community and saves their URLs on it.
+    /// Returns a sentence for the success message when something couldn't be saved.
+    private func uploadPhotos(for communityId: String) async -> String? {
+        guard avatarImage != nil || bannerImage != nil else { return nil }
+
+        var fields: [String: Any] = [:]
+        var failure: Error?
+
+        if let avatarImage {
+            do {
+                fields["avatarURL"] = try await ImageStore.shared.uploadCommunityAvatar(avatarImage, communityId: communityId)
+            } catch {
+                failure = error
+            }
+        }
+        if let bannerImage {
+            do {
+                fields["bannerURL"] = try await ImageStore.shared.uploadCommunityBanner(bannerImage, communityId: communityId)
+            } catch {
+                failure = failure ?? error
+            }
+        }
+
+        if !fields.isEmpty {
+            do {
+                try await FirebaseServices.shared.db.collection("communities").document(communityId)
+                    .updateData(fields)
+            } catch {
+                failure = failure ?? error
+            }
+        }
+
+        guard let failure else { return nil }
+        return "We couldn't save your photos: \(failure.localizedDescription)"
+    }
+
     /// Reset the form
     func resetForm() {
         name = ""
@@ -274,6 +352,9 @@ class CommunityCreationViewModel: ObservableObject {
         trialDays = 0
         nameValidation = .none
         descriptionValidation = .none
+        avatarImage = nil
+        bannerImage = nil
+        photoError = nil
         errorMessage = ""
         showError = false
     }

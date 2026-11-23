@@ -11,6 +11,11 @@ import MobileCoreServices
 // MARK: - Media Handling Extensions
 extension ChannelChatView {
     func handleImageUpload(_ image: UIImage) {
+        // Chat attachments need Cloud Storage (Blaze plan); the attach button is hidden without it.
+        guard AppConfig.mediaUploadsEnabled else {
+            selectedImage = nil
+            return
+        }
         isUploadingMedia = true
         
         Task {
@@ -34,6 +39,10 @@ extension ChannelChatView {
     }
     
     func handleDocumentUpload(_ url: URL) {
+        guard AppConfig.mediaUploadsEnabled else {
+            selectedDocumentURL = nil
+            return
+        }
         isUploadingMedia = true
         
         Task {

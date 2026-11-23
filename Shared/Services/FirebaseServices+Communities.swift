@@ -346,14 +346,16 @@ extension FirebaseServices {
         return Set(communityIds.filter { !$0.isEmpty })
     }
     
-    /// Joins a free community. Banned users can't join, and paid communities are joined
-    /// only through Stripe Checkout (the webhook creates the membership).
+    /// Joins a free community. Banned users can't join. With paid communities on, paid ones are joined
+    /// only through Stripe Checkout (the webhook creates the membership); in free mode every community is free.
+    /// After joining, the owner gets a `member_joined` notification.
     func joinCommunity(communityId: String, userId: String) async throws {
         if try await isUserBanned(communityId: communityId, userId: userId) {
             throw CommunityJoinError.banned
         }
         let communityDoc = try await db.collection("communities").document(communityId).getDocument()
-        if communityDoc.data()?["isPaid"] as? Bool == true {
+        let communityData = communityDoc.data() ?? [:]
+        if AppConfig.paidCommunitiesEnabled && communityData["isPaid"] as? Bool == true {
             throw CommunityJoinError.requiresSubscription
         }
 
@@ -381,6 +383,32 @@ extension FirebaseServices {
         ], forDocument: userRef)
         
         try await batch.commit()
+
+        await notifyOwnerOfNewMember(communityId: communityId, communityData: communityData, userId: userId)
+    }
+
+    /// Tells the owner someone joined. Best-effort: a failure here never fails the join.
+    private func notifyOwnerOfNewMember(communityId: String, communityData: [String: Any], userId: String) async {
+        guard let ownerId = communityData["createdBy"] as? String,
+              !ownerId.isEmpty, ownerId != userId else { return }
+        let communityName = communityData["name"] as? String ?? "your community"
+
+        // The joiner is normally the signed-in user; read their profile only if not
+        var username = await MainActor.run { () -> String? in
+            guard let user = FirebaseAuthService.shared.currentUser, user.id == userId else { return nil }
+            return user.username
+        }
+        if username == nil {
+            username = (try? await db.collection("users").document(userId).getDocument())?.data()?["username"] as? String
+        }
+
+        await createNotification(
+            to: ownerId,
+            type: "member_joined",
+            title: "New member",
+            body: "\(username ?? "Someone") joined \(communityName)",
+            data: ["route": "community", "communityId": communityId]
+        )
     }
     
     func leaveCommunity(communityId: String, userId: String) async throws {
@@ -509,14 +537,15 @@ extension FirebaseServices {
         try await channelRef.setData(channel.toFirestore())
     }
     
-    /// Save a channel's editable fields (name, type, posting permission)
+    /// Save a channel's editable fields (name, type, posting permission, icon)
     func updateChannel(_ channel: Channel) async throws {
         try await db.collection("communities").document(channel.communityId)
             .collection("channels").document(channel.id)
             .updateData([
                 "name": channel.name,
                 "type": channel.type.rawValue,
-                "adminOnly": channel.adminOnly
+                "adminOnly": channel.adminOnly,
+                "icon": channel.icon.map { $0 as Any } ?? FieldValue.delete()
             ])
     }
 
@@ -538,18 +567,77 @@ extension FirebaseServices {
     
     // MARK: - Community Message Methods
     
-    func sendCommunityMessage(_ message: CommunityMessage) async throws {
-        let messageRef = db.collection("communities").document(message.communityId)
-            .collection("channels").document(message.channelId)
-            .collection("messages").document(message.id)
-        
+    /// Writes a new channel message.
+    /// - Parameter overrides: top-level fields that replace the encoded ones. Trade shares use it to
+    ///   send `tradeShare` with the values exactly as stored on the trade doc (the rules compare them).
+    func sendCommunityMessage(_ message: CommunityMessage, overrides: [String: Any] = [:]) async throws {
+        let messageRef = channelMessageRef(communityId: message.communityId, channelId: message.channelId,
+                                           messageId: message.id)
         let communityRef = db.collection("communities").document(message.communityId)
+
+        var data = message.toFirestore()
+        data.merge(overrides) { _, override in override }
 
         // Record activity on the community so discovery can surface active communities
         let batch = db.batch()
+        batch.setData(data, forDocument: messageRef)
+        batch.updateData(["lastActivityDate": FieldValue.serverTimestamp()], forDocument: communityRef)
+        try await batch.commit()
+    }
+
+    func channelMessageRef(communityId: String, channelId: String, messageId: String) -> DocumentReference {
+        db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages").document(messageId)
+    }
+
+    // MARK: - Callout follow-ups (docs/backend-contracts.md, section 11)
+
+    /// Posts a `calloutUpdate` message and, for a stop or target move, changes the parent
+    /// callout's level in the same batch, so members never see a move that didn't happen.
+    /// - Parameter parentLevel: `("stopPrice", 245)` or `("targetPrice", 270)`; nil for trims, adds and notes.
+    ///   Written as `callout.<field>` on the parent (firestore.rules `authorTracksCallout`).
+    func sendCalloutUpdate(_ message: CommunityMessage, parentLevel: (field: String, value: Double)?) async throws {
+        guard let update = message.calloutUpdate else { return }
+        let messageRef = channelMessageRef(communityId: message.communityId, channelId: message.channelId,
+                                           messageId: message.id)
+        let parentRef = channelMessageRef(communityId: message.communityId, channelId: message.channelId,
+                                          messageId: update.parentMessageId)
+        let communityRef = db.collection("communities").document(message.communityId)
+
+        let batch = db.batch()
+        if let parentLevel {
+            batch.updateData(["callout.\(parentLevel.field)": parentLevel.value], forDocument: parentRef)
+        }
         batch.setData(message.toFirestore(), forDocument: messageRef)
         batch.updateData(["lastActivityDate": FieldValue.serverTimestamp()], forDocument: communityRef)
         try await batch.commit()
+    }
+
+    /// Every update posted on a callout, oldest first. One-time read for the callout timeline.
+    func getCalloutUpdates(communityId: String, channelId: String, parentMessageId: String) async throws -> [CommunityMessage] {
+        let snapshot = try await db.collection("communities").document(communityId)
+            .collection("channels").document(channelId)
+            .collection("messages")
+            .whereField("calloutUpdate.parentMessageId", isEqualTo: parentMessageId)
+            .limit(to: 100)
+            .getDocuments()
+        return snapshot.documents
+            .compactMap { try? CommunityMessage.fromFirestore(data: $0.data(), id: $0.documentID) }
+            .filter { !$0.isDeleted && $0.calloutUpdate != nil }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// The signed-in user's standing in a community, for deciding where they may post:
+    /// their role (nil if not a member) and when a mute ends.
+    func memberPostingStatus(communityId: String, userId: String, createdBy: String) async throws -> (role: CommunityRole?, mutedUntil: Date?) {
+        if userId == createdBy { return (.owner, nil) }
+        let doc = try await db.collection("communities").document(communityId)
+            .collection("members").document(userId).getDocument()
+        guard doc.exists, let data = doc.data() else { return (nil, nil) }
+        let role = CommunityRole(rawValue: data["role"] as? String ?? "") ?? .member
+        let mutedUntil = (data["mutedUntil"] as? Timestamp)?.dateValue()
+        return (role, mutedUntil)
     }
     
     func getChannelMessages(communityId: String, channelId: String, limit: Int = 50) async throws -> [CommunityMessage] {

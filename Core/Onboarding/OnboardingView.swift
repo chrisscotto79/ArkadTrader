@@ -189,10 +189,12 @@ struct OnboardingView: View {
                     .padding(.top, DS.Spacing.xxl)
 
                 VStack(spacing: DS.Spacing.s) {
-                    Text("Stay in the loop")
+                    Text(usesRemotePush ? "Stay in the loop" : "Get price alerts")
                         .font(.system(size: 28, weight: .bold))
                         .multilineTextAlignment(.center)
-                    Text("Get a heads-up when it matters. You choose exactly what in Settings.")
+                    Text(usesRemotePush
+                         ? "Get a heads-up when it matters. You choose exactly what in Settings."
+                         : "Allow notifications so Arkad can tell you when a price crosses a target you set.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -200,9 +202,15 @@ struct OnboardingView: View {
                 }
 
                 VStack(alignment: .leading, spacing: DS.Spacing.l) {
-                    benefitRow(icon: "megaphone.fill", text: "New callouts in your communities")
-                    benefitRow(icon: "bubble.left.fill", text: "Replies and mentions")
-                    benefitRow(icon: "bell.badge.fill", text: "Price alerts you set")
+                    if usesRemotePush {
+                        benefitRow(icon: "megaphone.fill", text: "New callouts in your communities")
+                        benefitRow(icon: "bubble.left.fill", text: "Replies and mentions")
+                        benefitRow(icon: "bell.badge.fill", text: "Price alerts you set")
+                    } else {
+                        benefitRow(icon: "bell.badge.fill", text: "A banner when a price alert triggers")
+                        benefitRow(icon: "clock.badge.checkmark", text: "Alerts are checked while Arkad is open")
+                        benefitRow(icon: "tray.fill", text: "Callouts, replies and new followers wait in your inbox")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cardStyle()
@@ -212,6 +220,9 @@ struct OnboardingView: View {
         }
         .scrollBounceBehavior(.basedOnSize)
     }
+
+    /// Remote push needs Cloud Functions. In free mode only price alerts use notifications.
+    private var usesRemotePush: Bool { AppConfig.serverFunctionsEnabled }
 
     private func benefitRow(icon: String, text: String) -> some View {
         HStack(spacing: DS.Spacing.m) {
@@ -230,7 +241,7 @@ struct OnboardingView: View {
                     Button {
                         Task { await viewModel.finish(enableNotifications: true) }
                     } label: {
-                        saveLabel("Turn on notifications")
+                        saveLabel(usesRemotePush ? "Turn on notifications" : "Get price alerts")
                     }
                     .buttonStyle(PrimaryButtonStyle())
 

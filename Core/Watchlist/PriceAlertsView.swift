@@ -151,14 +151,20 @@ struct PriceAlertsView: View {
             return "Waiting · \(alert.assetType.displayName)"
         }
         if let triggeredAt = alert.triggeredAt {
-            return "Triggered \(triggeredAt.formatted(date: .abbreviated, time: .shortened))"
+            let when = triggeredAt.formatted(date: .abbreviated, time: .shortened)
+            if let price = alert.triggeredPrice {
+                return "Triggered at \(price.formatted(.currency(code: "USD"))) · \(when)"
+            }
+            return "Triggered \(when)"
         }
         return "No longer active"
     }
 
     private var infoNote: some View {
         Label {
-            Text("Alerts are checked every few minutes, while the market is open for stocks and around the clock for crypto, and arrive as notifications. Price can move past your target between checks.")
+            Text(AppConfig.serverFunctionsEnabled
+                 ? "Alerts are checked every few minutes, while the market is open for stocks and around the clock for crypto, and arrive as notifications. Price can move past your target between checks."
+                 : "Alerts are checked while Arkad is open: when you open it, and every 5 minutes after that. Only stock alerts can trigger for now. Price can move past your target between checks.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

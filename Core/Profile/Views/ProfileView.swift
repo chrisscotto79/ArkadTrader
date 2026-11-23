@@ -110,7 +110,8 @@ struct ProfileView: View {
                 action: { showFollowingList = true }
             ),
             ProfileStatItem(title: "Trades", value: "\(summary.totalTrades)"),
-            // Portfolio win rate; the callout win rate is in the callout record below
+            // Portfolio win rate from price-checked and verified trades; the callout win rate is in
+            // the callout record below
             ProfileStatItem(title: "Trade win rate", value: winRateText(summary.winRate))
         ])
     }
@@ -123,10 +124,10 @@ struct ProfileView: View {
         }
     }
 
-    /// Self-reported: built from the trades you log in your portfolio.
+    /// Built from the trades you log in your portfolio, counting only price-checked and verified ones.
     private var performanceSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            ProfileSourceLabel(title: "Portfolio", detail: "Trades you log yourself")
+            ProfileSourceLabel(title: "Portfolio", detail: "Price-checked & verified trades")
             ProfilePerformanceCard(
                 summary: portfolioViewModel.getPortfolioSummaryForProfile(),
                 bestTrade: bestClosedTrade
@@ -138,8 +139,9 @@ struct ProfileView: View {
 
     // MARK: - Helpers
 
+    /// Win rate only counts closed price-checked and verified trades
     private var hasClosedTrades: Bool {
-        portfolioViewModel.trades.contains { !$0.isOpen }
+        portfolioViewModel.checkedStats.hasClosedTrades
     }
 
     /// Win rate only means something once a trade has been closed.
@@ -149,7 +151,7 @@ struct ProfileView: View {
 
     private var bestClosedTrade: Trade? {
         portfolioViewModel.trades
-            .filter { !$0.isOpen }
+            .filter { !$0.isOpen && $0.countsTowardStats }
             .max(by: { $0.profitLoss < $1.profitLoss })
     }
 

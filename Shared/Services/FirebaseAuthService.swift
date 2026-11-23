@@ -23,6 +23,13 @@ class FirebaseAuthService: ObservableObject {
     /// True while `register` is creating the account, so the auth listener doesn't load a
     /// profile that doesn't exist yet
     private var isRegistering = false
+    /// When the user last confirmed their password in this session (`reauthenticate`)
+    private var lastReauthenticatedAt: Date?
+
+    /// How recent a sign-in must be before free mode starts deleting an account's data.
+    /// Firebase asks for a sign-in within about 5 minutes to delete the sign-in itself, and
+    /// the cleanup runs first, so this leaves time for it.
+    private static let recentSignInWindow: TimeInterval = 3 * 60
     
     private init() {
         setupAuthListener()
@@ -144,18 +151,67 @@ class FirebaseAuthService: ObservableObject {
             Task { await logout() }
         }
         
-        /// Deletes the Firebase sign-in. A Cloud Function (Auth onDelete) then removes the
-        /// profile and everything else the user created (docs/backend-contracts.md, section 8).
-        /// Throws `AuthErrorCode.requiresRecentLogin` if the user must confirm their password
-        /// first; call `reauthenticate(password:)` and try again.
+        /// Deletes the account.
+        ///
+        /// With Cloud Functions deployed it only deletes the Firebase sign-in; an Auth onDelete
+        /// trigger then removes everything else (docs/backend-contracts.md, section 8).
+        ///
+        /// In free mode (section 0) the app cleans up first: posts, follows, memberships, owned
+        /// communities, `users/{uid}` subcollections, `traderStats/{uid}`, the inbox and the
+        /// profile photo, then `users/{uid}` and the trades, then deletes the sign-in. So that
+        /// data isn't removed while the sign-in survives, it requires a recent sign-in up front.
+        ///
+        /// Throws `AuthError.recentLoginRequired` or `AuthErrorCode.requiresRecentLogin` if the
+        /// user must confirm their password first; call `reauthenticate(password:)` and try again.
         func deleteAccount() async throws {
             guard let user = auth.currentUser else {
                 throw AuthError.notAuthenticated
             }
 
-            try await user.delete()
+            if AppConfig.serverFunctionsEnabled {
+                try await user.delete()
+                currentUser = nil
+                isAuthenticated = false
+                return
+            }
+
+            guard hasRecentSignIn(user) else {
+                throw AuthError.recentLoginRequired
+            }
+
+            await FirebaseServices.shared.deleteAccountData(userId: user.uid)
+
+            // Delete the profile while still signed in (the rules need auth), but keep a copy
+            // to put back if Firebase refuses to delete the sign-in, so the user isn't left
+            // with an account that has no profile.
+            let userDoc = Firestore.firestore().collection("users").document(user.uid)
+            let savedProfile = try? await userDoc.getDocument().data()
+            try? await userDoc.delete()
+
+            // After the profile, which the rules need gone to delete older price-checked trades
+            await FirebaseServices.shared.deleteAccountTrades(userId: user.uid)
+
+            do {
+                try await user.delete()
+            } catch {
+                if let savedProfile {
+                    try? await userDoc.setData(savedProfile)
+                }
+                throw error
+            }
+
+            lastReauthenticatedAt = nil
             currentUser = nil
             isAuthenticated = false
+        }
+
+        /// Whether the user signed in, or confirmed their password, in the last few minutes.
+        private func hasRecentSignIn(_ user: FirebaseAuth.User) -> Bool {
+            let latest = [user.metadata.lastSignInDate, lastReauthenticatedAt]
+                .compactMap { $0 }
+                .max()
+            guard let latest else { return false }
+            return Date().timeIntervalSince(latest) < Self.recentSignInWindow
         }
 
         /// Confirms the signed-in user's password, which Firebase needs before sensitive
@@ -166,6 +222,7 @@ class FirebaseAuthService: ObservableObject {
             }
             let credential = EmailAuthProvider.credential(withEmail: email, password: password)
             _ = try await user.reauthenticate(with: credential)
+            lastReauthenticatedAt = Date()
         }
 
         // MARK: - Onboarding
@@ -268,19 +325,11 @@ class FirebaseAuthService: ObservableObject {
                 user.username = username
             }
             
-            // Handle profile image upload
+            // Profile photo: saved as images/avatar_{uid} in Firestore (no Cloud Storage on the
+            // free plan). The same doc is overwritten each time, so there's nothing old to delete.
+            // The returned arkad-image:// string changes on every upload, which busts caches.
             if let profileImage = profileImage {
-                
-                // Delete old image if it exists
-                if let oldImageUrl = user.profileImageUrl {
-                    Task {
-                        try await FirebaseServices.shared.deleteProfileImage(imageUrl: oldImageUrl)
-                    }
-                }
-                
-                // Upload new image
-                let imageUrl = try await FirebaseServices.shared.uploadProfileImage(profileImage, userId: user.id)
-                user.profileImageUrl = imageUrl
+                user.profileImageUrl = try await ImageStore.shared.uploadAvatar(profileImage)
             }
             
             // Update timestamp
@@ -307,17 +356,23 @@ class FirebaseAuthService: ObservableObject {
             throw AuthError.notAuthenticated
         }
         
-        // Delete the image from storage if it exists
-        if let imageUrl = user.profileImageUrl {
-            try await FirebaseServices.shared.deleteProfileImage(imageUrl: imageUrl)
-        }
-        
-        // Update user record
+        let oldImageUrl = user.profileImageUrl
+
+        // Update user record first, so the profile never points at a deleted photo
         user.profileImageUrl = nil
         user.updatedAt = Date()
         
         try await FirebaseServices.shared.updateUser(user)
         self.currentUser = user
+
+        // Then remove the photo itself (best-effort)
+        if let oldImageUrl {
+            if ImageStore.imageId(from: oldImageUrl) != nil {
+                try? await ImageStore.shared.deleteImage(urlString: oldImageUrl)
+            } else if AppConfig.mediaUploadsEnabled {
+                try? await FirebaseServices.shared.deleteProfileImage(imageUrl: oldImageUrl)
+            }
+        }
         
     }
 
@@ -726,6 +781,8 @@ enum AuthError: LocalizedError {
     case invalidData      // ✅ ADD THIS
     case uploadFailed     // ✅ ADD THIS
     case custom(String)   // ✅ ADD THIS
+    /// The user must confirm their password before this (deleting the account in free mode)
+    case recentLoginRequired
     
     var errorDescription: String? {
         switch self {
@@ -751,6 +808,8 @@ enum AuthError: LocalizedError {
             return "Failed to upload file"
         case .custom(let message):
             return message
+        case .recentLoginRequired:
+            return "Please confirm your password to continue."
         }
     }
 }

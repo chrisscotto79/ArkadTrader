@@ -1,6 +1,8 @@
 // File: Core/Settings/Views/SettingsView.swift
 // Settings: profile, linked brokerages, payouts, data export, notifications, appearance,
 // blocked accounts, help, about, sign out and account deletion.
+// Linked brokerages and Payouts only show when AppConfig.brokerageLinkingEnabled and
+// AppConfig.paidCommunitiesEnabled are on.
 // Also defines the grouped-card row components shared by the other Settings screens.
 
 import SwiftUI
@@ -90,11 +92,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("""
-            This permanently deletes your Arkad account: your profile, posts, comments, trades and watchlist. Communities you own are deleted, and any paid subscriptions are cancelled.
-
-            This can't be undone.
-            """)
+            Text(deleteConfirmationMessage)
         }
         .alert("Confirm It's You", isPresented: $showPasswordPrompt) {
             SecureField("Password", text: $confirmPassword)
@@ -158,14 +156,18 @@ struct SettingsView: View {
                 showEditProfile = true
             }
             SettingsRowDivider()
-            SettingsNavigationRow(icon: "building.columns", title: "Linked brokerages", subtitle: "Import trades from your broker, read-only") {
-                LinkedAccountsView()
+            if AppConfig.brokerageLinkingEnabled {
+                SettingsNavigationRow(icon: "building.columns", title: "Linked brokerages", subtitle: "Import trades from your broker, read-only") {
+                    LinkedAccountsView()
+                }
+                SettingsRowDivider()
             }
-            SettingsRowDivider()
-            SettingsNavigationRow(icon: "banknote", title: "Payouts", subtitle: "Get paid for your community") {
-                PayoutsView()
+            if AppConfig.paidCommunitiesEnabled {
+                SettingsNavigationRow(icon: "banknote", title: "Payouts", subtitle: "Get paid for your community") {
+                    PayoutsView()
+                }
+                SettingsRowDivider()
             }
-            SettingsRowDivider()
             SettingsListRow(icon: "square.and.arrow.up", title: "Export data", subtitle: "Your trades and posts as CSV files") {
                 showDataExport = true
             }
@@ -287,8 +289,25 @@ struct SettingsView: View {
 
     // MARK: - Account Deletion
 
-    /// Deletes the sign-in; the server then removes everything else (Auth onDelete trigger).
-    /// Firebase asks for the password again if the last sign-in wasn't recent.
+    private var deleteConfirmationMessage: String {
+        if AppConfig.serverFunctionsEnabled {
+            return """
+            This permanently deletes your Arkad account: your profile, posts, comments, trades and watchlist. Communities you own are deleted, and any paid subscriptions are cancelled.
+
+            This can't be undone.
+            """
+        }
+        return """
+        This permanently deletes your Arkad account: your profile and photo, posts (with their comments and likes), trades, watchlist, price alerts, track record and followers. You leave the communities you've joined, and communities you own are deleted. Comments on other people's posts and messages in community chats stay.
+
+        This can't be undone.
+        """
+    }
+
+    /// With Cloud Functions, deletes the sign-in and the server removes everything else. In
+    /// free mode the app removes your data first, then the sign-in (FirebaseAuthService).
+    /// Either way, Firebase or the app asks for the password again if the last sign-in
+    /// wasn't recent, before anything is deleted.
     private func deleteAccount() {
         isDeletingAccount = true
         Task {
@@ -335,7 +354,8 @@ struct SettingsView: View {
     }
 
     private static func requiresRecentLogin(_ error: Error) -> Bool {
-        AuthErrorCode(rawValue: (error as NSError).code) == .requiresRecentLogin
+        if case AuthError.recentLoginRequired = error { return true }
+        return AuthErrorCode(rawValue: (error as NSError).code) == .requiresRecentLogin
     }
 
     private static func message(for error: Error) -> String {

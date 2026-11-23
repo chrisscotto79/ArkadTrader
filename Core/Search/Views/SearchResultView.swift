@@ -424,6 +424,18 @@ struct SearchResultView: View {
                 assetType: trade.tradeType == .option ? .stock : trade.tradeType
             )
 
+            // The ticker's page: posts, sentiment and price (cashtag-style symbols only)
+            let symbol = TickerFeedService.normalize(trade.ticker)
+            if TickerFeedService.isTickerSymbol(symbol) {
+                HStack(spacing: DS.Spacing.s) {
+                    Text("See what traders are saying")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    TickerLink(symbol: symbol)
+                }
+            }
+
             if !trade.isOpen {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Profit / loss")

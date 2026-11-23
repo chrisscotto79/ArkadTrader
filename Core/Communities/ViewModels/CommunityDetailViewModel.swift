@@ -39,6 +39,15 @@ class CommunityDetailViewModel: ObservableObject {
         return authService.currentUser?.id
     }
 
+    /// Owners, admins and moderators: they write Classroom courses and Events
+    /// (`isStaff` in firestore.rules: role level 2 or higher).
+    var isStaff: Bool {
+        guard isUserMember else { return false }
+        return userRole == CommunityRole.owner.rawValue
+            || userRole == CommunityRole.admin.rawValue
+            || userRole == CommunityRole.moderator.rawValue
+    }
+
     /// Non-members of a paid community only see the preview, never the channels
     var canViewChannels: Bool {
         guard let community else { return false }
@@ -319,7 +328,8 @@ class CommunityDetailViewModel: ObservableObject {
                 canManageChannels = role == .owner || role == .admin
                 let memberData = await loadMemberData(communityId: community.id, userId: userId)
                 memberSince = (memberData?["joinedAt"] as? Timestamp)?.dateValue()
-                subscription = memberData.flatMap { MemberSubscription(data: $0) }
+                // Free mode has no subscriptions, so a leftover subscription field never shows
+                subscription = AppConfig.paidCommunitiesEnabled ? memberData.flatMap { MemberSubscription(data: $0) } : nil
                 isBanned = false
             } else {
                 userRole = "member"

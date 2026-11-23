@@ -1,8 +1,13 @@
 // File: Core/Notifications/PushNotificationManager.swift
-// Push permission, this device's FCM token, the unread count for the Home bell, and
+// Notification permission, this device's FCM token, the unread count for the Home bell, and
 // routing notification taps. FirebaseAuthService tells it when the user signs in or out.
+//
+// Free mode (AppConfig.serverFunctionsEnabled == false): there is no remote push, so the FCM
+// token is never saved to or deleted from `users/{uid}/fcmTokens`. Permission is still asked
+// for, because price alerts are shown as local notifications (PriceAlertChecker).
 
 import Foundation
+import Combine
 import UIKit
 import UserNotifications
 import FirebaseFirestore
@@ -22,12 +27,26 @@ final class PushNotificationManager: ObservableObject {
     private var fcmToken: String?
     private var signedInUserId: String?
     private var unreadListener: ListenerRegistration?
+    /// Unread notifications from the listener, before the inbox filter
+    private var unreadEntries: [InboxEntry] = []
+    private var filterSubscriptions = Set<AnyCancellable>()
+
+    /// Remote push needs Cloud Functions to send it.
+    private var usesRemotePush: Bool { AppConfig.serverFunctionsEnabled }
 
     private init() {}
 
     // MARK: - Permission
 
     var isDenied: Bool { authorizationStatus == .denied }
+
+    /// True when Arkad may show notifications (banners for price alerts, for example).
+    var canShowNotifications: Bool {
+        switch authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
+    }
 
     func refreshAuthorizationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
@@ -40,7 +59,7 @@ final class PushNotificationManager: ObservableObject {
         let granted = (try? await UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .badge, .sound])) ?? false
         await refreshAuthorizationStatus()
-        if granted {
+        if granted, usesRemotePush {
             UIApplication.shared.registerForRemoteNotifications()
         }
         return granted
@@ -62,7 +81,7 @@ final class PushNotificationManager: ObservableObject {
         let previous = fcmToken
         fcmToken = token
 
-        guard let userId = signedInUserId else { return }
+        guard usesRemotePush, let userId = signedInUserId else { return }
         Task {
             if let previous {
                 try? await FirebaseServices.shared.deleteFCMToken(previous, userId: userId)
@@ -82,6 +101,7 @@ final class PushNotificationManager: ObservableObject {
 
         Task {
             await refreshAuthorizationStatus()
+            guard usesRemotePush else { return }
             // Fails until APNs has registered; the delegate delivers the token later.
             if fcmToken == nil, let fetched = try? await Messaging.messaging().token(), fcmToken == nil {
                 fcmToken = fetched
@@ -97,7 +117,7 @@ final class PushNotificationManager: ObservableObject {
         let userId = signedInUserId
         let token = fcmToken
         stopSession()
-        guard let userId, let token else { return }
+        guard usesRemotePush, let userId, let token else { return }
 
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -119,22 +139,50 @@ final class PushNotificationManager: ObservableObject {
     private func stopSession() {
         unreadListener?.remove()
         unreadListener = nil
+        unreadEntries = []
         signedInUserId = nil
         setUnreadCount(0)
     }
 
     // MARK: - Unread count
 
+    /// Counts the unread notifications the inbox would show (InboxFilter).
     private func startUnreadListener(userId: String) {
-        unreadListener = FirebaseServices.shared.listenToUnreadNotificationCount(
+        subscribeToFilterChanges()
+        unreadListener = FirebaseServices.shared.listenToUnreadNotifications(
             userId: userId,
             limit: Self.unreadLimit
-        ) { [weak self] count in
+        ) { [weak self] entries in
             Task { @MainActor in
                 guard let self, self.signedInUserId == userId else { return }
-                self.setUnreadCount(count)
+                self.unreadEntries = entries
+                self.recountUnread()
             }
         }
+    }
+
+    /// Recounts when the block list or the notification preferences change. Set up on first
+    /// sign-in rather than in init, so the shared stores aren't created while this one is.
+    private func subscribeToFilterChanges() {
+        guard filterSubscriptions.isEmpty else { return }
+        BlockStore.shared.$blockedIds
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.recountUnread() }
+            }
+            .store(in: &filterSubscriptions)
+        FirebaseAuthService.shared.$currentUser
+            .map { $0?.notificationPrefs ?? [:] }
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.recountUnread() }
+            }
+            .store(in: &filterSubscriptions)
+    }
+
+    private func recountUnread() {
+        guard signedInUserId != nil else { return }
+        setUnreadCount(unreadEntries.filter { InboxFilter.isVisible($0) }.count)
     }
 
     private func setUnreadCount(_ count: Int) {

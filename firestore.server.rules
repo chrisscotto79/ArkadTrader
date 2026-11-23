@@ -1,0 +1,587 @@
+rules_version = '2';
+
+// Arkad Firestore rules. Contract: docs/backend-contracts.md.
+//
+// Principles
+// - Every read and write needs a signed-in user.
+// - Server-only data (traderStats, stripeAccounts, private/*, brokerage*, notifications,
+//   subscription fields on members, callout tracking fields) is written only by Cloud
+//   Functions (the Admin SDK bypasses these rules).
+// - Paid communities: only members can read channels, messages, reactions and typing.
+//   Everyone signed in can read the community doc, its rules and its trader stats (the preview).
+// - Writes the app makes to other people's documents (follow counts, like counts,
+//   member counts, removing a community from a removed member's list) are allowed only
+//   as the exact, minimal change those flows make.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- helpers
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function isSelf(userId) { return signedIn() && me() == userId; }
+    function incoming() { return request.resource.data; }
+    function changedKeys() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function onlyChanged(keys) { return changedKeys().hasOnly(keys); }
+    // Same value before and after, treating a missing field as `fallback`.
+    function unchanged(key, fallback) {
+      return request.resource.data.get(key, fallback) == resource.data.get(key, fallback);
+    }
+
+    // Communities
+    function communityPath(cid) { return /databases/$(database)/documents/communities/$(cid); }
+    function memberPath(cid, userId) { return /databases/$(database)/documents/communities/$(cid)/members/$(userId); }
+    function banPath(cid, userId) { return /databases/$(database)/documents/communities/$(cid)/bans/$(userId); }
+    function community(cid) { return get(communityPath(cid)).data; }
+    function isOwner(cid) { return signedIn() && community(cid).createdBy == me(); }
+    function isMember(cid) { return signedIn() && exists(memberPath(cid, me())); }
+    function myMember(cid) { return get(memberPath(cid, me())).data; }
+    function isBanned(cid) { return exists(banPath(cid, me())); }
+    function isPaidCommunity(cid) { return community(cid).get('isPaid', false) == true; }
+
+    // A member whose paid subscription has ended keeps no access (the webhook normally removes them).
+    function hasAccess(cid) {
+      return isOwner(cid)
+        || (isMember(cid) && myMember(cid).get('subscriptionStatus', 'none') != 'canceled');
+    }
+    // Free communities are readable by anyone signed in (the app shows them before joining).
+    function canRead(cid) { return signedIn() && (!isPaidCommunity(cid) || hasAccess(cid)); }
+
+    // owner 4 > admin 3 > moderator 2 > member 1 > not a member 0
+    function roleLevel(role) { return role == 'admin' ? 3 : (role == 'moderator' ? 2 : 1); }
+    function levelOf(cid, userId) {
+      return community(cid).createdBy == userId
+        ? 4
+        : (exists(memberPath(cid, userId)) ? roleLevel(get(memberPath(cid, userId)).data.get('role', 'member')) : 0);
+    }
+    function isAdmin(cid) { return signedIn() && levelOf(cid, me()) >= 3; }
+    function isStaff(cid) { return signedIn() && levelOf(cid, me()) >= 2; }
+    // Staff can act on members ranked below them.
+    function outranks(cid, userId) { return isStaff(cid) && levelOf(cid, me()) > levelOf(cid, userId); }
+    function isMuted(cid) {
+      return isMember(cid)
+        && myMember(cid).get('mutedUntil', null) != null
+        && myMember(cid).mutedUntil > request.time;
+    }
+
+    // Users
+    function blockedBy(ownerId) { return exists(/databases/$(database)/documents/users/$(ownerId)/blockedUsers/$(me())); }
+
+    // ---------------------------------------------------------------- users
+
+    match /users/{userId} {
+      allow read: if signedIn();
+
+      // Onboarding writes experienceLevel, interests, onboardingCompleted and
+      // notificationPrefs; verification and plan tier are never self-granted.
+      allow create: if isSelf(userId)
+        && incoming().get('isVerified', false) == false
+        && incoming().get('subscriptionTier', 'basic') == 'basic';
+
+      allow update: if (isSelf(userId) && ownProfileUpdate())
+        || (signedIn() && !isSelf(userId) && (followersDelta(userId) || followingDecrement(userId) || communityRemoval()));
+
+      allow delete: if isSelf(userId);
+
+      function ownProfileUpdate() {
+        return unchanged('isVerified', false) && unchanged('subscriptionTier', 'basic');
+      }
+
+      // follow / unfollow: the follower changes the target's followersCount by exactly 1,
+      // in the same batch that creates or deletes users/{userId}/followers/{me}.
+      function followersDelta(userId) {
+        let f = /databases/$(database)/documents/users/$(userId)/followers/$(me());
+        let before = resource.data.get('followersCount', 0);
+        return onlyChanged(['followersCount']) && (
+          (incoming().followersCount == before + 1 && !exists(f) && existsAfter(f))
+          || (incoming().followersCount == before - 1 && exists(f) && !existsAfter(f))
+        );
+      }
+
+      // Blocking someone removes their follow of you: their followingCount drops by 1
+      // in the same batch that deletes users/{userId}/following/{me}.
+      function followingDecrement(userId) {
+        let f = /databases/$(database)/documents/users/$(userId)/following/$(me());
+        return onlyChanged(['followingCount'])
+          && incoming().followingCount == resource.data.get('followingCount', 0) - 1
+          && exists(f) && !existsAfter(f);
+      }
+
+      // Community staff removing / banning a member (or the owner deleting the
+      // community) take exactly that one community id out of the member's list.
+      function communityRemoval() {
+        let before = resource.data.get('communityIds', []);
+        let after = incoming().get('communityIds', []);
+        let removed = before.removeAll(after);
+        return onlyChanged(['communityIds'])
+          && after.removeAll(before).size() == 0
+          && removed.size() == 1
+          && isStaff(removed[0]);
+      }
+
+      // Social graph. Readable by anyone signed in (profiles show counts and lists).
+      match /following/{targetId} {
+        allow read: if signedIn();
+        allow create, update: if isSelf(userId) && targetId != userId && !blockedBy(targetId);
+        // ...and the person being followed can remove it (blocking).
+        allow delete: if isSelf(userId) || isSelf(targetId);
+      }
+      match /followers/{followerId} {
+        allow read: if signedIn();
+        allow create, update: if isSelf(followerId) && followerId != userId && !blockedBy(userId);
+        allow delete: if isSelf(followerId) || isSelf(userId);
+      }
+
+      // Private, owner-only subcollections the app manages itself.
+      match /{sub}/{docId} {
+        allow read, write: if isSelf(userId) && sub in [
+          'likedPosts', 'likes', 'bookmarks', 'commentLikes', 'reportedPosts',
+          'watchlist', 'learnProgress', 'blockedUsers', 'fcmTokens'
+        ];
+      }
+
+      match /priceAlerts/{alertId} {
+        allow read, delete: if isSelf(userId);
+        allow create: if isSelf(userId)
+          && incoming().symbol is string && incoming().symbol.size() > 0 && incoming().symbol.size() <= 30
+          && incoming().condition in ['above', 'below']
+          && incoming().targetPrice is number && incoming().targetPrice > 0
+          && incoming().isActive == true
+          && !incoming().keys().hasAny(['triggeredAt', 'triggeredPrice', 'disabledReason']);
+        allow update: if isSelf(userId)
+          && !changedKeys().hasAny(['triggeredAt', 'triggeredPrice', 'disabledReason'])
+          && incoming().condition in ['above', 'below']
+          && incoming().targetPrice is number && incoming().targetPrice > 0;
+      }
+
+      // Server-written (SnapTrade sync); the owner reads them.
+      match /brokerageConnections/{connectionId} {
+        allow read: if isSelf(userId);
+        allow write: if false;
+      }
+      match /brokerageHoldings/{holdingId} {
+        allow read: if isSelf(userId);
+        allow write: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------- posts
+
+    match /posts/{postId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && incoming().authorId == me()
+        && incoming().get('likesCount', 0) == 0
+        && incoming().get('commentsCount', 0) == 0
+        && !incoming().keys().hasAny(['isHidden', 'hiddenAt', 'hiddenReason', 'reportCount']);
+
+      allow update: if signedIn() && (
+        (resource.data.authorId == me()
+          && !changedKeys().hasAny(['authorId', 'isHidden', 'hiddenAt', 'hiddenReason', 'reportCount']))
+        || likeDelta()
+        || commentDelta()
+      );
+
+      allow delete: if signedIn() && resource.data.authorId == me();
+
+      function likeDelta() {
+        let like = /databases/$(database)/documents/posts/$(postId)/likes/$(me());
+        let before = resource.data.get('likesCount', 0);
+        return onlyChanged(['likesCount']) && (
+          (incoming().likesCount == before + 1 && !exists(like) && existsAfter(like))
+          || (incoming().likesCount == before - 1 && exists(like) && !existsAfter(like))
+        );
+      }
+
+      function commentDelta() {
+        let before = resource.data.get('commentsCount', 0);
+        return onlyChanged(['commentsCount'])
+          && (incoming().commentsCount == before + 1 || incoming().commentsCount == before - 1);
+      }
+
+      match /comments/{commentId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && incoming().authorId == me()
+          && incoming().postId == postId
+          && incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 2000
+          && incoming().get('likesCount', 0) == 0
+          && !blockedBy(get(/databases/$(database)/documents/posts/$(postId)).data.authorId);
+        allow update: if signedIn() && resource.data.authorId == me()
+          && onlyChanged(['content', 'editedAt', 'isEdited', 'authorAvatarURL']);
+        // The comment's author, or the post's author (moderating, or deleting the post).
+        allow delete: if signedIn()
+          && (resource.data.authorId == me() || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == me());
+      }
+
+      match /likes/{likerId} {
+        allow read: if signedIn();
+        allow create, update: if isSelf(likerId);
+        allow delete: if isSelf(likerId) || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == me();
+      }
+
+      // Server-only report dedupe markers.
+      match /reporters/{reporterId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Legacy top-level comments (read by an old query; nothing writes here).
+    match /comments/{commentId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------- trades
+
+    // Readable by anyone signed in: profiles, search and leaderboards read other
+    // people's trades without an isPublic filter, so isPublic can't be enforced here.
+    match /trades/{tradeId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && incoming().userId == me()
+        && incoming().get('source', 'manual') == 'manual'
+        && incoming().get('isVerified', false) == false
+        && !incoming().keys().hasAny(['externalId', 'brokerageConnectionId', 'brokerageAccountId']);
+
+      allow update: if signedIn()
+        && resource.data.userId == me()
+        && incoming().userId == me()
+        && unchanged('source', 'manual')
+        && unchanged('isVerified', false)
+        && unchanged('externalId', null)
+        && unchanged('brokerageConnectionId', null)
+        && unchanged('brokerageAccountId', null)
+        // Verified (brokerage-imported) trades: prices, sizes and dates come from the broker.
+        && (resource.data.get('isVerified', false) == false
+            || !changedKeys().hasAny(['ticker', 'tradeType', 'entryPrice', 'exitPrice', 'quantity', 'entryDate', 'exitDate', 'isOpen']));
+
+      allow delete: if signedIn() && resource.data.userId == me();
+    }
+
+    // ---------------------------------------------------------------- communities
+
+    match /communities/{cid} {
+      // The preview (name, description, price, member count) is public to signed-in users.
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && incoming().createdBy == me()
+        && incoming().get('isPaid', false) == false
+        && incoming().get('priceMonthly', null) == null
+        && incoming().get('trialDays', 0) == 0
+        && !incoming().keys().hasAny(['stripeProductId', 'stripePriceId'])
+        && incoming().get('memberCount', 1) <= 1;
+
+      allow update: if signedIn() && (
+        (resource.data.createdBy == me() && ownerUpdate())
+        || memberCountJoinLeave()
+        || staffMemberCountDecrement()
+        || activityTouch()
+      );
+
+      allow delete: if signedIn() && resource.data.createdBy == me();
+
+      // Pricing goes through setCommunityPrice; Stripe ids are server-only.
+      function ownerUpdate() {
+        return unchanged('createdBy', null)
+          && unchanged('isPaid', false)
+          && unchanged('priceMonthly', null)
+          && unchanged('trialDays', 0)
+          && unchanged('stripeProductId', null)
+          && unchanged('stripePriceId', null);
+      }
+
+      // Join / leave: memberCount moves by 1 in the same batch that creates or
+      // deletes the caller's own member doc.
+      function memberCountJoinLeave() {
+        let m = memberPath(cid, me());
+        let before = resource.data.get('memberCount', 0);
+        return onlyChanged(['memberCount']) && (
+          (incoming().memberCount == before + 1 && !exists(m) && existsAfter(m))
+          || (incoming().memberCount == before - 1 && exists(m) && !existsAfter(m))
+        );
+      }
+
+      // Staff removing or banning someone.
+      function staffMemberCountDecrement() {
+        return onlyChanged(['memberCount'])
+          && incoming().memberCount == resource.data.get('memberCount', 0) - 1
+          && isStaff(cid);
+      }
+
+      // Sending a message records activity for discovery.
+      function activityTouch() {
+        return onlyChanged(['lastActivityDate']) && hasAccess(cid);
+      }
+
+      // Members. Paid-community member lists are for members only; your own doc is
+      // always readable (the app polls it after checkout).
+      match /members/{userId} {
+        allow get: if isSelf(userId) || canRead(cid);
+        allow list: if canRead(cid);
+
+        allow create: if isSelf(userId)
+          && incoming().userId == userId
+          && !incoming().keys().hasAny(['subscriptionStatus', 'currentPeriodEnd', 'mutedUntil', 'mutedBy'])
+          && (
+            // The owner's own membership, written in the createCommunity batch.
+            (getAfter(communityPath(cid)).data.createdBy == me() && incoming().role == 'admin')
+            // Joining a free community. Paid ones are joined through Stripe Checkout.
+            || (incoming().role == 'member' && !isPaidCommunity(cid) && !isBanned(cid))
+          );
+
+        allow update: if signedIn() && (
+          // The owner sets roles (never their own, never to owner).
+          (isOwner(cid) && userId != me()
+            && onlyChanged(['role']) && incoming().role in ['admin', 'moderator', 'member'])
+          // Staff mute / unmute members ranked below them.
+          || (outranks(cid, userId)
+            && onlyChanged(['mutedUntil', 'mutedBy'])
+            && (incoming().get('mutedUntil', null) == null || incoming().mutedUntil is timestamp))
+        );
+
+        allow delete: if signedIn() && (
+          // Leaving. The owner can't leave, and a paying member cancels in the
+          // billing portal instead (the webhook removes them when it ends).
+          (isSelf(userId) && community(cid).createdBy != me()
+            && !(resource != null && resource.data.get('subscriptionStatus', 'none') in ['active', 'trialing', 'past_due']))
+          // Staff removing (or banning) someone ranked below them. resource may be
+          // null when the app deletes a doc that's already gone.
+          || outranks(cid, userId)
+        );
+      }
+
+      match /bans/{userId} {
+        // Your own ban doc is readable: the app checks it before every join.
+        allow get: if isSelf(userId) || isStaff(cid);
+        allow list: if isStaff(cid);
+        allow create, update: if outranks(cid, userId)
+          && incoming().bannedBy == me()
+          && incoming().createdAt is timestamp;
+        allow delete: if isStaff(cid);
+      }
+
+      match /rules/{ruleId} {
+        allow read: if signedIn();
+        allow create, update: if isAdmin(cid);
+        allow delete: if isAdmin(cid) && resource.data.get('isDefault', false) == false;
+      }
+
+      match /channels/{chid} {
+        allow read: if canRead(cid);
+        allow create: if isAdmin(cid) && incoming().communityId == cid;
+        allow update: if isAdmin(cid) && unchanged('communityId', null);
+        allow delete: if isAdmin(cid) && resource.data.get('isDefault', false) == false;
+
+        function channel() { return get(/databases/$(database)/documents/communities/$(cid)/channels/$(chid)).data; }
+
+        match /messages/{mid} {
+          allow read: if canRead(cid);
+
+          allow create: if signedIn()
+            && incoming().authorId == me()
+            && incoming().communityId == cid
+            && incoming().channelId == chid
+            && incoming().content is string && incoming().content.size() <= 4000
+            && incoming().createdAt is timestamp
+            && hasAccess(cid)
+            && !isBanned(cid)
+            && !isMuted(cid)
+            && (channel().get('adminOnly', false) == false || isAdmin(cid))
+            && incoming().get('isDeleted', false) == false
+            && incoming().get('isPinned', false) == false
+            && !incoming().keys().hasAny(['deletedBy', 'deletedAt', 'pinnedBy', 'pinnedAt'])
+            && (!('callout' in incoming()) || validNewCallout(incoming().callout));
+
+          allow update: if signedIn() && hasAccess(cid) && (
+            authorEdit() || softDelete() || pinChange() || authorClosesCallout()
+          );
+
+          // Messages are soft-deleted (isDeleted) so every listener sees the change.
+          allow delete: if false;
+
+          function validNewCallout(c) {
+            return c is map
+              && c.ticker is string && c.ticker.size() > 0 && c.ticker.size() <= 30
+              && c.entryPrice is number && c.entryPrice > 0
+              && c.direction in ['long', 'short']
+              && c.get('status', 'open') == 'open'
+              && c.get('authorId', me()) == me()
+              && c.get('communityId', cid) == cid
+              && (!('stopPrice' in c) || c.stopPrice is number)
+              && (!('targetPrice' in c) || c.targetPrice is number)
+              && !c.keys().hasAny(['lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent', 'closedBy']);
+          }
+
+          function notDeleted() { return resource.data.get('isDeleted', false) == false; }
+
+          // Authors edit their own text.
+          function authorEdit() {
+            return resource.data.authorId == me()
+              && notDeleted()
+              && onlyChanged(['content', 'editedAt', 'isEdited'])
+              && incoming().content is string && incoming().content.size() <= 4000;
+          }
+
+          // Authors, and the owner / admins / moderators, soft-delete: content cleared,
+          // callout removed. Other fields may only be removed, not added or changed.
+          function softDelete() {
+            let d = request.resource.data.diff(resource.data);
+            return (resource.data.authorId == me() || isStaff(cid))
+              && notDeleted()
+              && incoming().isDeleted == true
+              && incoming().content == ''
+              && incoming().deletedBy == me()
+              && incoming().deletedAt is timestamp
+              && !('callout' in incoming())
+              && d.addedKeys().union(d.changedKeys()).hasOnly(
+                   ['isDeleted', 'content', 'deletedBy', 'deletedAt', 'isPinned'])
+              && !d.removedKeys().hasAny(['authorId', 'authorUsername', 'communityId', 'channelId', 'createdAt']);
+          }
+
+          // Owner / admins / moderators pin and unpin.
+          function pinChange() {
+            return isStaff(cid)
+              && notDeleted()
+              && onlyChanged(['isPinned', 'pinnedBy', 'pinnedAt'])
+              && incoming().isPinned is bool
+              && (incoming().isPinned == false || (incoming().pinnedBy == me() && incoming().pinnedAt is timestamp));
+          }
+
+          // The author closes their own open callout. Only these four callout fields
+          // may change (use dotted field paths); the server recomputes resultPercent.
+          function authorClosesCallout() {
+            let before = resource.data.callout;
+            let after = incoming().callout;
+            return resource.data.authorId == me()
+              && notDeleted()
+              && 'callout' in resource.data
+              && before.get('status', 'open') == 'open'
+              && onlyChanged(['callout'])
+              && after.diff(before).affectedKeys().hasOnly(['status', 'exitPrice', 'closedAt', 'resultPercent'])
+              && after.status == 'closed'
+              && after.exitPrice is number && after.exitPrice > 0
+              && after.closedAt is timestamp
+              && after.resultPercent is number;
+          }
+
+          match /reactions/{reactionId} {
+            allow read: if canRead(cid);
+            // Reaction ids are "<uid>_<emoji>".
+            allow create, update: if signedIn() && hasAccess(cid)
+              && incoming().userId == me()
+              && reactionId.matches(me() + '_.+');
+            allow delete: if signedIn() && (resource.data.userId == me() || isStaff(cid));
+          }
+        }
+
+        match /typing/{userId} {
+          allow read: if canRead(cid);
+          allow write: if isSelf(userId) && hasAccess(cid);
+        }
+      }
+
+      // Server-only.
+      match /traderStats/{userId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+      match /private/{docId} {
+        allow read: if isOwner(cid);
+        allow write: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------- notifications
+
+    // Created by Cloud Functions only. The recipient reads them and sets isRead.
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.userId == me();
+      allow update: if signedIn() && resource.data.userId == me()
+        && onlyChanged(['isRead']) && incoming().isRead is bool;
+      allow create, delete: if false;
+    }
+
+    // ---------------------------------------------------------------- server-only
+
+    match /traderStats/{userId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /stripeAccounts/{userId} {
+      allow read: if isSelf(userId);
+      allow write: if false;
+    }
+    match /stripeCustomers/{userId} { allow read, write: if false; }
+    match /subscriptions/{subscriptionId} { allow read, write: if false; }
+    match /stripeEvents/{eventId} { allow read, write: if false; }
+    match /snaptradeUsers/{userId}/{document=**} { allow read, write: if false; }
+    match /calloutLedger/{rowId} { allow read, write: if false; }
+    match /quoteCache/{symbol} { allow read, write: if false; }
+
+    // ---------------------------------------------------------------- safety
+
+    // Create-only; admins read reports in the Firebase console.
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && incoming().reportedBy == me()
+        && incoming().get('status', 'pending') == 'pending'
+        && incoming().get('details', '').size() <= 2000;
+      allow read, update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------- other app data
+
+    // Market news cache, shared by every client.
+    match /marketNews/{articleId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && incoming().keys().hasAll(['publishedUtc', 'cachedAt']);
+      allow delete: if signedIn() && resource.data.cachedAt < request.time - duration.value(6, 'd');
+    }
+
+    // Activity feed items: written by their owner.
+    match /activity/{activityId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && incoming().userId == me();
+      allow update, delete: if signedIn() && resource.data.userId == me();
+    }
+
+    match /userActivity/{activityId} {
+      allow create: if signedIn() && incoming().userId == me();
+      allow read, update, delete: if false;
+    }
+
+    // Direct messages (not used by the current UI). Conversation ids are "<uidA>_<uidB>".
+    match /messages/{messageId} {
+      allow read: if signedIn() && (
+        resource.data.senderId == me()
+        || resource.data.recipientId == me()
+        || me() in resource.data.conversationId.split('_')
+      );
+      allow create: if signedIn()
+        && incoming().senderId == me()
+        && incoming().recipientId is string
+        && !blockedBy(incoming().recipientId);
+      allow update: if signedIn() && resource.data.recipientId == me() && onlyChanged(['isRead']);
+      allow delete: if signedIn() && resource.data.senderId == me();
+    }
+    match /conversations/{conversationId} {
+      allow read: if signedIn() && me() in resource.data.participants;
+      allow create, update: if signedIn()
+        && me() in incoming().participants
+        && conversationId.split('_').hasAll(incoming().participants);
+      allow delete: if false;
+    }
+
+    // Old membership index (read by a legacy helper; nothing writes it).
+    match /communityMembers/{docId} {
+      allow read: if signedIn() && resource.data.userId == me();
+      allow write: if false;
+    }
+  }
+}

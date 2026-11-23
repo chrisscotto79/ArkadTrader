@@ -1,7 +1,9 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
 // The Portfolio tab: account value, realized P&L chart, key stats, and your open and closed trades.
 // Tap a trade to close, edit or delete it; the gold "+" logs a new one. Linked brokerages add a
-// read-only holdings section and Verified imported trades.
+// read-only holdings section and Verified imported trades (hidden while AppConfig.brokerageLinkingEnabled is off).
+// Every trade row shows its proof label. Win rate, realized P&L, the chart and best trade count only
+// price-checked and verified trades; self-reported totals are shown separately, labelled as such.
 
 import SwiftUI
 import Charts
@@ -80,8 +82,10 @@ struct PortfolioView: View {
     private var header: some View {
         ScreenHeader(title: "Portfolio") {
             HStack(spacing: DS.Spacing.s) {
-                IconButton(systemName: "building.columns", accessibilityLabel: "Connect brokerage") {
-                    showLinkedAccounts = true
+                if AppConfig.brokerageLinkingEnabled {
+                    IconButton(systemName: "building.columns", accessibilityLabel: "Connect brokerage") {
+                        showLinkedAccounts = true
+                    }
                 }
                 IconButton(systemName: "plus", accessibilityLabel: "Add trade", filled: true) {
                     showAddTrade = true
@@ -137,9 +141,11 @@ struct PortfolioView: View {
 
             HStack(spacing: DS.Spacing.s) {
                 ChangePill(text: totalPLText, isPositive: totalProfitLoss >= 0)
-                Text(startingCapital == nil ? "realized P&L" : "all time")
+                Text(accountChangeCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
         }
     }
@@ -159,6 +165,12 @@ struct PortfolioView: View {
         .buttonStyle(PillButtonStyle(kind: .neutral))
     }
 
+    /// The account value is a balance over every logged trade, so say when it includes self-reported ones
+    private var accountChangeCaption: String {
+        let base = startingCapital == nil ? "realized" : "all time"
+        return selfReported.tradeCount > 0 ? "\(base), incl. self-reported" : base
+    }
+
     private var totalPLText: String {
         if let returnPercentage {
             return "\(totalProfitLoss.asCurrencyWithSign) (\(String(format: "%+.1f%%", returnPercentage)))"
@@ -171,8 +183,13 @@ struct PortfolioView: View {
     private var chartBlock: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Realized P&L")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Realized P&L")
+                        .font(.headline)
+                    Text("Price-checked & verified trades")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if let last = pnlSeries.last {
                     Text("\(last.value.asCurrencyWithSign) \(chartRange.caption)")
@@ -198,11 +215,20 @@ struct PortfolioView: View {
             Image(systemName: "chart.xyaxis.line")
                 .font(.title2)
                 .foregroundStyle(.tertiary)
-            Text(closedTrades.isEmpty ? "Close a trade to start your chart" : "No closed trades \(chartRange.caption)")
+            Text(chartPlaceholderText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: 160)
+    }
+
+    private var chartPlaceholderText: String {
+        if countedClosedTrades.isEmpty {
+            return closedTrades.isEmpty
+                ? "Close a price-checked trade to start your chart"
+                : "No price-checked closed trades yet"
+        }
+        return "No price-checked trades closed \(chartRange.caption)"
     }
 
     private var rangeChips: some View {
@@ -219,32 +245,91 @@ struct PortfolioView: View {
     // MARK: - Stats
 
     private var statsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: DS.Spacing.m),
-                            GridItem(.flexible(), spacing: DS.Spacing.m)],
-                  spacing: DS.Spacing.m) {
-            StatTile(
-                title: "Win rate",
-                value: closedTrades.isEmpty ? "–" : String(format: "%.0f%%", winRate),
-                footnote: closedTrades.isEmpty ? "No closed trades" : "\(winningCount) of \(closedTrades.count) won"
-            )
-            StatTile(
-                title: "Realized P&L",
-                value: closedTrades.isEmpty ? "–" : realizedPL.asCurrencyWithSign,
-                valueColor: closedTrades.isEmpty ? .primary : (realizedPL >= 0 ? .marketGreen : .marketRed),
-                footnote: "\(summary.dayProfitLoss.asCurrencyWithSign) closed today"
-            )
-            StatTile(
-                title: "Open positions",
-                value: "\(openTrades.count)",
-                footnote: openTrades.isEmpty ? "Nothing open" : "\(openCostBasis.asCurrency) at cost"
-            )
-            StatTile(
-                title: "Best trade",
-                value: bestTrade?.profitLoss.asCurrencyWithSign ?? "–",
-                valueColor: bestTrade.map { $0.profitLoss >= 0 ? Color.marketGreen : Color.marketRed } ?? .primary,
-                footnote: bestTrade?.ticker ?? "No closed trades"
-            )
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: DS.Spacing.m),
+                                GridItem(.flexible(), spacing: DS.Spacing.m)],
+                      spacing: DS.Spacing.m) {
+                StatTile(
+                    title: "Win rate",
+                    value: checked.hasClosedTrades ? String(format: "%.0f%%", checked.winRate) : "–",
+                    footnote: checked.hasClosedTrades
+                        ? "\(checked.winCount) of \(checked.closedCount) won"
+                        : "No price-checked trades"
+                )
+                StatTile(
+                    title: "Realized P&L",
+                    value: checked.hasClosedTrades ? checked.realizedPL.asCurrencyWithSign : "–",
+                    valueColor: checked.hasClosedTrades ? (checked.realizedPL >= 0 ? .marketGreen : .marketRed) : .primary,
+                    footnote: "\(checked.closedTodayPL.asCurrencyWithSign) closed today"
+                )
+                StatTile(
+                    title: "Open positions",
+                    value: "\(openTrades.count)",
+                    footnote: openTrades.isEmpty ? "Nothing open" : "\(openCostBasis.asCurrency) at cost"
+                )
+                StatTile(
+                    title: "Best trade",
+                    value: bestTrade?.profitLoss.asCurrencyWithSign ?? "–",
+                    valueColor: bestTrade.map { $0.profitLoss >= 0 ? Color.marketGreen : Color.marketRed } ?? .primary,
+                    footnote: bestTrade?.ticker ?? "No price-checked trades"
+                )
+            }
+
+            Label("Win rate and P&L count only price-checked and verified trades.", systemImage: "checkmark.shield")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if selfReported.tradeCount > 0 {
+                selfReportedCard
+            }
         }
+    }
+
+    /// Totals for self-reported trades, kept apart from the stats that count
+    private var selfReportedCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack {
+                TradeProofBadge(proof: .selfReported)
+                Spacer()
+                Text("Not counted")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            HStack(alignment: .top, spacing: DS.Spacing.m) {
+                selfReportedMetric("Trades", "\(selfReported.tradeCount)")
+                selfReportedMetric(
+                    "Realized P&L",
+                    selfReported.hasClosedTrades ? selfReported.realizedPL.asCurrencyWithSign : "–"
+                )
+                selfReportedMetric(
+                    "Win rate",
+                    selfReported.hasClosedTrades ? String(format: "%.0f%%", selfReported.winRate) : "–"
+                )
+            }
+            Text("Self-reported trades weren't logged at a checked market price, so they stay out of your win rate and P&L.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle(padding: 14, radius: DS.Radius.m)
+    }
+
+    private func selfReportedMetric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .arkadNumber(15, weight: .semibold)
+                .foregroundStyle(Color.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Trade lists
@@ -313,7 +398,7 @@ struct PortfolioView: View {
 
     @ViewBuilder
     private var holdingsSection: some View {
-        if !portfolioViewModel.brokerageHoldings.isEmpty {
+        if AppConfig.brokerageLinkingEnabled && !portfolioViewModel.brokerageHoldings.isEmpty {
             BrokerageHoldingsSection(holdings: portfolioViewModel.brokerageHoldings) {
                 showLinkedAccounts = true
             }
@@ -329,22 +414,26 @@ struct PortfolioView: View {
                 actionTitle: "Add a trade",
                 action: { showAddTrade = true }
             )
-            Button("Or connect a brokerage") { showLinkedAccounts = true }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.goldText)
-                .padding(.top, -DS.Spacing.l)
-                .padding(.bottom, DS.Spacing.xl)
+            if AppConfig.brokerageLinkingEnabled {
+                Button("Or connect a brokerage") { showLinkedAccounts = true }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
+                    .padding(.top, -DS.Spacing.l)
+                    .padding(.bottom, DS.Spacing.xl)
+            }
         }
         .cardStyle(padding: 0)
     }
 
     // MARK: - Data
 
-    private var summary: PortfolioSummary { portfolioViewModel.getPortfolioSummaryForProfile() }
     private var portfolioValue: Double { portfolioViewModel.portfolio?.totalValue ?? 0 }
+    /// Change in account value over every logged trade (labelled when that includes self-reported ones)
     private var totalProfitLoss: Double { portfolioViewModel.portfolio?.totalProfitLoss ?? 0 }
-    private var winRate: Double { portfolioViewModel.portfolio?.winRate ?? 0 }
     private var startingCapital: Double? { portfolioViewModel.getUserStartingCapital() }
+    /// Price-checked and verified trades: the numbers that count
+    private var checked: TradeStats { portfolioViewModel.checkedStats }
+    private var selfReported: TradeStats { portfolioViewModel.selfReportedStats }
 
     private var returnPercentage: Double? {
         guard let startingCapital, startingCapital > 0 else { return nil }
@@ -360,17 +449,17 @@ struct PortfolioView: View {
             .sorted { ($0.exitDate ?? $0.entryDate) > ($1.exitDate ?? $1.entryDate) }
     }
 
-    private var realizedPL: Double { closedTrades.reduce(0) { $0 + $1.profitLoss } }
-    private var winningCount: Int { closedTrades.filter { $0.profitLoss > 0 }.count }
+    /// Closed price-checked and verified trades
+    private var countedClosedTrades: [Trade] { closedTrades.filter(\.countsTowardStats) }
     private var openCostBasis: Double { openTrades.reduce(0) { $0 + $1.totalInvested } }
 
     private var bestTrade: Trade? {
-        closedTrades.max { $0.profitLoss < $1.profitLoss }
+        countedClosedTrades.max { $0.profitLoss < $1.profitLoss }
     }
 
-    /// Running total of realized P&L from closed trades, within the chosen range
+    /// Running total of realized P&L from closed price-checked and verified trades, within the chosen range
     private var pnlSeries: [PnLPoint] {
-        let closes = closedTrades
+        let closes = countedClosedTrades
             .map { (date: $0.exitDate ?? $0.entryDate, amount: $0.profitLoss) }
             .sorted { $0.date < $1.date }
         let start = chartRange.startDate
@@ -495,9 +584,7 @@ struct PortfolioTradeRow: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(terms.tint)
                     }
-                    if trade.isVerified == true {
-                        VerifiedTradeBadge(compact: true)
-                    }
+                    TradeProofBadge(proof: trade.proof, compact: true)
                 }
                 Text(detailLine)
                     .font(.caption)
@@ -560,7 +647,8 @@ struct PortfolioTradeRow: View {
     }
 }
 
-/// Green "Verified" mark for trades imported from a linked brokerage
+/// Green "Verified" mark for trades imported from a linked brokerage.
+/// Trade rows now use TradeProofBadge, which covers Verified too; kept for other callers.
 struct VerifiedTradeBadge: View {
     /// Compact draws just the seal and a short label for list rows
     var compact = false

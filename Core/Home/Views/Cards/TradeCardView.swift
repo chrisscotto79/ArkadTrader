@@ -1,5 +1,5 @@
 // File: Core/Home/Views/Cards/TradeCardView.swift
-// A followed trader's public trade in the Following feed.
+// A followed trader's public trade in the Following feed, with its proof label.
 
 import SwiftUI
 
@@ -79,9 +79,13 @@ struct TradeCardView: View {
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
 
-                Text("\(trade.tradeType.displayName) · \(eventDate.feedRelativeText)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(trade.tradeType.displayName) · \(eventDate.feedRelativeText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    TradeProofBadge(proof: trade.proof, compact: true)
+                }
             }
 
             Spacer(minLength: 0)

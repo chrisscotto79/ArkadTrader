@@ -16,6 +16,31 @@ The data contract both the app and the functions follow is `docs/backend-contrac
 
 ---
 
+## 0. Right now: the free plan (no Blaze, no Stripe, no SnapTrade)
+
+Arkad currently runs entirely on Firebase's free Spark plan. The switches in `Shared/Config/AppConfig.swift` (`serverFunctionsEnabled`, `paidCommunitiesEnabled`, `brokerageLinkingEnabled`, `mediaUploadsEnabled`) are all `false`, so the app does the server's work itself (see section 0 of `docs/backend-contracts.md`). Sections 2 onward of this guide are for later.
+
+The only setup step is publishing the free-mode security rules and indexes. Without it, the new features (inbox, track records, photos, price checks, report counting) get "permission denied" or "needs an index".
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase deploy --only firestore,hosting
+```
+
+That publishes `firestore.rules`, `firestore.indexes.json` and the legal pages. All three are free. Don't deploy `functions` or `storage` on the free plan; both need Blaze.
+
+No terminal? In the Firebase console, open Firestore Database → Rules, paste the contents of `firestore.rules`, and click Publish. Indexes can be created from the link in the app's error message the first time each query runs.
+
+What's different in free mode:
+- Checks such as price-checked trades, the 2% callout check and track-record stats run in the app, and the rules double-check what they can. That stops casual faking, but a determined person with a modified app could still write their own stats. The server version (functions plus `firestore.server.rules`) closes that gap.
+- Price alerts only fire while Arkad is open. There's no remote push.
+- Photos are small JPEGs stored in Firestore (`images/`), not Cloud Storage. Photos attached to posts and chat are off.
+
+When you move to Blaze later: deploy the functions (section 8), copy `firestore.server.rules` over `firestore.rules`, and set the switches in `AppConfig.swift` to `true`.
+
+---
+
 ## 1. Tools and login
 
 1. Install Node.js 22 (the Cloud Functions runtime) from https://nodejs.org or with a version manager such as `nvm install 22`.

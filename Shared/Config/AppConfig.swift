@@ -20,6 +20,27 @@ enum AppConfig {
         secrets["FinnhubAPIKey"] as? String ?? ""
     }
 
+    // MARK: - Free mode
+    //
+    // Arkad currently runs on Firebase's free (Spark) plan with no Cloud Functions,
+    // Stripe or SnapTrade. These switches turn the server-backed features back on
+    // once the backend in functions/ is deployed (see docs/backend-setup.md).
+
+    /// Paid communities, payouts, subscriptions and the revenue dashboard.
+    static let paidCommunitiesEnabled = false
+
+    /// Read-only brokerage linking through SnapTrade.
+    static let brokerageLinkingEnabled = false
+
+    /// Cloud Functions are deployed. When false, the app does the work itself:
+    /// it computes track records, creates inbox notifications, checks price alerts
+    /// while open and cleans up on account deletion. There is no remote push.
+    static let serverFunctionsEnabled = false
+
+    /// Photos attached to posts and chat messages. They need Cloud Storage (Blaze plan).
+    /// Profile and community photos work without it (stored in Firestore).
+    static let mediaUploadsEnabled = false
+
     /// Arkad's cut of each paid community subscription, in percent. Must match
     /// `PLATFORM_FEE_PERCENT` in functions/src/config.ts.
     static let platformFeePercent = 10

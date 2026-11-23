@@ -1,16 +1,31 @@
 // File: Core/Communities/Views/Create/CreateCommunityView.swift
-// Five-step community creation flow: basics, category, privacy, free or paid, review.
+// Community creation flow: basics (with optional photos), category, privacy, free or paid, review.
+// Photos are uploaded through ImageStore after the community doc exists. The "Free or paid?"
+// step only appears when AppConfig.paidCommunitiesEnabled is on; otherwise there are four steps.
 // A paid community is saved as free first, then priced with the setCommunityPrice function.
 
 import SwiftUI
+import PhotosUI
 
 struct CreateCommunityView: View {
     @StateObject private var viewModel = CommunityCreationViewModel()
     @Environment(\.dismiss) private var dismiss
     @State private var currentStep = 1
     @State private var showPayouts = false
+    @State private var avatarItem: PhotosPickerItem?
+    @State private var bannerItem: PhotosPickerItem?
 
-    private var totalSteps: Int { 5 }
+    /// The steps in order. Pricing is left out in free mode.
+    private var steps: [CreateStep] {
+        AppConfig.paidCommunitiesEnabled
+            ? [.basics, .category, .privacy, .pricing, .review]
+            : [.basics, .category, .privacy, .review]
+    }
+
+    private var totalSteps: Int { steps.count }
+
+    /// The step on screen (`currentStep` is 1-based)
+    private var step: CreateStep { steps[min(max(currentStep, 1), totalSteps) - 1] }
 
     var body: some View {
         NavigationStack {
@@ -83,13 +98,12 @@ struct CreateCommunityView: View {
 
     @ViewBuilder
     private var stepContent: some View {
-        switch currentStep {
-        case 1: basicInfoStep
-        case 2: categoryStep
-        case 3: settingsStep
-        case 4: pricingStep
-        case 5: reviewStep
-        default: EmptyView()
+        switch step {
+        case .basics: basicInfoStep
+        case .category: categoryStep
+        case .privacy: settingsStep
+        case .pricing: pricingStep
+        case .review: reviewStep
         }
     }
 
@@ -139,12 +153,134 @@ struct CreateCommunityView: View {
                             countColor: viewModel.characterCountColor)
             }
 
+            photosSection
+
             tipsCard([
                 "Say what you trade and on what timeframe",
                 "Mention the experience level you're aiming for",
                 "Keep it welcoming and professional"
             ])
         }
+    }
+
+    // MARK: Photos (optional, uploaded after the community is created)
+
+    private var photosSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            fieldLabel("Photos (optional)")
+
+            HStack(spacing: DS.Spacing.m) {
+                PhotosPicker(selection: $avatarItem, matching: .images, photoLibrary: .shared()) {
+                    avatarPickerPreview
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel(viewModel.avatarImage == nil ? "Add a community avatar" : "Change the community avatar")
+
+                PhotosPicker(selection: $bannerItem, matching: .images, photoLibrary: .shared()) {
+                    bannerPickerPreview
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel(viewModel.bannerImage == nil ? "Add a community banner" : "Change the community banner")
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                if let photoError = viewModel.photoError {
+                    Text(photoError)
+                        .font(.caption)
+                        .foregroundStyle(Color.marketRed)
+                } else {
+                    Text("A square avatar and a wide banner (3:1). You can change them later in settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: DS.Spacing.s)
+                if viewModel.avatarImage != nil || viewModel.bannerImage != nil {
+                    Button("Remove") {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            viewModel.avatarImage = nil
+                            viewModel.bannerImage = nil
+                            viewModel.photoError = nil
+                            avatarItem = nil
+                            bannerItem = nil
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.marketRed)
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(.horizontal, DS.Spacing.xs)
+        }
+        .onChange(of: avatarItem) { _, item in
+            guard let item else { return }
+            Task {
+                let data = try? await item.loadTransferable(type: Data.self)
+                withAnimation(.snappy(duration: 0.2)) { viewModel.setAvatar(from: data) }
+            }
+        }
+        .onChange(of: bannerItem) { _, item in
+            guard let item else { return }
+            Task {
+                let data = try? await item.loadTransferable(type: Data.self)
+                withAnimation(.snappy(duration: 0.2)) { viewModel.setBanner(from: data) }
+            }
+        }
+    }
+
+    private var avatarPickerPreview: some View {
+        let shape = RoundedRectangle(cornerRadius: 72 * 0.28, style: .continuous)
+        return ZStack(alignment: .bottomTrailing) {
+            if let avatarImage = viewModel.avatarImage {
+                Image(uiImage: avatarImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 72, height: 72)
+                    .clipShape(shape)
+                    .overlay(shape.strokeBorder(Color.hairline, lineWidth: 1))
+            } else {
+                shape
+                    .fill(Color.surfaceRaised)
+                    .frame(width: 72, height: 72)
+                    .overlay(shape.strokeBorder(Color.hairline, lineWidth: 1))
+                    .overlay(
+                        Image(systemName: "person.crop.square")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    )
+            }
+
+            Image(systemName: "camera.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.onGold)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color.arkadGold))
+                .overlay(Circle().strokeBorder(Color.appBackground, lineWidth: 2))
+                .offset(x: 6, y: 6)
+        }
+        .padding(.trailing, 6)
+        .padding(.bottom, 6)
+    }
+
+    private var bannerPickerPreview: some View {
+        let shape = RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+        return ZStack {
+            if let bannerImage = viewModel.bannerImage {
+                Image(uiImage: bannerImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.surfaceRaised
+                Label("Add a banner", systemImage: "photo.badge.plus")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 72)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(Color.hairline, lineWidth: 1))
+        .contentShape(shape)
+        .padding(.bottom, 6)
     }
 
     // MARK: Step 2 — Category
@@ -289,7 +425,7 @@ struct CreateCommunityView: View {
         }
     }
 
-    // MARK: Step 4 — Free or paid
+    // MARK: Step 4 — Free or paid (paid communities only)
 
     private var pricingStep: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.xl) {
@@ -435,7 +571,7 @@ struct CreateCommunityView: View {
         }
     }
 
-    // MARK: Step 5 — Review
+    // MARK: Last step — Review
 
     private var reviewStep: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.xl) {
@@ -454,8 +590,10 @@ struct CreateCommunityView: View {
                     summaryRow("Category", viewModel.type.displayName)
                     summaryDivider
                     summaryRow("Privacy", viewModel.isPrivate ? "Private" : "Public")
-                    summaryDivider
-                    summaryRow("Membership", membershipSummary)
+                    if AppConfig.paidCommunitiesEnabled {
+                        summaryDivider
+                        summaryRow("Membership", membershipSummary)
+                    }
                 }
                 .cardStyle(padding: 0)
             }
@@ -470,8 +608,29 @@ struct CreateCommunityView: View {
 
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            if let bannerImage = viewModel.bannerImage {
+                Image(uiImage: bannerImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 96)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+            }
+
             HStack(spacing: DS.Spacing.m) {
-                CommunityAvatar(name: viewModel.name, size: 56)
+                if let avatarImage = viewModel.avatarImage {
+                    Image(uiImage: avatarImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 56 * 0.28, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 56 * 0.28, style: .continuous)
+                                .strokeBorder(Color.hairline, lineWidth: 1)
+                        )
+                } else {
+                    CommunityAvatar(name: viewModel.name, size: 56)
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         Text(viewModel.name.isEmpty ? "Your community" : viewModel.name)
@@ -648,19 +807,22 @@ struct CreateCommunityView: View {
     // MARK: - Computed Properties
 
     private var canProceed: Bool {
-        switch currentStep {
-        case 1:
+        switch step {
+        case .basics:
             return viewModel.nameValidation.isValid && viewModel.descriptionValidation.isValid
-        case 2, 3:
+        case .category, .privacy:
             return true
-        case 4:
+        case .pricing:
             return viewModel.isPricingValid
-        case 5:
+        case .review:
             return viewModel.isFormValid && viewModel.isPricingValid && !viewModel.isCreating
-        default:
-            return false
         }
     }
+}
+
+/// One screen of the create flow
+private enum CreateStep {
+    case basics, category, privacy, pricing, review
 }
 
 // MARK: - Text Field Style

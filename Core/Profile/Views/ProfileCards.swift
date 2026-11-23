@@ -16,7 +16,12 @@ struct ProfilePostCardContent: View {
 
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
                 if post.postType != .text {
-                    Tag(text: post.postType.displayName, systemImage: postTypeIcon)
+                    HStack(spacing: 6) {
+                        Tag(text: post.postType.displayName, systemImage: postTypeIcon)
+                        if post.postType == .tradeResult {
+                            TradeProofBadge(proof: post.tradeProof, compact: true)
+                        }
+                    }
                 }
 
                 Text(previewText)
@@ -196,8 +201,11 @@ struct ProfilePostDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if let trade = post.tradeSummary {
-                        TradeSummaryCard(trade: trade)
+                    if let snapshot = post.tradeSnapshot {
+                        TradeSummaryCard(snapshot: snapshot)
+                    } else if let trade = post.tradeSummary {
+                        // Older trade posts with typed-in numbers
+                        TradeSummaryCard(trade: trade, proof: .selfReported)
                     }
 
                     if !post.imageUrls.isEmpty {
@@ -329,9 +337,11 @@ struct ProfileUserTradeCard: View {
                 HStack(spacing: 6) {
                     Text(trade.ticker)
                         .font(.headline)
+                        .lineLimit(1)
                     if trade.isOpen {
                         Tag(text: "Open")
                     }
+                    TradeProofBadge(proof: trade.proof, compact: true)
                 }
 
                 Text("\(trade.quantity.quantityString) \(unitLabel) @ \(trade.entryPrice.asTradingPrice)")
@@ -399,8 +409,12 @@ struct TopPositionCard: View {
                 )
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(trade.ticker)
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(trade.ticker)
+                        .font(.headline)
+                        .lineLimit(1)
+                    TradeProofBadge(proof: trade.proof, compact: true)
+                }
                 Text("\(trade.quantity.quantityString) \(trade.tradeType == .option ? "contracts" : "shares") · \(trade.daysHeld)d held")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -464,13 +478,12 @@ struct ProfileUserGroupCard: View {
     @ViewBuilder
     private var avatar: some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        if let imageUrl = group.imageUrl, !imageUrl.isEmpty, let url = URL(string: imageUrl) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().aspectRatio(contentMode: .fill)
-                } else {
-                    initialsTile
-                }
+        if let imageUrl = group.imageUrl, !imageUrl.isEmpty {
+            // https:// or arkad-image:// (images stored in Firestore)
+            ArkadAsyncImage(urlString: imageUrl) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                initialsTile
             }
             .frame(width: 44, height: 44)
             .clipShape(shape)

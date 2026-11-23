@@ -1,6 +1,9 @@
 // File: Core/Communities/Views/Components/CommunityPreviewSheet.swift
-// Quick look at a community from Discover: who it's for, how big it is, the owner's track record,
-// and a Join button (free) or a Subscribe button (paid, through Stripe Checkout).
+// The community's landing page before joining (Whop-style, docs/backend-contracts.md section 11):
+// banner, avatar and description, the leader's checked track record, what's inside, recent
+// callout results, and a big "Join free" button (or Subscribe for paid communities, through
+// Stripe Checkout, when AppConfig.paidCommunitiesEnabled is on). Members see the same content
+// in the community's About tab (CommunityAboutView).
 
 import SwiftUI
 
@@ -24,21 +27,18 @@ struct CommunityPreviewSheet: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.Spacing.l) {
-                hero
-                statsRow
-                aboutCard
+            VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                CommunityLandingHeader(community: community, isMember: isUserMember)
                 if isPaid {
                     pricingCard
                 }
-                ownerRecord
+                CommunityAboutView(community: community)
                 if isPaid && !rules.isEmpty {
                     rulesCard
                 }
-                featuresCard
             }
             .padding(.horizontal, DS.pageMargin)
-            .padding(.top, DS.Spacing.xl)
+            .padding(.top, DS.Spacing.l)
             .padding(.bottom, DS.Spacing.l)
         }
         .screenBackground()
@@ -50,7 +50,8 @@ struct CommunityPreviewSheet: View {
                 onClose()
                 dismiss()
             }
-            .padding(DS.Spacing.l)
+            .padding(.top, DS.Spacing.l + DS.Spacing.s)
+            .padding(.trailing, DS.pageMargin + DS.Spacing.s)
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -102,115 +103,14 @@ struct CommunityPreviewSheet: View {
         }
     }
 
-    // MARK: - Hero
-
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            CommunityAvatar(community: community, size: 72)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(community.name)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Color.primary)
-                Text(CommunityFormat.summary(community))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: DS.Spacing.s) {
-                CommunityPriceTag(community: community)
-                Tag(text: community.type.displayName, systemImage: community.typeIcon, tint: .secondary)
-                if community.isPrivate {
-                    Tag(text: "Private", systemImage: "lock.fill", tint: .secondary)
-                }
-                if isUserMember {
-                    JoinedTag()
-                }
-            }
-        }
-        .padding(.trailing, 44) // room for the close button
-    }
-
-    // MARK: - Stats
-
-    private var statsRow: some View {
-        HStack(spacing: DS.Spacing.s) {
-            StatTile(title: "Members", value: community.memberCount.formatted())
-            StatTile(title: "Created", value: community.createdAt.formatted(.dateTime.month(.abbreviated).year()))
-            StatTile(title: "Activity", value: activityValue)
-        }
-    }
-
-    /// "2h ago" style activity, or "Quiet" when nothing's been posted recently
-    private var activityValue: String {
-        guard community.lastActivityDate != nil else { return "Quiet" }
-        let text = community.lastActivityText
-        if text == "Active now" { return "Now" }
-        return text.replacingOccurrences(of: "Active ", with: "")
-    }
-
-    // MARK: - About
-
-    private var aboutCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("About")
-                .font(.headline)
-            Text(community.description.isEmpty ? "No description yet." : community.description)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle(padding: DS.Spacing.l)
-    }
-
     // MARK: - Paid
 
     private var pricingCard: some View {
         CommunityPriceSummary(community: community)
     }
 
-    private var ownerRecord: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("The owner")
-                .font(.headline)
-            TrackRecordCard(userId: community.createdBy)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private var rulesCard: some View {
         CommunityRulesList(rules: rules)
-    }
-
-    private var featuresCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            Text("What's inside")
-                .font(.headline)
-            featureRow(icon: "bubble.left.and.bubble.right.fill", text: "Channels to talk trades with other members")
-            featureRow(icon: "megaphone.fill", text: "Trade callouts you can track in your portfolio")
-            featureRow(icon: "trophy.fill", text: "A leaderboard ranked by closed trades")
-            if isPaid {
-                featureRow(icon: "lock.fill", text: "Channels open once you subscribe")
-            } else if community.isPrivate {
-                featureRow(icon: "lock.fill", text: "Private: hidden from Discover and search")
-            } else {
-                featureRow(icon: "globe", text: "Public: anyone can find and join")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle(padding: DS.Spacing.l)
-    }
-
-    private func featureRow(icon: String, text: String) -> some View {
-        HStack(spacing: DS.Spacing.m) {
-            IconWell(systemName: icon, size: 32)
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(Color.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
     }
 
     // MARK: - Action
@@ -240,11 +140,12 @@ struct CommunityPreviewSheet: View {
                         if isJoining {
                             ProgressView().tint(Color.onGold)
                         }
-                        Text(isJoining ? "Joining…" : "Join community")
+                        Text(isJoining ? "Joining…" : "Join free")
                     }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isJoining)
+                .accessibilityHint("Joins \(community.name) for free")
             }
         }
         .padding(.horizontal, DS.pageMargin)

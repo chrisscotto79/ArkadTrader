@@ -1,7 +1,8 @@
 // File: Core/Communities/Views/Detail/ChatMessageRow.swift
 // A single chat message: grouped bubble (yours in gold on the right, others' on the left),
-// author line, media, callout card and reactions. Long-press for reply / react / copy / edit /
-// pin / report / delete. Deleted messages show as a muted "Message deleted" row.
+// author line, reply quote, media, the trade kinds (callout card, callout update row, result
+// card, trade share card, game plan card) and reactions. Long-press for reply / react / copy /
+// edit / pin / report / delete. Deleted messages show as a muted "Message deleted" row.
 
 import SwiftUI
 import UIKit
@@ -34,6 +35,14 @@ struct EnhancedMessageRowWithReactions: View {
     var onTogglePin: () -> Void = {}
     /// Report this message (nil for your own messages)
     var onReport: (() -> Void)? = nil
+    /// For a callout: its `calloutUpdate` messages in the loaded channel, oldest first
+    var calloutUpdates: [CommunityMessage] = []
+    /// For an update or result: the callout it refers to, when loaded
+    var parentCallout: TradeCallout? = nil
+    /// Whether a message id is in the loaded messages (so tapping a quote or "↳" can jump to it)
+    var isMessageLoaded: (String) -> Bool = { _ in false }
+    /// Scrolls the chat to a loaded message
+    var onJumpToMessage: (String) -> Void = { _ in }
 
     @Environment(\.openURL) private var openURL
 
@@ -211,6 +220,27 @@ struct EnhancedMessageRowWithReactions: View {
 
     @ViewBuilder
     private var messageContent: some View {
+        if let replyTo = message.replyTo {
+            VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 3) {
+                let canJump = isMessageLoaded(replyTo.messageId)
+                ReplyQuoteHeader(reply: replyTo, canJump: canJump) {
+                    onJumpToMessage(replyTo.messageId)
+                }
+                kindContent
+            }
+        } else {
+            kindContent
+        }
+    }
+
+    /// Jumps to the callout an update or result refers to, when it's loaded
+    private func parentJump(_ parentId: String) -> (() -> Void)? {
+        guard isMessageLoaded(parentId) else { return nil }
+        return { onJumpToMessage(parentId) }
+    }
+
+    @ViewBuilder
+    private var kindContent: some View {
         if let callout = message.callout {
             CalloutCardView(
                 callout: callout,
@@ -219,9 +249,24 @@ struct EnhancedMessageRowWithReactions: View {
                 channelId: message.channelId,
                 communityId: message.communityId,
                 authorId: message.authorId,
+                updates: calloutUpdates,
+                postedAt: message.createdAt,
                 onTrack: onTrackCallout
             )
             .frame(maxWidth: 360)
+        } else if let update = message.calloutUpdate {
+            CalloutUpdateRow(
+                update: update,
+                parent: parentCallout,
+                summary: message.content,
+                onOpenParent: parentJump(update.parentMessageId)
+            )
+        } else if let result = message.calloutResult {
+            CalloutResultCard(result: result, onOpenParent: parentJump(result.parentMessageId))
+        } else if let share = message.tradeShare {
+            TradeShareCard(share: share)
+        } else if let plan = message.gamePlan {
+            GamePlanCard(plan: plan)
         } else if let media = getMediaContent(from: message) {
             mediaMessageView(media)
         } else {
@@ -458,7 +503,7 @@ struct EnhancedMessageRowWithReactions: View {
                 Label("Open", systemImage: "arrow.up.right.square")
             }
         }
-        if canEdit && message.callout == nil && getMediaContent(from: message) == nil {
+        if canEdit && !message.hasStructuredKind && getMediaContent(from: message) == nil {
             Button(action: onEdit) {
                 Label("Edit", systemImage: "pencil")
             }

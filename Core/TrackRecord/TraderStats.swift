@@ -1,7 +1,7 @@
 // File: Core/TrackRecord/TraderStats.swift
-// A trader's callout record, as written by the server to `traderStats/{uid}`
-// (all communities) or `communities/{cid}/traderStats/{uid}` (one community).
-// The app only reads these docs.
+// A trader's callout record in `traderStats/{uid}` (all communities) or
+// `communities/{cid}/traderStats/{uid}` (one community). Written by the server, or in free
+// mode by the author's own app (TrackRecordWriter); everyone else only reads them.
 
 import Foundation
 import SwiftUI

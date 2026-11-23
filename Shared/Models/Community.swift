@@ -190,9 +190,10 @@ struct Community: Identifiable, Codable, Hashable {
     
     // MARK: - Paid membership
 
-    /// True when joining needs a subscription (paid with a price set)
+    /// True when joining needs a subscription (paid with a price set).
+    /// Always false in free mode (`AppConfig.paidCommunitiesEnabled == false`): every community is free.
     var requiresSubscription: Bool {
-        isPaid && (priceMonthly ?? 0) > 0
+        AppConfig.paidCommunitiesEnabled && isPaid && (priceMonthly ?? 0) > 0
     }
 
     /// "$9.99/mo" for paid communities, nil for free ones

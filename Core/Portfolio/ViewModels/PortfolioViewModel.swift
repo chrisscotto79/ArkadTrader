@@ -1,6 +1,9 @@
 // File: Core/Portfolio/ViewModels/PortfolioViewModel.swift
 // Portfolio state: the user's trades, account value and stats, plus live stock quotes.
 // Only stock positions are priced live; options, crypto and forex are valued at entry price until closed.
+// Proof labels: win rate, P&L and performance (here, on profiles and in the user's public stats)
+// count only price-checked and verified trades (`checkedStats`). Self-reported trades still appear in
+// the portfolio and in the account value, and their totals are kept apart in `selfReportedStats`.
 
 import Foundation
 import SwiftUI
@@ -28,6 +31,11 @@ class PortfolioViewModel: ObservableObject {
 
     /// Holdings synced from linked brokerages (read-only, written by the server)
     @Published var brokerageHoldings: [BrokerageHolding] = []
+
+    /// Win rate and P&L from price-checked and verified trades: the numbers that count
+    @Published private(set) var checkedStats = TradeStats(trades: [])
+    /// The same totals for self-reported trades, shown separately and labelled "Self-reported"
+    @Published private(set) var selfReportedStats = TradeStats(trades: [])
     
     // Private Properties
     private var updateTimer: Timer?
@@ -219,9 +227,9 @@ class PortfolioViewModel: ObservableObject {
         // Total P&L = Portfolio Value - Starting Capital
         let totalPL = totalAccountValue - startingCapital
         
-        // Calculate win rate
-        let winningTrades = closedTrades.filter { $0.profitLoss > 0 }.count
-        let winRate = closedTrades.count > 0 ? Double(winningTrades) / Double(closedTrades.count) * 100 : 0
+        // Win rate counts only price-checked and verified trades
+        updateProofStats()
+        let winRate = checkedStats.winRate
         
         let dayPL = calculateDayProfitLoss()
         
@@ -241,17 +249,23 @@ class PortfolioViewModel: ObservableObject {
     private func createTemporaryPortfolio(userId: String, openTrades: [Trade], closedTrades: [Trade]) {
         let totalPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
         let currentValue = openTrades.reduce(0) { $0 + $1.currentValue }
+        updateProofStats()
         
         var newPortfolio = Portfolio(userId: userId)
         newPortfolio.totalValue = currentValue
         newPortfolio.totalProfitLoss = totalPL
         newPortfolio.totalTrades = trades.count
         newPortfolio.openPositions = openTrades.count
-        newPortfolio.winRate = closedTrades.count > 0 ?
-            Double(closedTrades.filter { $0.profitLoss > 0 }.count) / Double(closedTrades.count) * 100 : 0
+        newPortfolio.winRate = checkedStats.winRate
         newPortfolio.lastUpdated = Date()
         
         self.portfolio = newPortfolio
+    }
+
+    /// Splits the trades into the ones that count (price-checked, verified) and self-reported ones.
+    private func updateProofStats() {
+        checkedStats = TradeStats(counted: trades)
+        selfReportedStats = TradeStats(selfReported: trades)
     }
     
     private func calculateDayProfitLoss() -> Double {
@@ -311,12 +325,14 @@ class PortfolioViewModel: ObservableObject {
     }
     
     // MARK: - Analytics Generation
+    /// Performance analytics: price-checked and verified trades only.
     private func generatePortfolioAnalytics() {
-        let closedTrades = trades.filter { !$0.isOpen }
-        let openTrades = trades.filter { $0.isOpen }
+        let counted = countedTrades
+        let closedTrades = counted.filter { !$0.isOpen }
+        let openTrades = counted.filter { $0.isOpen }
         
         let analytics = PortfolioAnalytics(
-            totalReturn: portfolio?.totalProfitLoss ?? 0,
+            totalReturn: checkedStats.totalPL,
             totalReturnPercentage: calculateTotalReturnPercentage(),
             bestTrade: closedTrades.max(by: { $0.profitLoss < $1.profitLoss }),
             worstTrade: closedTrades.min(by: { $0.profitLoss < $1.profitLoss }),
@@ -325,7 +341,7 @@ class PortfolioViewModel: ObservableObject {
             largestPosition: openTrades.max(by: { $0.currentValue < $1.currentValue }),
             profitableTrades: closedTrades.filter { $0.profitLoss > 0 }.count,
             losingTrades: closedTrades.filter { $0.profitLoss < 0 }.count,
-            winRate: portfolio?.winRate ?? 0,
+            winRate: checkedStats.winRate,
             averageWin: calculateAverageWin(),
             averageLoss: calculateAverageLoss(),
             profitFactor: calculateProfitFactor(),
@@ -346,14 +362,17 @@ class PortfolioViewModel: ObservableObject {
     }
     
     // MARK: - Calculation Helpers
+
+    /// Price-checked and verified trades: the only ones performance numbers are built from
+    var countedTrades: [Trade] { trades.countedForStats }
+
     private func calculateTotalReturnPercentage() -> Double {
         guard let startingCapital = getUserStartingCapital(), startingCapital > 0 else { return 0 }
-        let totalPL = portfolio?.totalProfitLoss ?? 0
-        return (totalPL / startingCapital) * 100
+        return (checkedStats.totalPL / startingCapital) * 100
     }
     
     private func calculateAverageHoldTime() -> Double {
-        let closedTrades = trades.filter { !$0.isOpen }
+        let closedTrades = countedTrades.filter { !$0.isOpen }
         guard !closedTrades.isEmpty else { return 0 }
         
         let totalHoldTime = closedTrades.reduce(0.0) { total, trade in
@@ -366,34 +385,35 @@ class PortfolioViewModel: ObservableObject {
     }
     
     private func calculateAverageTradeSize() -> Double {
-        guard !trades.isEmpty else { return 0 }
-        let totalSize = trades.reduce(0.0) { $0 + ($1.entryPrice * $1.quantity) }
-        return totalSize / Double(trades.count)
+        let counted = countedTrades
+        guard !counted.isEmpty else { return 0 }
+        let totalSize = counted.reduce(0.0) { $0 + ($1.entryPrice * $1.quantity) }
+        return totalSize / Double(counted.count)
     }
     
     private func calculateAverageWin() -> Double {
-        let winningTrades = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
+        let winningTrades = countedTrades.filter { !$0.isOpen && $0.profitLoss > 0 }
         guard !winningTrades.isEmpty else { return 0 }
         return winningTrades.reduce(0.0) { $0 + $1.profitLoss } / Double(winningTrades.count)
     }
     
     private func calculateAverageLoss() -> Double {
-        let losingTrades = trades.filter { !$0.isOpen && $0.profitLoss < 0 }
+        let losingTrades = countedTrades.filter { !$0.isOpen && $0.profitLoss < 0 }
         guard !losingTrades.isEmpty else { return 0 }
         return abs(losingTrades.reduce(0.0) { $0 + $1.profitLoss } / Double(losingTrades.count))
     }
     
     private func calculateProfitFactor() -> Double {
-        let grossProfit = trades.filter { !$0.isOpen && $0.profitLoss > 0 }
+        let grossProfit = countedTrades.filter { !$0.isOpen && $0.profitLoss > 0 }
             .reduce(0.0) { $0 + $1.profitLoss }
-        let grossLoss = abs(trades.filter { !$0.isOpen && $0.profitLoss < 0 }
+        let grossLoss = abs(countedTrades.filter { !$0.isOpen && $0.profitLoss < 0 }
             .reduce(0.0) { $0 + $1.profitLoss })
         
         return grossLoss > 0 ? grossProfit / grossLoss : 0
     }
     
     private func calculateSharpeRatio() -> Double {
-        let closedTrades = trades.filter { !$0.isOpen }
+        let closedTrades = countedTrades.filter { !$0.isOpen }
         guard closedTrades.count > 1 else { return 0 }
         
         let returns = closedTrades.map { $0.profitLossPercentage / 100 }
@@ -408,7 +428,7 @@ class PortfolioViewModel: ObservableObject {
     }
     
     private func calculateMaxDrawdown() -> Double {
-        let closedTrades = trades.filter { !$0.isOpen }.sorted {
+        let closedTrades = countedTrades.filter { !$0.isOpen }.sorted {
             $0.exitDate ?? Date() < $1.exitDate ?? Date()
         }
         
@@ -430,77 +450,72 @@ class PortfolioViewModel: ObservableObject {
     }
     
     // MARK: - Trade Management
-    func closeTrade(_ trade: Trade, exitPrice: Double) {
-        guard let index = trades.firstIndex(where: { $0.id == trade.id }) else { return }
-        
-        trades[index].exitPrice = exitPrice
-        trades[index].exitDate = Date()
-        trades[index].isOpen = false
-        trades[index].currentPrice = nil
-        
-        Task {
-            do {
-                try await authService.updateTrade(trades[index])
-                await MainActor.run {
-                    calculatePortfolioMetrics()
-                    generatePortfolioAnalytics()
-                }
-            } catch {
-                await MainActor.run {
-                    showErrorMessage("Failed to close trade: \(error.localizedDescription)")
-                }
-            }
+
+    /// Closes an open trade. The exit gets its own proof: `exitOutcome` from TradePriceChecker
+    /// (price-checked only when dated today and inside today's range). A price-checked trade stays
+    /// price-checked only if its exit is too; otherwise it becomes self-reported.
+    /// The exit is final: the rules don't let a closed trade's exit change, or the trade reopen.
+    @discardableResult
+    func closeTrade(_ trade: Trade, exitPrice: Double, exitDate: Date,
+                    exitOutcome: PriceCheckOutcome, notes: String?) async throws -> Trade {
+        guard trade.isOpen else { throw PortfolioError.tradeAlreadyClosed }
+
+        var closed = trade
+        closed.close(at: exitPrice, on: exitDate)
+        closed.exitProof = exitOutcome.proof == .priceChecked ? .priceChecked : .selfReported
+        if closed.proof == .priceChecked && closed.exitProof != .priceChecked {
+            closed.proof = .selfReported
         }
+        closed.notes = notes
+        closed.exitLoggedAt = nil  // set by the server
+
+        do {
+            try await FirebaseServices.shared.closeTrade(closed)
+        } catch {
+            showErrorMessage("Failed to close trade: \(error.localizedDescription)")
+            throw error
+        }
+
+        if let index = trades.firstIndex(where: { $0.id == closed.id }) {
+            trades[index] = closed
+        }
+        calculatePortfolioMetrics()
+        generatePortfolioAnalytics()
+        updateUserProfileStats()
+        return closed
     }
-    
+
+    /// Saves the parts of a trade that may change after logging: notes, strategy, tags, stop,
+    /// target, sector and visibility. Ticker, type, entry price, quantity and dates are locked.
     func updateTrade(_ updatedTrade: Trade) async throws {
         do {
             try await authService.updateTrade(updatedTrade)
             
             if let index = trades.firstIndex(where: { $0.id == updatedTrade.id }) {
                 trades[index] = updatedTrade
-                
-                await MainActor.run {
-                    calculatePortfolioMetrics()
-                    generatePortfolioAnalytics()
-                }
-            }
-        } catch {
-            await MainActor.run {
-                showErrorMessage("Failed to update trade: \(error.localizedDescription)")
-            }
-            throw error
-        }
-    }
-    
-    func reopenTrade(_ trade: Trade) async throws {
-        guard !trade.isOpen else {
-            throw PortfolioError.tradeAlreadyOpen
-        }
-        
-        var reopenedTrade = trade
-        reopenedTrade.isOpen = true
-        reopenedTrade.exitPrice = nil
-        reopenedTrade.exitDate = nil
-        reopenedTrade.currentPrice = trade.entryPrice
-        
-        try await updateTrade(reopenedTrade)
-    }
-    
-    func deleteTrade(_ trade: Trade) async throws {
-        do {
-            try await authService.deleteTrade(tradeId: trade.id)
-            
-            trades.removeAll { $0.id == trade.id }
-            
-            await MainActor.run {
                 calculatePortfolioMetrics()
                 generatePortfolioAnalytics()
             }
         } catch {
-            await MainActor.run {
-                showErrorMessage("Failed to delete trade: \(error.localizedDescription)")
-            }
+            showErrorMessage("Failed to update trade: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// Price-checked trades can be deleted only within 15 minutes of logging (`Trade.canDelete`).
+    func deleteTrade(_ trade: Trade) async throws {
+        guard trade.canDelete() else {
+            throw PortfolioError.deleteWindowPassed
+        }
+        do {
+            try await authService.deleteTrade(tradeId: trade.id)
+            
+            trades.removeAll { $0.id == trade.id }
+            calculatePortfolioMetrics()
+            generatePortfolioAnalytics()
+            updateUserProfileStats()
+        } catch {
+            showErrorMessage("Failed to delete trade: \(error.localizedDescription)")
             throw error
         }
     }
@@ -512,15 +527,18 @@ class PortfolioViewModel: ObservableObject {
         }
     }
     
+    /// The P&L and win rate on the user's profile document (shown to others, used by search and
+    /// leaderboards): price-checked and verified trades only.
     private func updateUserProfileStats() {
         guard let userId = authService.currentUser?.id else { return }
+        let stats = TradeStats(counted: trades)
         
         Task {
             do {
                 try await authService.updateUserStats(
                     userId: userId,
-                    totalProfitLoss: portfolio?.totalProfitLoss ?? 0,
-                    winRate: portfolio?.winRate ?? 0
+                    totalProfitLoss: stats.totalPL,
+                    winRate: stats.winRate
                 )
             } catch {
                 print("Failed to update user stats: \(error)")
@@ -576,8 +594,9 @@ class PortfolioViewModel: ObservableObject {
     }
 
     /// Reads users/{uid}/brokerageHoldings. Holdings are shown separately and don't change account value.
+    /// Does nothing while brokerage linking is off (free mode).
     func loadBrokerageHoldings() async {
-        guard let userId = authService.currentUser?.id else {
+        guard AppConfig.brokerageLinkingEnabled, let userId = authService.currentUser?.id else {
             brokerageHoldings = []
             return
         }
@@ -669,17 +688,22 @@ class PortfolioViewModel: ObservableObject {
         return trades.filter { $0.entryDate >= startDate }
     }
     
+    /// Profile numbers. P&L, today's P&L, win rate and the top performer come from price-checked
+    /// and verified trades only; counts and recent trades include everything (each row is labelled).
     func getPortfolioSummaryForProfile() -> PortfolioSummary {
+        let stats = checkedStats
         return PortfolioSummary(
             totalValue: portfolio?.totalValue ?? 0,
-            totalProfitLoss: portfolio?.totalProfitLoss ?? 0,
-            dayProfitLoss: portfolio?.dayProfitLoss ?? 0,
-            winRate: portfolio?.winRate ?? 0,
+            totalProfitLoss: stats.totalPL,
+            dayProfitLoss: stats.closedTodayPL,
+            winRate: stats.winRate,
             totalTrades: trades.count,
             openPositions: trades.filter { $0.isOpen }.count,
             recentTrades: Array(trades.prefix(5)),
             topPerformer: topPerformingTrades.first,
-            lastUpdated: lastUpdated
+            lastUpdated: lastUpdated,
+            countedClosedTrades: stats.closedCount,
+            selfReportedTrades: selfReportedStats.tradeCount
         )
     }
 }
@@ -721,6 +745,10 @@ struct PortfolioSummary {
     let recentTrades: [Trade]
     let topPerformer: Trade?
     let lastUpdated: Date
+    /// Closed price-checked / verified trades behind `winRate` (0 means there's no win rate to show)
+    var countedClosedTrades: Int = 0
+    /// Trades left out of the P&L and win rate because they're self-reported
+    var selfReportedTrades: Int = 0
 }
 
 // MARK: - Portfolio Error Types
@@ -729,6 +757,7 @@ enum PortfolioError: LocalizedError {
     case tradeAlreadyClosed
     case invalidTradeData
     case networkError
+    case deleteWindowPassed
     
     var errorDescription: String? {
         switch self {
@@ -740,6 +769,8 @@ enum PortfolioError: LocalizedError {
             return "Invalid trade data provided"
         case .networkError:
             return "Network connection error"
+        case .deleteWindowPassed:
+            return "Price-checked trades can only be deleted within 15 minutes of logging them."
         }
     }
 }
@@ -934,4 +965,46 @@ enum MarketQuotes {
             return result
         }
     }
+
+    /// The same /quote call, keeping the day's range: {"c": current, "h": high, "l": low, "t": unix time}.
+    /// Used for trade proof labels (TradePriceChecker). Nil when there's no key, no quote
+    /// (Finnhub answers unknown symbols with zeros) or the request fails.
+    static func dayRange(symbol: String) async -> DayRangeQuote? {
+        struct RangeQuote: Decodable {
+            let c: Double?
+            let h: Double?
+            let l: Double?
+            let t: Double?
+        }
+        let key = AppConfig.finnhubAPIKey
+        guard !key.isEmpty, !symbol.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://finnhub.io/api/v1/quote")
+        components?.queryItems = [
+            URLQueryItem(name: "symbol", value: symbol),
+            URLQueryItem(name: "token", value: key)
+        ]
+        guard let url = components?.url,
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let quote = try? JSONDecoder().decode(RangeQuote.self, from: data),
+              let current = quote.c, current > 0,
+              let high = quote.h, high > 0,
+              let low = quote.l, low > 0, low <= high else {
+            return nil
+        }
+        let sessionTime = quote.t.flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+        return DayRangeQuote(symbol: symbol, current: current, low: low, high: high,
+                             sessionTime: sessionTime, fetchedAt: Date())
+    }
+}
+
+/// A live quote with the current session's low and high.
+struct DayRangeQuote: Equatable {
+    let symbol: String
+    let current: Double
+    let low: Double
+    let high: Double
+    /// Time of the last trade in the quote ("t"); nil when Finnhub doesn't send one
+    let sessionTime: Date?
+    let fetchedAt: Date
 }

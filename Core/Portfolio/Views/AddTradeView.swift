@@ -1,6 +1,9 @@
 // File: Core/Portfolio/Views/AddTradeView.swift
 // Step-by-step flow for logging a stock, option, crypto or forex trade:
 // Asset -> Details -> Plan & notes -> Review. The primary button stays pinned to the bottom.
+// Before saving, the entry is checked against today's market range (TradePriceChecker): a trade
+// dated today at a price inside the range is saved as "price_checked", anything else "self_reported".
+// The Details and Review steps show which label the trade will get and why.
 
 import SwiftUI
 
@@ -34,10 +37,14 @@ struct AddTradeView: View {
 
     // UI state
     @State private var showAlert = false
+    @State private var alertTitle = "Couldn't add trade"
     @State private var alertMessage = ""
     @State private var isLoading = false
     @State private var step: AddTradeStep = .asset
     @State private var movingForward = true
+
+    /// Today's range for the symbol, for the proof label
+    @StateObject private var priceChecker = TradePriceChecker()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,11 +65,14 @@ struct AddTradeView: View {
         }
         .screenBackground()
         .interactiveDismissDisabled(hasEnteredDetails)
-        .alert("Couldn't add trade", isPresented: $showAlert) {
+        .alert(alertTitle, isPresented: $showAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage)
         }
+        .onChange(of: ticker) { _, _ in refreshQuote() }
+        .onChange(of: tradeType) { _, _ in refreshQuote() }
+        .onChange(of: step) { _, _ in refreshQuote(debounce: false) }
     }
 
     private var terms: AssetTerms { AssetTerms(tradeType) }
@@ -159,7 +169,7 @@ struct AddTradeView: View {
             }
         }
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(!canProceed || isLoading)
+        .disabled(!canProceed || isLoading || (step == .review && proofOutcome.isChecking))
         .padding(.horizontal, DS.pageMargin)
         .padding(.top, DS.Spacing.m)
         .padding(.bottom, DS.Spacing.s)
@@ -238,7 +248,47 @@ struct AddTradeView: View {
             if hasEnteredDetails, let message = detailsValidationMessage {
                 validationLabel(message)
             }
+            if !displayTicker.isEmpty {
+                proofCard
+            }
         }
+    }
+
+    // MARK: - Proof label
+
+    /// The label the trade will get if saved now
+    private var proofOutcome: PriceCheckOutcome {
+        priceChecker.outcome(price: parsedEntryPrice, date: entryDate, type: tradeType)
+    }
+
+    private var proofCard: some View {
+        TradeProofCheckCard(
+            outcome: proofOutcome,
+            message: TradePriceCheckRules.message(
+                for: proofOutcome, price: parsedEntryPrice, side: "entry", ticker: displayTicker, type: tradeType
+            ),
+            currentPriceText: priceChecker.quote.map { terms.price($0.current) },
+            showsUseCurrentPrice: canUseCurrentPrice,
+            onUseCurrentPrice: useCurrentPrice
+        )
+    }
+
+    /// Offered when there's a live quote for today and the typed price isn't it
+    private var canUseCurrentPrice: Bool {
+        guard let quote = priceChecker.quote, Calendar.current.isDateInToday(entryDate) else { return false }
+        return parsedEntryPrice.map { abs($0 - quote.current) > 0.000_001 } ?? true
+    }
+
+    private func useCurrentPrice() {
+        guard let quote = priceChecker.quote else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+            entryPrice = AssetTerms.inputString(quote.current.rounded(to: quote.current < 1 ? 6 : 2))
+        }
+    }
+
+    private func refreshQuote(debounce: Bool = true) {
+        guard step == .details || step == .review, !displayTicker.isEmpty else { return }
+        priceChecker.load(ticker: displayTicker, type: tradeType, debounce: debounce)
     }
 
     private var positionCard: some View {
@@ -456,6 +506,7 @@ struct AddTradeView: View {
     private var reviewStep: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
             reviewHero
+            proofCard
             reviewDetails
         }
     }
@@ -552,7 +603,7 @@ private enum AddTradeStep: Int, CaseIterable {
         case .asset: return "Pick the type of asset. You can log any of them in your journal."
         case .details: return "What you bought, how much, and at what \(type == .forex ? "rate" : "price")."
         case .extras: return "Set exits and add context. Everything here is optional."
-        case .review: return "Check the details, then add it to your portfolio."
+        case .review: return "Check the details and the proof label, then add it to your portfolio."
         }
     }
 }
@@ -679,16 +730,19 @@ extension AddTradeView {
     private func addTrade() async {
         guard !isLoading else { return }
         guard let userId = authService.currentUser?.id else {
+            alertTitle = "Couldn't add trade"
             alertMessage = "You need to be signed in to add a trade."
             showAlert = true
             return
         }
         if let problem = detailsValidationMessage ?? extrasValidationMessage {
+            alertTitle = "Couldn't add trade"
             alertMessage = problem
             showAlert = true
             return
         }
         guard let price = parsedEntryPrice, let finalQuantity = parsedQuantity else {
+            alertTitle = "Couldn't add trade"
             alertMessage = "Check the price and quantity and try again."
             showAlert = true
             return
@@ -733,6 +787,24 @@ extension AddTradeView {
             newTrade.sector = trimmed(sector)
         }
 
+        // Proof label, from a quote at most two minutes old. If it changed since the user last
+        // saw it, show the new one instead of saving silently.
+        let shownProof = proofOutcome.proof
+        let outcome = await priceChecker.outcomeForSaving(
+            ticker: displayTicker, price: price, date: entryDate, type: tradeType
+        )
+        if outcome.proof != shownProof {
+            isLoading = false
+            alertTitle = "Proof label changed"
+            alertMessage = TradePriceCheckRules.message(
+                for: outcome, price: price, side: "entry", ticker: displayTicker, type: tradeType
+            ) + " Check it, then tap Add trade again."
+            showAlert = true
+            return
+        }
+        newTrade.proof = outcome.proof
+        newTrade.priceCheck = outcome.priceCheck
+
         do {
             try await authService.addTrade(newTrade)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -741,6 +813,7 @@ extension AddTradeView {
             dismiss()
         } catch {
             isLoading = false
+            alertTitle = "Couldn't add trade"
             alertMessage = "Failed to add trade: \(error.localizedDescription)"
             showAlert = true
         }

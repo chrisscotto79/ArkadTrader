@@ -258,22 +258,29 @@ class HomeViewModel: ObservableObject {
     
     func createPost(_ draft: PostDraft) async {
         await createPost(content: draft.content, tickers: draft.tickers, images: draft.images,
-                         postType: draft.postType, tradingData: draft.tradingData)
+                         postType: draft.postType, trade: draft.trade, sentiment: draft.sentiment)
     }
 
-    /// Without a postType, it's guessed from the text (for callers that don't have the composer's choice)
+    /// Without a postType, it's guessed from the text (for callers that don't have the composer's choice).
+    /// A trade-result post needs `trade`, one of the author's own closed trades: its numbers and proof
+    /// label are copied into `tradeSnapshot` (no typed-in P&L). Without one it's posted as a text post.
     func createPost(content: String, tickers: [String] = [], images: [UIImage] = [],
-                    postType chosenType: PostType? = nil, tradingData: TradingData? = nil) async {
+                    postType chosenType: PostType? = nil, trade: Trade? = nil,
+                    sentiment: PostSentiment? = nil) async {
         guard let currentUser = authService.currentUser else { return }
         let userId = currentUser.id
         let username = currentUser.username
         
-        let postType = chosenType ?? determinePostType(from: content)
+        var postType = chosenType ?? determinePostType(from: content)
+        let snapshot = trade.flatMap { $0.userId == userId ? TradeSnapshot(trade: $0) : nil }
+        if postType == .tradeResult && snapshot == nil {
+            postType = .text
+        }
         
-        // ✅ FIXED: Upload images if they exist
+        // Photos stay off until Cloud Storage is available (AppConfig.mediaUploadsEnabled)
         var imageUrls: [String] = []
         
-        if !images.isEmpty {
+        if AppConfig.mediaUploadsEnabled && !images.isEmpty {
             print("📸 Uploading \(images.count) images...")
             
             // Create a unique post ID for consistent image naming
@@ -307,10 +314,16 @@ class HomeViewModel: ObservableObject {
         )
         newPost.authorFullName = currentUser.fullName
         newPost.authorAvatarURL = currentUser.profileImageUrl
+        newPost.sentiment = sentiment
         
-        // Trade numbers come from the composer's Trade Details; fall back to a "P&L: $50" line in the text
-        if postType == .tradeResult {
-            newPost.tradingData = tradingData ?? extractTradingDataFromContent(content)
+        // Trade result: the chosen closed trade. FirebaseServices.createPost copies the snapshot
+        // from the trade document so it matches what the rules check.
+        if postType == .tradeResult, let trade, let snapshot {
+            newPost.tradeId = trade.id
+            newPost.tradeSnapshot = snapshot
+            if !newPost.tickers.contains(snapshot.ticker) {
+                newPost.tickers.insert(snapshot.ticker, at: 0)
+            }
         }
         
         do {
@@ -323,14 +336,6 @@ class HomeViewModel: ObservableObject {
             showError = true
             print("❌ Failed to create post: \(error)")
         }
-    }
-
-    // ✅ Add this helper method
-    private func extractTradingDataFromContent(_ content: String) -> TradingData? {
-        // Only an explicit P&L line counts; any other dollar amount (an entry price, say) isn't a P&L
-        var probe = Post(content: content, authorId: "", authorUsername: "")
-        probe.postType = .tradeResult
-        return probe.tradeSummary
     }
 
     // ✅ Add image upload method

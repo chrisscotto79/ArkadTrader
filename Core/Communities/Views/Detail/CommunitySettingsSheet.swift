@@ -1,5 +1,6 @@
 // File: Core/Communities/Views/Detail/CommunitySettingsSheet.swift
 // Community settings sheet for owners and admins, including custom rules and pricing (free or paid).
+// Pricing only appears when AppConfig.paidCommunitiesEnabled is on.
 
 import SwiftUI
 import PhotosUI
@@ -26,7 +27,9 @@ struct EnhancedCommunitySettingsSheet: View {
                     detailsSection
                     imagesSection
                     saveSection
-                    membershipSection
+                    if AppConfig.paidCommunitiesEnabled {
+                        membershipSection
+                    }
                     membersSection
                     dangerSection
                 } else {
@@ -254,7 +257,7 @@ struct EnhancedCommunitySettingsSheet: View {
     private var avatarEditor: some View {
         HStack(spacing: DS.Spacing.l) {
             ZStack {
-                if let avatarImage = viewModel.avatarImage, viewModel.settings.avatarURL == nil {
+                if let avatarImage = viewModel.avatarImage, viewModel.isUploadingAvatar || viewModel.settings.avatarURL == nil {
                     Image(uiImage: avatarImage)
                         .resizable()
                         .scaledToFill()
@@ -268,15 +271,15 @@ struct EnhancedCommunitySettingsSheet: View {
                     RoundedRectangle(cornerRadius: 76 * 0.28, style: .continuous)
                         .fill(.ultraThinMaterial)
                         .frame(width: 76, height: 76)
-                    ProgressView(value: viewModel.avatarUploadProgress)
-                        .progressViewStyle(.circular)
+                    ProgressView()
+                        .tint(Color.goldText)
                 }
             }
 
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
                 Text("Avatar")
                     .font(.subheadline.weight(.semibold))
-                Text("Square image, 512×512 recommended")
+                Text("Square image, cropped to 256×256")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -326,10 +329,11 @@ struct EnhancedCommunitySettingsSheet: View {
                         .fill(.ultraThinMaterial)
                         .frame(height: 110)
                     VStack(spacing: DS.Spacing.s) {
-                        ProgressView(value: viewModel.bannerUploadProgress)
-                            .frame(width: 100)
-                        Text("\(Int(viewModel.bannerUploadProgress * 100))%")
-                            .font(.caption.weight(.semibold).monospacedDigit())
+                        ProgressView()
+                            .tint(Color.goldText)
+                        Text("Uploading…")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -338,7 +342,7 @@ struct EnhancedCommunitySettingsSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Banner")
                         .font(.subheadline.weight(.semibold))
-                    Text("Wide image, 1200×400 (3:1) recommended")
+                    Text("Wide image, 1200×400 (3:1) works best")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -373,13 +377,15 @@ struct EnhancedCommunitySettingsSheet: View {
     @ViewBuilder
     private var bannerPreview: some View {
         let tint = CommunityPalette.color(for: community.name).opacity(0.18)
-        if let bannerURL = viewModel.settings.bannerURL, let url = URL(string: bannerURL) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    tint
-                }
+        if viewModel.isUploadingBanner, let bannerImage = viewModel.bannerImage {
+            Image(uiImage: bannerImage)
+                .resizable()
+                .scaledToFill()
+        } else if let bannerURL = viewModel.settings.bannerURL, !bannerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ArkadAsyncImage(urlString: bannerURL) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                tint
             }
         } else if let bannerImage = viewModel.bannerImage {
             Image(uiImage: bannerImage)
@@ -600,7 +606,9 @@ struct EnhancedCommunitySettingsSheet: View {
             .padding(.vertical, DS.Spacing.xs)
 
             LabeledContent("Privacy", value: community.isPrivate ? "Private" : "Public")
-            LabeledContent("Membership", value: community.priceTagText ?? "Free")
+            if AppConfig.paidCommunitiesEnabled {
+                LabeledContent("Membership", value: community.priceTagText ?? "Free")
+            }
             LabeledContent("Members", value: community.memberCount.formatted())
         } header: {
             Text("Community info")

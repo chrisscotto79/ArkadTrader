@@ -74,18 +74,19 @@ class CommunitySettingsViewModel: ObservableObject {
     
     // MARK: - Image Selection Setup
     private func setupImageHandlers() {
+        // @Published emits before the property changes, so the new item is passed along.
         $selectedAvatarItem
             .sink { [weak self] item in
-                if item != nil {
-                    self?.handleAvatarSelection()
+                if let item {
+                    self?.handleAvatarSelection(item)
                 }
             }
             .store(in: &cancellables)
         
         $selectedBannerItem
             .sink { [weak self] item in
-                if item != nil {
-                    self?.handleBannerSelection()
+                if let item {
+                    self?.handleBannerSelection(item)
                 }
             }
             .store(in: &cancellables)
@@ -105,191 +106,131 @@ class CommunitySettingsViewModel: ObservableObject {
     }
     
     // MARK: - Image Upload Methods
-    
+    //
+    // Free mode: images are Firestore docs (`images/community_avatar_{cid}` and
+    // `images/community_banner_{cid}`) written through ImageStore. The rules only allow it for
+    // the community owner. Only the one URL field is written to the community doc, so unsaved
+    // edits to the name or description aren't saved along with it.
+
     /// Upload community avatar image
     func uploadAvatarImage() async {
         guard let avatarImage = avatarImage else { return }
-        
+        guard isOwner else {
+            errorMessage = "Only the community owner can change the avatar"
+            return
+        }
+
         isUploadingAvatar = true
         avatarUploadProgress = 0
         errorMessage = ""
-        
+
         do {
-            let avatarURL = try await uploadImageToStorage(
-                image: avatarImage,
-                path: "community_images/\(community.id)_avatar_\(Date().timeIntervalSince1970).jpg",
-                compressionQuality: 0.8,
-                maxSize: CGSize(width: 512, height: 512),
-                isAvatar: true
-            )
-            
-            // Update settings
+            let avatarURL = try await ImageStore.shared.uploadCommunityAvatar(avatarImage, communityId: community.id)
+            try await saveImageField("avatarURL", value: avatarURL)
             settings.avatarURL = avatarURL
-            
-            // Auto-save if owner
-            if isOwner {
-                await updateCommunity()
-            }
-            
+            avatarUploadProgress = 1
         } catch {
             errorMessage = "Failed to upload avatar: \(error.localizedDescription)"
         }
-        
+
         isUploadingAvatar = false
     }
 
     /// Upload community banner image
     func uploadBannerImage() async {
         guard let bannerImage = bannerImage else { return }
-        
+        guard isOwner else {
+            errorMessage = "Only the community owner can change the banner"
+            return
+        }
+
         isUploadingBanner = true
         bannerUploadProgress = 0
         errorMessage = ""
-        
+
         do {
-            let bannerURL = try await uploadImageToStorage(
-                image: bannerImage,
-                path: "community_images/\(community.id)_banner_\(Date().timeIntervalSince1970).jpg",
-                compressionQuality: 0.9,
-                maxSize: CGSize(width: 1200, height: 400),
-                isAvatar: false
-            )
-            
-            // Update settings
+            let bannerURL = try await ImageStore.shared.uploadCommunityBanner(bannerImage, communityId: community.id)
+            try await saveImageField("bannerURL", value: bannerURL)
             settings.bannerURL = bannerURL
-            
-            // Auto-save if owner
-            if isOwner {
-                await updateCommunity()
-            }
-            
+            bannerUploadProgress = 1
         } catch {
             errorMessage = "Failed to upload banner: \(error.localizedDescription)"
         }
-        
+
         isUploadingBanner = false
     }
 
-    /// Generic image upload method
-    private func uploadImageToStorage(
-        image: UIImage,
-        path: String,
-        compressionQuality: CGFloat = 0.8,
-        maxSize: CGSize,
-        isAvatar: Bool
-    ) async throws -> String {
-        
-        // Resize and compress image
-        let resizedImage = resizeImage(image, to: maxSize)
-        guard let imageData = resizedImage.jpegData(compressionQuality: compressionQuality) else {
-            throw ImageUploadError.compressionFailed
-        }
-        
-        // Validate file size (max 5MB for avatar, 8MB for banner)
-        let maxBytes = isAvatar ? 5 * 1024 * 1024 : 8 * 1024 * 1024
-        guard imageData.count <= maxBytes else {
-            throw ImageUploadError.fileTooLarge
-        }
-        
-        let storage = Storage.storage()
-        let storageRef = storage.reference().child(path)
-        
-        // Create metadata
-        let metadata = StorageMetadata()
-        metadata.contentType = "image/jpeg"
-        
-        // Upload with progress monitoring using continuation
-        _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StorageMetadata, Error>) in
-            let uploadTask = storageRef.putData(imageData, metadata: metadata) { metadata, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let metadata = metadata {
-                    continuation.resume(returning: metadata)
-                } else {
-                    continuation.resume(throwing: ImageUploadError.uploadFailed)
-                }
-            }
-            
-            // Monitor progress
-            uploadTask.observe(.progress) { [weak self] snapshot in
-                guard let progress = snapshot.progress else { return }
-                let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                
-                Task { @MainActor in
-                    if isAvatar {
-                        self?.avatarUploadProgress = percentComplete
-                    } else {
-                        self?.bannerUploadProgress = percentComplete
-                    }
-                }
-            }
-        }
-        
-        // Get download URL
-        let downloadURL = try await storageRef.downloadURL()
-        return downloadURL.absoluteString
-    }
-    
     /// Remove community avatar
     func removeAvatar() async {
-        guard isOwner, let currentAvatarURL = settings.avatarURL else { return }
-        
+        guard isOwner else { return }
+        let currentAvatarURL = settings.avatarURL
+
         isLoading = true
-        
+        errorMessage = ""
+
         do {
-            // Remove from storage
-            try await deleteImageFromStorage(url: currentAvatarURL)
-            
-            // Update settings
+            try await saveImageField("avatarURL", value: nil)
             settings.avatarURL = nil
             avatarImage = nil
-            
-            // Save changes
-            await updateCommunity()
-            
+            selectedAvatarItem = nil
+            await deleteStoredImage(currentAvatarURL, fallbackId: ImageStore.communityAvatarId(communityId: community.id))
         } catch {
             errorMessage = "Failed to remove avatar: \(error.localizedDescription)"
         }
-        
+
         isLoading = false
     }
 
     /// Remove community banner
     func removeBanner() async {
-        guard isOwner, let currentBannerURL = settings.bannerURL else { return }
-        
+        guard isOwner else { return }
+        let currentBannerURL = settings.bannerURL
+
         isLoading = true
-        
+        errorMessage = ""
+
         do {
-            // Remove from storage
-            try await deleteImageFromStorage(url: currentBannerURL)
-            
-            // Update settings
+            try await saveImageField("bannerURL", value: nil)
             settings.bannerURL = nil
             bannerImage = nil
-            
-            // Save changes
-            await updateCommunity()
-            
+            selectedBannerItem = nil
+            await deleteStoredImage(currentBannerURL, fallbackId: ImageStore.communityBannerId(communityId: community.id))
         } catch {
             errorMessage = "Failed to remove banner: \(error.localizedDescription)"
         }
-        
+
         isLoading = false
     }
 
-    /// Delete image from Firebase Storage
-    private func deleteImageFromStorage(url: String) async throws {
-        let storage = Storage.storage()
-        let storageRef = storage.reference(forURL: url)
-        try await storageRef.delete()
+    /// Writes (or, for nil, removes) one image field on the community doc.
+    private func saveImageField(_ field: String, value: String?) async throws {
+        let fieldValue: Any = value.map { $0 as Any } ?? FieldValue.delete()
+        try await FirebaseServices.shared.db.collection("communities").document(community.id)
+            .updateData([field: fieldValue])
     }
-    
+
+    /// Best-effort cleanup of the removed image: the Firestore image doc, or a legacy
+    /// Cloud Storage file when Storage is available.
+    private func deleteStoredImage(_ urlString: String?, fallbackId: String) async {
+        do {
+            if let imageId = ImageStore.imageId(from: urlString) {
+                try await ImageStore.shared.deleteImage(id: imageId)
+            } else if let urlString, AppConfig.mediaUploadsEnabled,
+                      urlString.hasPrefix("https://firebasestorage.googleapis.com") || urlString.hasPrefix("gs://") {
+                // reference(forURL:) raises on anything that isn't a Storage URL
+                try await Storage.storage().reference(forURL: urlString).delete()
+            } else {
+                try await ImageStore.shared.deleteImage(id: fallbackId)
+            }
+        } catch {
+            print("⚠️ Community image cleanup failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Image Picker Handling
 
     /// Handle avatar image selection
-    func handleAvatarSelection() {
-        guard let selectedAvatarItem = selectedAvatarItem else { return }
+    func handleAvatarSelection(_ selectedAvatarItem: PhotosPickerItem) {
         
         Task {
             do {
@@ -313,8 +254,7 @@ class CommunitySettingsViewModel: ObservableObject {
     }
 
     /// Handle banner image selection
-    func handleBannerSelection() {
-        guard let selectedBannerItem = selectedBannerItem else { return }
+    func handleBannerSelection(_ selectedBannerItem: PhotosPickerItem) {
         
         Task {
             do {
@@ -345,25 +285,17 @@ class CommunitySettingsViewModel: ObservableObject {
 
     // MARK: - Image Validation
 
-    /// Validate uploaded image
+    /// Avatars are centre-cropped to a square and every image is resized before upload,
+    /// so only the banner's shape is checked.
     private func validateImage(_ image: UIImage, for type: ImagePickerType) -> Bool {
-        let maxSize: CGFloat = 10 * 1024 * 1024 // 10MB in bytes
-        
-        guard let imageData = image.jpegData(compressionQuality: 1.0),
-              imageData.count <= Int(maxSize) else {
-            errorMessage = "Image is too large. Maximum size is 10MB."
+        guard image.size.width >= 1, image.size.height >= 1 else {
+            errorMessage = "This image couldn't be read. Try a different one."
             return false
         }
-        
-        // Check dimensions
+
         switch type {
         case .avatar:
-            // Avatar should be square-ish
-            let ratio = image.size.width / image.size.height
-            if ratio < 0.8 || ratio > 1.2 {
-                errorMessage = "Avatar should be square or nearly square (1:1 ratio)."
-                return false
-            }
+            break
         case .banner:
             // Banner should be wide
             let ratio = image.size.width / image.size.height
@@ -376,24 +308,6 @@ class CommunitySettingsViewModel: ObservableObject {
         return true
     }
     
-    // MARK: - Image Helper Methods
-    
-    private func resizeImage(_ image: UIImage, to targetSize: CGSize) -> UIImage {
-        let size = image.size
-        let widthRatio = targetSize.width / size.width
-        let heightRatio = targetSize.height / size.height
-        let ratio = min(widthRatio, heightRatio)
-        
-        let newSize = CGSize(width: size.width * ratio, height: size.height * ratio)
-        
-        UIGraphicsBeginImageContextWithOptions(newSize, false, 0)
-        image.draw(in: CGRect(origin: .zero, size: newSize))
-        let newImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        
-        return newImage ?? image
-    }
-
     // MARK: - Helper Properties
 
     var hasAvatarImage: Bool {
@@ -530,6 +444,10 @@ class CommunitySettingsViewModel: ObservableObject {
         isLoading = true
         errorMessage = ""
         
+        // Its photos first (best-effort), while the community still exists
+        try? await ImageStore.shared.deleteImage(id: ImageStore.communityAvatarId(communityId: community.id))
+        try? await ImageStore.shared.deleteImage(id: ImageStore.communityBannerId(communityId: community.id))
+
         do {
             try await communityService.deleteCommunity(communityId: community.id)
             // Success - the UI will handle navigation
@@ -580,12 +498,12 @@ class CommunitySettingsViewModel: ObservableObject {
     }
 
     func loadPayoutStatus() async {
-        guard isOwner, let userId = authService.currentUser?.id else { return }
+        guard AppConfig.paidCommunitiesEnabled, isOwner, let userId = authService.currentUser?.id else { return }
         payoutStatus = try? await PaymentsService.stripeAccount(userId: userId)
     }
 
     func savePricing() async {
-        guard isOwner, canSavePricing else { return }
+        guard AppConfig.paidCommunitiesEnabled, isOwner, canSavePricing else { return }
         isSavingPricing = true
         pricingError = nil
         pricingSaved = false

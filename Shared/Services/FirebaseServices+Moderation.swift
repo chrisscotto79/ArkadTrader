@@ -10,7 +10,7 @@ import FirebaseFirestore
 extension FirebaseServices {
     // MARK: - Reports
 
-    /// Writes a `reports/{id}` document. The server counts post reports and hides a post at 3.
+    /// Writes a `reports/{id}` document. Post reports are counted once per person; a post is hidden at 3.
     func submitReport(target: ReportTarget, reason: ReportReason, details: String?, reportedBy: String) async throws {
         var report: [String: Any] = [
             "targetType": target.targetType,
@@ -37,11 +37,35 @@ extension FirebaseServices {
         }
     }
 
-    /// Remembers which posts this user reported. The server counts reports and hides a post at 3.
+    /// Remembers which posts this user reported, and (free mode) counts the report on the post.
     private func recordPostReport(postId: String, reportedBy: String) async throws {
         try await db.collection("users").document(reportedBy)
             .collection("reportedPosts").document(postId)
             .setData(["postId": postId, "reportedAt": Timestamp(date: Date())])
+
+        // With the server off, the reporter's app counts the report: one reporters/{me}
+        // marker plus reportCount + 1 in the same batch (the rules allow it once per person),
+        // and hides the post once three different people have reported it.
+        guard !AppConfig.serverFunctionsEnabled else { return }
+        let postRef = db.collection("posts").document(postId)
+        let markerRef = postRef.collection("reporters").document(reportedBy)
+        let post = try await postRef.getDocument()
+        guard let data = post.data(), (data["authorId"] as? String) != reportedBy else { return }
+        if (try? await markerRef.getDocument())?.exists == true { return }
+
+        let newCount = ((data["reportCount"] as? NSNumber)?.intValue ?? 0) + 1
+        let batch = db.batch()
+        batch.setData(["reportedAt": FieldValue.serverTimestamp()], forDocument: markerRef)
+        batch.updateData(["reportCount": newCount], forDocument: postRef)
+        try await batch.commit()
+
+        if newCount >= 3, (data["isHidden"] as? Bool) != true {
+            try? await postRef.updateData([
+                "isHidden": true,
+                "hiddenAt": FieldValue.serverTimestamp(),
+                "hiddenReason": "Multiple reports (\(newCount) reports)"
+            ])
+        }
     }
 
     /// Older entry point (free-text reason). Files the report as "other" with the text as details.

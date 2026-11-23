@@ -4,8 +4,10 @@
 //
 // Firestore (see docs/backend-contracts.md, section 6):
 // - users/{uid}/watchlist/{symbol}: { symbol, assetType, addedAt }
-// - users/{uid}/priceAlerts/{id}: { symbol, assetType, condition, targetPrice, isActive, createdAt, triggeredAt? }
-// The app creates and deletes alerts; a scheduled function checks them and marks them triggered.
+// - users/{uid}/priceAlerts/{id}: { symbol, assetType, condition, targetPrice, isActive, createdAt,
+//   triggeredAt?, triggeredPrice? }
+// The app creates and deletes alerts. With Cloud Functions deployed, a scheduled function checks
+// them and marks them triggered; in free mode PriceAlertChecker does it while the app is open.
 
 import Foundation
 import FirebaseAuth
@@ -15,7 +17,7 @@ import FirebaseFirestore
 final class WatchlistStore: ObservableObject {
     static let shared = WatchlistStore()
 
-    /// The server enforces the same limit.
+    /// The server (or, in free mode, the Firestore rules) enforces the same limit.
     nonisolated static let maxActiveAlerts = 20
 
     @Published private(set) var items: [WatchlistItem] = []
@@ -208,6 +210,30 @@ final class WatchlistStore: ObservableObject {
         }
     }
 
+    /// PriceAlertChecker marked an alert triggered; show it in the lists straight away.
+    func markTriggered(alertId: String, at date: Date, price: Double) {
+        guard let index = alerts.firstIndex(where: { $0.id == alertId }) else { return }
+        let alert = alerts[index]
+        alerts[index] = PriceAlert(
+            id: alert.id,
+            symbol: alert.symbol,
+            assetType: alert.assetType,
+            condition: alert.condition,
+            targetPrice: alert.targetPrice,
+            isActive: false,
+            createdAt: alert.createdAt,
+            triggeredAt: date,
+            triggeredPrice: price
+        )
+    }
+
+    /// The latest quotes PriceAlertChecker fetched, so the watchlist shows them too.
+    func mergeQuotes(_ fresh: [String: WatchlistQuote]) {
+        guard !fresh.isEmpty else { return }
+        quotes.merge(fresh) { _, new in new }
+        lastQuoteUpdate = Date()
+    }
+
     // MARK: - Helpers
 
     /// The signed-in user's id. Clears everything if a different user has signed in.
@@ -229,7 +255,7 @@ final class WatchlistStore: ObservableObject {
         return WatchlistItem(symbol: symbol, assetType: assetType, addedAt: addedAt)
     }
 
-    private static func alert(from documentId: String, data: [String: Any]) -> PriceAlert? {
+    static func alert(from documentId: String, data: [String: Any]) -> PriceAlert? {
         guard let symbol = data["symbol"] as? String,
               let conditionRaw = data["condition"] as? String,
               let condition = PriceAlertCondition(rawValue: conditionRaw),
@@ -242,7 +268,8 @@ final class WatchlistStore: ObservableObject {
             targetPrice: targetPrice,
             isActive: data["isActive"] as? Bool ?? false,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast,
-            triggeredAt: (data["triggeredAt"] as? Timestamp)?.dateValue()
+            triggeredAt: (data["triggeredAt"] as? Timestamp)?.dateValue(),
+            triggeredPrice: (data["triggeredPrice"] as? NSNumber)?.doubleValue
         )
     }
 }

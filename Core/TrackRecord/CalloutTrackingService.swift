@@ -1,6 +1,10 @@
 // File: Core/TrackRecord/CalloutTrackingService.swift
-// The one write the app makes to a callout's track record: the author closing it by hand.
-// Everything else (live prices, target / stop hits, traderStats) is written by the server.
+// The author closing their own callout by hand.
+// With the server functions deployed, that's the app's only track-record write: live prices,
+// target / stop hits and traderStats are the server's. In free mode the author's app also
+// updates the mirror doc and rebuilds traderStats (TrackRecordWriter), and prices and
+// auto-closes callouts itself (CalloutAutoTracker). After any close the author's app posts the
+// `calloutResult` message (CalloutFollowUps).
 
 import Foundation
 import FirebaseFirestore
@@ -34,6 +38,8 @@ final class CalloutTrackingService {
 
     /// Close an open callout at `exitPrice`. Only the author may do this.
     /// - Parameter authorId: the message's author, used when the callout predates `callout.authorId`.
+    /// - Parameter exitCheck: `.live` when the exit was within 2% of a live quote. In free mode it's
+    ///   stored on the mirror doc only (never the message); unchecked closes don't count in stats.
     /// - Returns: the callout as it now reads, so callers can show the result straight away.
     @discardableResult
     func closeCallout(
@@ -42,7 +48,8 @@ final class CalloutTrackingService {
         communityId: String,
         channelId: String,
         messageId: String,
-        authorId: String? = nil
+        authorId: String? = nil,
+        exitCheck: TradeCallout.PriceCheck = .unchecked
     ) async throws -> TradeCallout {
         guard let userId = FirebaseAuthService.shared.currentUser?.id,
               userId == (callout.authorId ?? authorId) else {
@@ -68,6 +75,36 @@ final class CalloutTrackingService {
         closed.exitPrice = exitPrice
         closed.closedAt = Date()
         closed.resultPercent = result
+
+        if TrackRecordWriter.isActive {
+            let writer = TrackRecordWriter.shared
+            do {
+                try await writer.mirrorClosed(closed, authorId: userId, communityId: communityId,
+                                              channelId: channelId, messageId: messageId,
+                                              exitCheck: exitCheck)
+            } catch {
+                // The message is closed; CalloutAutoTracker syncs the mirror on its next run.
+                print("⚠️ CalloutTrackingService: couldn't update callout mirror: \(error.localizedDescription)")
+            }
+        }
+
+        // The close is written: post the result message (once) with the same numbers, then
+        // rebuild stats and tell members.
+        let closedCallout = closed
+        Task {
+            await CalloutFollowUps.shared.postResult(
+                for: closedCallout,
+                parentMessageId: messageId,
+                communityId: communityId,
+                channelId: channelId,
+                exitCheck: exitCheck
+            )
+            guard TrackRecordWriter.isActive else { return }
+            let writer = TrackRecordWriter.shared
+            await writer.recomputeStats()
+            await writer.notifyResult(closedCallout, authorId: userId, communityId: communityId,
+                                      channelId: channelId, messageId: messageId)
+        }
         return closed
     }
 }

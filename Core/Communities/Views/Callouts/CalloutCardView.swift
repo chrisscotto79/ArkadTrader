@@ -1,7 +1,9 @@
 // File: Core/Communities/Views/Callouts/CalloutCardView.swift
 // Card shown in chat for a structured trade callout: ticker, direction, status,
 // entry / stop / target levels, the live move or final result, and its actions
-// (Track in Portfolio; Close callout for the author).
+// (Track in Portfolio; Update and Close for the author while it's open).
+// Open callouts with no recent price check show a display-only live quote; it is never written.
+// When the author has posted updates, "N updates" opens the callout's timeline.
 
 import SwiftUI
 
@@ -14,9 +16,30 @@ struct CalloutCardView: View {
     let communityId: String?
     /// The message's author; used when an older callout has no `authorId` of its own.
     let authorId: String?
+    /// The `calloutUpdate` messages for this callout in the loaded channel messages, oldest first
+    let updates: [CommunityMessage]
+    /// When the callout's message was sent, for the timeline (older callouts have no `postedAt`)
+    let postedAt: Date?
     let onTrack: () -> Void
 
     @State private var showCloseSheet = false
+    @State private var showUpdateSheet = false
+    @State private var showTimeline = false
+    /// A display-only quote, fetched when the stored price is missing or stale. Never written.
+    @State private var liveQuote: CalloutQuotes.Quote?
+
+    /// Stored prices older than this get a display-only refresh.
+    private static let staleAfter: TimeInterval = 15 * 60
+
+    /// The callout as shown: with the display-only quote when it's newer than the stored price.
+    private var shown: TradeCallout {
+        guard callout.isOpen, let liveQuote,
+              liveQuote.at > (callout.lastPriceAt ?? .distantPast) else { return callout }
+        var copy = callout
+        copy.lastPrice = liveQuote.price
+        copy.lastPriceAt = liveQuote.at
+        return copy
+    }
 
     init(
         callout: TradeCallout,
@@ -26,6 +49,8 @@ struct CalloutCardView: View {
         channelId: String? = nil,
         communityId: String? = nil,
         authorId: String? = nil,
+        updates: [CommunityMessage] = [],
+        postedAt: Date? = nil,
         onTrack: @escaping () -> Void,
         onUpdateStatus: @escaping (TradeCallout.Status) -> Void = { _ in }
     ) {
@@ -37,13 +62,15 @@ struct CalloutCardView: View {
         self.channelId = channelId
         self.communityId = communityId
         self.authorId = authorId
+        self.updates = updates
+        self.postedAt = postedAt
         self.onTrack = onTrack
     }
 
     private var resolvedAuthorId: String? { callout.authorId ?? authorId }
     private var resolvedCommunityId: String? { communityId ?? callout.communityId }
 
-    /// The signed-in author can close an open callout once we know where it's stored.
+    /// The signed-in author can update or close an open callout once we know where it's stored.
     private var canClose: Bool {
         guard callout.isOpen,
               let me = FirebaseAuthService.shared.currentUser?.id,
@@ -70,25 +97,96 @@ struct CalloutCardView: View {
                     .foregroundStyle(Color.primary.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if !updates.isEmpty, messageId != nil, channelId != nil, resolvedCommunityId != nil {
+                updatesRow
+            }
             actions
         }
         .cardStyle(padding: DS.Spacing.l, radius: DS.Radius.l)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
+        .task(id: liveQuoteKey) { await loadLiveQuote() }
         .sheet(isPresented: $showCloseSheet) {
             if let messageId, let channelId, let communityId = resolvedCommunityId {
-                CloseCalloutSheet(callout: callout) { exitPrice in
+                // `shown` so "Use last price" offers the freshest price we have
+                CloseCalloutSheet(callout: shown) { exitPrice, exitCheck in
                     _ = try await CalloutTrackingService.shared.closeCallout(
                         callout,
                         exitPrice: exitPrice,
                         communityId: communityId,
                         channelId: channelId,
                         messageId: messageId,
-                        authorId: authorId
+                        authorId: authorId,
+                        exitCheck: exitCheck
                     )
                 }
             }
         }
+        .sheet(isPresented: $showUpdateSheet) {
+            if let messageId, let channelId, let communityId = resolvedCommunityId {
+                CalloutUpdateSheet(callout: shown, parentMessageId: messageId) { update, referencePrice in
+                    _ = try await CalloutFollowUps.shared.postUpdate(
+                        update,
+                        on: callout,
+                        parentAuthorId: authorId,
+                        communityId: communityId,
+                        channelId: channelId,
+                        referencePrice: referencePrice
+                    )
+                }
+            }
+        }
+        .sheet(isPresented: $showTimeline) {
+            if let messageId, let channelId, let communityId = resolvedCommunityId {
+                CalloutTimelineSheet(
+                    callout: callout,
+                    parentMessageId: messageId,
+                    communityId: communityId,
+                    channelId: channelId,
+                    postedAt: postedAt ?? callout.postedAt ?? Date(),
+                    authorUsername: authorUsername,
+                    updates: updates
+                )
+                .presentationDetents([.medium, .large])
+            }
+        }
+    }
+
+    // MARK: - Updates
+
+    private var updatesRow: some View {
+        Button {
+            showTimeline = true
+        } label: {
+            HStack(spacing: DS.Spacing.s) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(updates.count) update\(updates.count == 1 ? "" : "s")")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.goldText)
+                    if let latest = updates.last?.calloutUpdate {
+                        Text(latest.kind == .note ? (latest.note ?? "Note") : latest.headline(ticker: callout.ticker))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: DS.Spacing.s)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, DS.Spacing.m)
+            .padding(.vertical, DS.Spacing.s)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).fill(Color.goldTint)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityHint("Shows the callout's timeline")
     }
 
     private var accessibilitySummary: String {
@@ -97,7 +195,8 @@ struct CalloutCardView: View {
         if let stop = callout.stopPrice { parts.append("stop \(TradeCallout.formatPrice(stop))") }
         if let target = callout.targetPrice { parts.append("target \(TradeCallout.formatPrice(target))") }
         parts.append("status \(callout.status.displayName)")
-        if let live = callout.livePercent { parts.append("now \(TradeCallout.formatPercent(live))") }
+        if !callout.isPriceChecked { parts.append("entry not price-checked") }
+        if let live = shown.livePercent { parts.append("now \(TradeCallout.formatPercent(live))") }
         if let final = callout.finalPercent { parts.append("result \(TradeCallout.formatPercent(final))") }
         return parts.joined(separator: ", ")
     }
@@ -121,6 +220,12 @@ struct CalloutCardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .labelStyle(.titleAndIcon)
+                if !callout.isPriceChecked {
+                    Label("Entry not price-checked", systemImage: "questionmark.circle")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
+                }
             }
 
             Spacer(minLength: DS.Spacing.s)
@@ -196,13 +301,14 @@ struct CalloutCardView: View {
 
     @ViewBuilder
     private var liveMove: some View {
-        if let lastPrice = callout.lastPrice, let live = callout.livePercent {
+        let display = shown
+        if let lastPrice = display.lastPrice, let live = display.livePercent {
             HStack(spacing: DS.Spacing.s) {
                 ChangePill(text: TradeCallout.formatPercent(live), isPositive: live >= 0)
                 Text(TradeCallout.formatPrice(lastPrice))
                     .arkadNumber(14, weight: .semibold)
                     .foregroundStyle(Color.primary)
-                if let at = callout.lastPriceAt {
+                if let at = display.lastPriceAt {
                     Text("as of \(TradeCallout.formatTime(at))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -211,10 +317,28 @@ struct CalloutCardView: View {
                 Spacer(minLength: 0)
             }
         } else {
-            Label("Waiting for the first price check", systemImage: "clock")
+            Label(CalloutQuotes.canQuote(callout) ? "Waiting for the first price check"
+                                                  : "No live price for \(callout.assetType.displayName.lowercased()) callouts",
+                  systemImage: "clock")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// Re-runs when the stored price changes, so a fresh check from the author cancels ours.
+    private var liveQuoteKey: String {
+        "\(callout.ticker)|\(callout.isOpen)|\(callout.lastPriceAt?.timeIntervalSince1970 ?? 0)"
+    }
+
+    /// Display only: a quote for an open callout whose stored price is missing or stale.
+    /// Shared, cached and spaced out by CalloutQuotes, so scrolling chat doesn't spam Finnhub.
+    private func loadLiveQuote() async {
+        guard callout.isOpen, CalloutQuotes.canQuote(callout) else { return }
+        if let at = callout.lastPriceAt, Date().timeIntervalSince(at) < Self.staleAfter { return }
+        let symbol = CalloutQuotes.symbol(for: callout)
+        if let cached = CalloutQuotes.shared.cached(symbol) { liveQuote = cached }
+        guard let quote = await CalloutQuotes.shared.displayQuote(for: symbol), !Task.isCancelled else { return }
+        liveQuote = quote
     }
 
     // MARK: - Result (closed)
@@ -259,7 +383,7 @@ struct CalloutCardView: View {
     /// Exit price once closed, last price while open. Nil when there's nothing to plot.
     private var progressMarker: Double? {
         guard callout.stopPrice != nil, callout.targetPrice != nil else { return nil }
-        let price = callout.isOpen ? callout.lastPrice : callout.exitPrice
+        let price = callout.isOpen ? shown.lastPrice : callout.exitPrice
         return price.flatMap { callout.progress(at: $0) } ?? callout.progress(at: callout.entryPrice)
     }
 
@@ -267,21 +391,36 @@ struct CalloutCardView: View {
 
     private var actions: some View {
         HStack(spacing: DS.Spacing.s) {
-            Button(action: onTrack) {
-                Label(callout.isOpen ? "Track in Portfolio" : "Callout \(callout.status.displayName.lowercased())",
-                      systemImage: callout.isOpen ? "plus" : callout.status.icon)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(PillButtonStyle(kind: callout.isOpen ? .gold : .neutral))
-            .disabled(!callout.isOpen)
-
             if canClose {
+                // The author: post an update, close it, or track it like anyone else
+                Button {
+                    showUpdateSheet = true
+                } label: {
+                    Label("Update", systemImage: "square.and.pencil")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillButtonStyle(kind: .gold))
+
                 Button {
                     showCloseSheet = true
                 } label: {
-                    Label("Close callout", systemImage: "flag.checkered")
+                    Label("Close", systemImage: "flag.checkered")
                 }
                 .buttonStyle(PillButtonStyle(kind: .neutral))
+
+                Button(action: onTrack) {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(PillButtonStyle(kind: .neutral))
+                .accessibilityLabel("Track in Portfolio")
+            } else {
+                Button(action: onTrack) {
+                    Label(callout.isOpen ? "Track in Portfolio" : "Callout \(callout.status.displayName.lowercased())",
+                          systemImage: callout.isOpen ? "plus" : callout.status.icon)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillButtonStyle(kind: callout.isOpen ? .gold : .neutral))
+                .disabled(!callout.isOpen)
             }
         }
     }

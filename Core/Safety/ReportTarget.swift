@@ -82,6 +82,7 @@ enum ReportTarget: Hashable, Identifiable {
 enum ReportReason: String, CaseIterable, Identifiable {
     case spam
     case harassment
+    case fakeTrade = "fake_trade_or_result"
     case scamOrManipulation = "scam_or_manipulation"
     case hate
     case explicit
@@ -94,6 +95,7 @@ enum ReportReason: String, CaseIterable, Identifiable {
         switch self {
         case .spam: return "Spam"
         case .harassment: return "Harassment or bullying"
+        case .fakeTrade: return "Fake trade or result"
         case .scamOrManipulation: return "Scam or market manipulation"
         case .hate: return "Hate speech"
         case .explicit: return "Explicit content"
@@ -106,7 +108,8 @@ enum ReportReason: String, CaseIterable, Identifiable {
         switch self {
         case .spam: return "Repeated, unwanted or promotional content"
         case .harassment: return "Targeting or threatening someone"
-        case .scamOrManipulation: return "Pump and dump, fake results, paid schemes"
+        case .fakeTrade: return "Made-up trades, results or performance"
+        case .scamOrManipulation: return "Pump and dump, paid schemes"
         case .hate: return "Attacks on a group or identity"
         case .explicit: return "Sexual or graphic content"
         case .impersonation: return "Pretending to be someone else"

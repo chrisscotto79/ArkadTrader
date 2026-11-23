@@ -8,22 +8,20 @@ struct ChannelInfoSheet: View {
     let channel: Channel
     @Environment(\.dismiss) private var dismiss
 
-    private var isCallouts: Bool { channel.type == .callouts }
-
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Spacing.l) {
                     HStack(spacing: DS.Spacing.m) {
                         IconWell(
-                            systemName: isCallouts ? "megaphone.fill" : "number",
-                            tint: isCallouts ? .goldText : .secondary,
+                            systemName: channel.displayIcon,
+                            tint: channel.displayTint,
                             size: 52
                         )
                         VStack(alignment: .leading, spacing: 4) {
                             Text("#\(channel.name)")
                                 .font(.title3.weight(.bold))
-                            Text("\(channel.type.displayName) channel in \(community.name)")
+                            Text("\(channel.isAnnouncements ? "Announcements" : channel.type.displayName) channel in \(community.name)")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -83,6 +81,9 @@ struct ChannelInfoSheet: View {
             : "Every member can post here."
         switch channel.type {
         case .text, .voice:
+            if channel.isAnnouncements {
+                return "Announcements from the owners and admins of \(community.name). \(posting)"
+            }
             return "A text channel for conversation in \(community.name). \(posting)"
         case .callouts:
             return "A channel for structured trade callouts in \(community.name). Tap \"Track in Portfolio\" on a callout to add it to your trades. \(posting)"
