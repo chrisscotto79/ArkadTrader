@@ -1,5 +1,6 @@
 // File: Core/Profile/Views/ProfileView.swift
-// The signed-in user's profile: header, hero, stats, performance and tabbed content.
+// The signed-in user's profile: header, hero, stats, callout record, portfolio performance
+// and tabbed content.
 
 import SwiftUI
 
@@ -28,6 +29,7 @@ struct ProfileView: View {
                 VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                     heroSection
                     statsSection
+                    trackRecordSection
                     performanceSection
 
                     VStack(alignment: .leading, spacing: DS.Spacing.l) {
@@ -108,16 +110,29 @@ struct ProfileView: View {
                 action: { showFollowingList = true }
             ),
             ProfileStatItem(title: "Trades", value: "\(summary.totalTrades)"),
-            ProfileStatItem(title: "Win rate", value: winRateText(summary.winRate))
+            // Portfolio win rate; the callout win rate is in the callout record below
+            ProfileStatItem(title: "Trade win rate", value: winRateText(summary.winRate))
         ])
     }
 
+    /// Verified: built from the callouts you've posted in communities.
+    @ViewBuilder
+    private var trackRecordSection: some View {
+        if let userId = authService.currentUser?.id {
+            TrackRecordCard(userId: userId)
+        }
+    }
+
+    /// Self-reported: built from the trades you log in your portfolio.
     private var performanceSection: some View {
-        ProfilePerformanceCard(
-            summary: portfolioViewModel.getPortfolioSummaryForProfile(),
-            bestTrade: bestClosedTrade
-        ) {
-            showPortfolioDetails = true
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            ProfileSourceLabel(title: "Portfolio", detail: "Trades you log yourself")
+            ProfilePerformanceCard(
+                summary: portfolioViewModel.getPortfolioSummaryForProfile(),
+                bestTrade: bestClosedTrade
+            ) {
+                showPortfolioDetails = true
+            }
         }
     }
 

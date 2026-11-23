@@ -1,12 +1,14 @@
 // File: Shared/Services/FirebaseAuthService.swift
-// Complete Firebase Auth Service with all required wrapper methods
+// Sign-in state and the signed-in user's profile, plus thin wrappers around FirebaseServices.
+// Also tells PushNotificationManager and Crashlytics who is signed in.
 
 import Foundation
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseCrashlytics
 import Combine
-import FirebaseStorage  // ✅ ADDED: Missing Firebase Storage import
-import UIKit 
+import FirebaseStorage
+import UIKit
 
 @MainActor
 class FirebaseAuthService: ObservableObject {
@@ -18,6 +20,9 @@ class FirebaseAuthService: ObservableObject {
     
     private var handle: AuthStateDidChangeListenerHandle?
     private let auth = Auth.auth()
+    /// True while `register` is creating the account, so the auth listener doesn't load a
+    /// profile that doesn't exist yet
+    private var isRegistering = false
     
     private init() {
         setupAuthListener()
@@ -28,14 +33,19 @@ class FirebaseAuthService: ObservableObject {
         private func setupAuthListener() {
             handle = auth.addStateDidChangeListener { [weak self] _, firebaseUser in
                 Task { @MainActor in
+                    guard let self else { return }
                     if let firebaseUser = firebaseUser {
-                        self?.isAuthenticated = true
-                        await self?.loadCurrentUser(firebaseUser.uid)
+                        if !self.isRegistering {
+                            await self.loadCurrentUser(firebaseUser.uid)
+                            self.isAuthenticated = true
+                            self.didSignIn(userId: firebaseUser.uid)
+                        }
                     } else {
-                        self?.isAuthenticated = false
-                        self?.currentUser = nil
+                        self.isAuthenticated = false
+                        self.currentUser = nil
+                        self.didSignOut()
                     }
-                    self?.isLoading = false
+                    self.isLoading = false
                 }
             }
         }
@@ -44,9 +54,19 @@ class FirebaseAuthService: ObservableObject {
             do {
                 currentUser = try await FirebaseServices.shared.getUserById(userId: userId)
             } catch {
-                print("Error loading current user: \(error)")
                 currentUser = nil
             }
+        }
+
+        /// Crash reports and push notifications follow the signed-in user.
+        private func didSignIn(userId: String) {
+            Crashlytics.crashlytics().setUserID(userId)
+            PushNotificationManager.shared.userDidSignIn(userId: userId)
+        }
+
+        private func didSignOut() {
+            Crashlytics.crashlytics().setUserID("")
+            PushNotificationManager.shared.userDidSignOut()
         }
         
         // MARK: - User Refresh Method
@@ -54,14 +74,8 @@ class FirebaseAuthService: ObservableObject {
         func refreshCurrentUser() async {
             guard let userId = currentUser?.id else { return }
             
-            do {
-                let refreshedUser = try await FirebaseServices.shared.getUserById(userId: userId)
-                await MainActor.run {
-                    self.currentUser = refreshedUser
-                }
-                print("✅ Current user refreshed successfully")
-            } catch {
-                print("❌ Error refreshing current user: \(error)")
+            if let refreshedUser = try? await FirebaseServices.shared.getUserById(userId: userId) {
+                self.currentUser = refreshedUser
             }
         }
         
@@ -76,57 +90,35 @@ class FirebaseAuthService: ObservableObject {
             try await login(email: email, password: password)
         }
         
-        // ✅ FIXED: Registration method that works with security rules
+        /// Creates the sign-in, checks the username, then writes the profile. If any step fails
+        /// the new sign-in is removed again so the email can be reused. New accounts start
+        /// with `onboardingCompleted = false`, which shows onboarding next.
         func register(email: String, password: String, username: String, fullName: String) async throws {
-            print("🔧 Starting registration process...")
-            print("   Email: \(email)")
-            print("   Username: \(username)")
-            
-            // Create auth user FIRST (this gives us authentication)
-            print("🔧 Creating Firebase Auth user...")
+            isRegistering = true
+            defer { isRegistering = false }
+
             let result = try await auth.createUser(withEmail: email, password: password)
-            print("✅ Firebase Auth user created with UID: \(result.user.uid)")
-            
-            // Now check username availability (with authentication)
-            print("🔧 Checking username availability...")
+            let firebaseUser = result.user
+
             do {
-                let usernameAvailable = try await isUsernameAvailable(username)
-                guard usernameAvailable else {
-                    print("❌ Username \(username) is already taken")
-                    // Clean up the auth user since username is taken
-                    try await result.user.delete()
+                guard try await isUsernameAvailable(username) else {
                     throw AuthError.usernameTaken
                 }
-                print("✅ Username is available")
-            } catch {
-                print("❌ Error checking username availability: \(error)")
-                // Clean up the auth user
-                try await result.user.delete()
-                throw error
-            }
-            
-            // Create user document in Firestore
-            print("🔧 Creating user document in Firestore...")
-            let newUser = User(
-                id: result.user.uid,
-                email: email,
-                username: username,
-                fullName: fullName
-            )
-            
-            do {
+
+                var newUser = User(
+                    id: firebaseUser.uid,
+                    email: email,
+                    username: username,
+                    fullName: fullName
+                )
+                newUser.onboardingCompleted = false
+
                 try await FirebaseServices.shared.createUser(newUser)
-                print("✅ User document created successfully")
                 currentUser = newUser
+                isAuthenticated = true
+                didSignIn(userId: newUser.id)
             } catch {
-                print("❌ Failed to create user document: \(error)")
-                print("❌ Error details: \(error.localizedDescription)")
-                
-                // If Firestore creation fails, clean up the auth user
-                print("🔧 Cleaning up Firebase Auth user due to Firestore error...")
-                try await result.user.delete()
-                print("✅ Auth user cleaned up")
-                
+                try? await firebaseUser.delete()
                 throw error
             }
         }
@@ -135,46 +127,94 @@ class FirebaseAuthService: ObservableObject {
             try await register(email: email, password: password, username: username, fullName: fullName)
         }
         
+        /// Signs out, first removing this device's push token while the user can still write it.
         func logout() async {
+            await PushNotificationManager.shared.unregisterDevice()
             do {
                 try auth.signOut()
                 currentUser = nil
                 isAuthenticated = false
             } catch {
-                print("Error signing out: \(error)")
+                // Firebase only fails here if the keychain is unavailable; stay signed in.
             }
         }
         
+        /// Prefer `logout()`. Kept for existing callers; signs out in the background.
         func signOut() throws {
-            try auth.signOut()
-            currentUser = nil
-            isAuthenticated = false
+            Task { await logout() }
         }
         
+        /// Deletes the Firebase sign-in. A Cloud Function (Auth onDelete) then removes the
+        /// profile and everything else the user created (docs/backend-contracts.md, section 8).
+        /// Throws `AuthErrorCode.requiresRecentLogin` if the user must confirm their password
+        /// first; call `reauthenticate(password:)` and try again.
         func deleteAccount() async throws {
             guard let user = auth.currentUser else {
                 throw AuthError.notAuthenticated
             }
-            
-            // Delete the profile document while still signed in (rules need auth), but keep a
-            // copy so it can be restored if Firebase refuses to delete the sign-in itself
-            // (for example requiresRecentLogin). Otherwise the user would be left with an
-            // account that has no profile.
-            let userDoc = Firestore.firestore().collection("users").document(user.uid)
-            let savedProfile = try? await userDoc.getDocument().data()
-            try await userDoc.delete()
 
+            try await user.delete()
+            currentUser = nil
+            isAuthenticated = false
+        }
+
+        /// Confirms the signed-in user's password, which Firebase needs before sensitive
+        /// changes such as deleting the account.
+        func reauthenticate(password: String) async throws {
+            guard let user = auth.currentUser, let email = user.email else {
+                throw AuthError.notAuthenticated
+            }
+            let credential = EmailAuthProvider.credential(withEmail: email, password: password)
+            _ = try await user.reauthenticate(with: credential)
+        }
+
+        // MARK: - Onboarding
+
+        /// Saves the onboarding answers and marks onboarding as done. The local profile is
+        /// updated first, so the app moves on straight away even on a slow connection.
+        func completeOnboarding(experienceLevel: String?, interests: [String]) async throws {
+            guard var user = currentUser else {
+                throw AuthError.notAuthenticated
+            }
+
+            var data: [String: Any] = [
+                "onboardingCompleted": true,
+                "interests": interests,
+                "updatedAt": Timestamp(date: Date())
+            ]
+            if let experienceLevel {
+                data["experienceLevel"] = experienceLevel
+                user.experienceLevel = experienceLevel
+            }
+            user.interests = interests
+            user.onboardingCompleted = true
+            currentUser = user
+
+            try await Firestore.firestore().collection("users").document(user.id)
+                .setData(data, merge: true)
+        }
+
+        // MARK: - Notification Preferences
+
+        /// Turns one push preference on or off, locally and in `users/{uid}.notificationPrefs`.
+        /// Reverts the local value if the write fails.
+        func setNotificationPreference(_ preference: NotificationPreference, enabled: Bool) async throws {
+            guard let userId = currentUser?.id else {
+                throw AuthError.notAuthenticated
+            }
+
+            let previous = currentUser?.notificationPrefs[preference.rawValue]
+            currentUser?.notificationPrefs[preference.rawValue] = enabled
             do {
-                try await user.delete()
+                try await FirebaseServices.shared.setNotificationPreference(
+                    preference.rawValue,
+                    enabled: enabled,
+                    userId: userId
+                )
             } catch {
-                if let savedProfile {
-                    try? await userDoc.setData(savedProfile)
-                }
+                currentUser?.notificationPrefs[preference.rawValue] = previous
                 throw error
             }
-            
-            self.currentUser = nil
-            isAuthenticated = false
         }
         
         // MARK: - Username Validation
@@ -206,37 +246,30 @@ class FirebaseAuthService: ObservableObject {
             username: String? = nil,
             profileImage: UIImage? = nil  // ✅ ADD THIS PARAMETER
         ) async throws {
-            print("🔄 Updating user profile...")
             
             guard var user = currentUser else {
-                print("❌ No current user found")
                 throw AuthError.notAuthenticated
             }
             
             // Update basic profile fields
             if let fullName = fullName {
                 user.fullName = fullName
-                print("📝 Updated full name: \(fullName)")
             }
             
             if let bio = bio {
                 user.bio = bio
-                print("📝 Updated bio: \(bio)")
             }
             
             if let username = username, username != user.username {
                 let available = try await isUsernameAvailable(username)
                 guard available else {
-                    print("❌ Username not available: \(username)")
                     throw AuthError.usernameTaken
                 }
                 user.username = username
-                print("📝 Updated username: \(username)")
             }
             
             // Handle profile image upload
             if let profileImage = profileImage {
-                print("🖼️ Profile image provided, uploading...")
                 
                 // Delete old image if it exists
                 if let oldImageUrl = user.profileImageUrl {
@@ -248,7 +281,6 @@ class FirebaseAuthService: ObservableObject {
                 // Upload new image
                 let imageUrl = try await FirebaseServices.shared.uploadProfileImage(profileImage, userId: user.id)
                 user.profileImageUrl = imageUrl
-                print("✅ Profile image updated: \(imageUrl)")
             }
             
             // Update timestamp
@@ -258,9 +290,7 @@ class FirebaseAuthService: ObservableObject {
             do {
                 try await FirebaseServices.shared.updateUser(user)
                 self.currentUser = user
-                print("✅ Profile updated successfully")
             } catch {
-                print("❌ Failed to update user in Firestore: \(error)")
                 throw error
             }
         }
@@ -289,7 +319,6 @@ class FirebaseAuthService: ObservableObject {
         try await FirebaseServices.shared.updateUser(user)
         self.currentUser = user
         
-        print("✅ Profile image removed successfully")
     }
 
         
@@ -451,7 +480,6 @@ class FirebaseAuthService: ObservableObject {
                     }
                 }
             } catch {
-                print("Error loading user data: \(error)")
             }
         } else {
             // No user signed in
@@ -631,10 +659,6 @@ class FirebaseAuthService: ObservableObject {
     
     // MARK: - Notification Wrapper Methods
     
-    func sendNotification(to userId: String, type: String, title: String, body: String, data: [String: Any] = [:]) async throws {
-        try await FirebaseServices.shared.sendNotification(to: userId, type: type, title: title, body: body, data: data)
-    }
-    
     func getUserNotifications(userId: String, limit: Int = 50) async throws -> [UserNotification] {
         return try await FirebaseServices.shared.getUserNotifications(userId: userId, limit: limit)
     }
@@ -651,10 +675,6 @@ class FirebaseAuthService: ObservableObject {
     
     func getMarketNewsAnalytics() async throws -> NewsAnalytics {
         return try await FirebaseServices.shared.getMarketNewsAnalytics()
-    }
-    
-    func trackUserActivity(userId: String, action: String, details: [String: Any] = [:]) async throws {
-        try await FirebaseServices.shared.trackUserActivity(userId: userId, action: action, details: details)
     }
     
     // MARK: - Clean up

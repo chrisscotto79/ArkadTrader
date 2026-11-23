@@ -20,6 +20,14 @@ class CommunityDetailViewModel: ObservableObject {
     @Published var canManageChannels = false
     /// When the current user joined, read from communities/{id}/members/{uid}
     @Published var memberSince: Date?
+
+    // Paid communities
+    /// The current user's subscription, for members of paid communities (the owner has none)
+    @Published var subscription: MemberSubscription?
+    /// True when the current user is banned from this community
+    @Published var isBanned = false
+    /// Rules, loaded for the paid preview that non-members see
+    @Published var rules: [CommunityRule] = []
     
     // MARK: - Private Properties
     private let firebaseService = FirebaseServices.shared
@@ -29,6 +37,12 @@ class CommunityDetailViewModel: ObservableObject {
     // MARK: - Computed Properties
     var currentUserId: String? {
         return authService.currentUser?.id
+    }
+
+    /// Non-members of a paid community only see the preview, never the channels
+    var canViewChannels: Bool {
+        guard let community else { return false }
+        return isUserMember || !community.requiresSubscription
     }
     
     // MARK: - Initialization
@@ -59,9 +73,9 @@ class CommunityDetailViewModel: ObservableObject {
             isLoading = true
             errorMessage = ""
             
-            // Load data sequentially to avoid type inference warnings
-            await loadChannels(for: community.id)
+            // Membership first: it decides whether the channels can be read
             await loadUserState(for: community)
+            await loadContent(for: community)
             
             // Check if we should prompt for channel setup
             checkChannelSetupNeeded()
@@ -77,6 +91,26 @@ class CommunityDetailViewModel: ObservableObject {
         Task {
             await loadChannels(for: community.id)
         }
+    }
+
+    /// Channels for members and free communities; rules for the paid preview
+    private func loadContent(for community: Community) async {
+        if canViewChannels {
+            await loadChannels(for: community.id)
+        } else {
+            channels = []
+        }
+        if community.requiresSubscription && !isUserMember {
+            rules = (try? await CommunityFirebaseService.shared.getCommunityRules(communityId: community.id)) ?? []
+        }
+    }
+
+    /// Re-reads membership and the content it unlocks (after subscribing or managing a subscription)
+    func refreshAfterSubscriptionChange() async {
+        await reloadCommunity()
+        guard let community else { return }
+        await loadUserState(for: community)
+        await loadContent(for: community)
     }
     
     /// Setup default channels for the community
@@ -179,6 +213,7 @@ class CommunityDetailViewModel: ObservableObject {
                 isUserMember = true
                 userRole = "member"
                 memberSince = Date()
+                await loadContent(for: community)
                 
                 // Create activity (only if user has a username)
                 if authService.currentUser?.username != nil {
@@ -190,8 +225,9 @@ class CommunityDetailViewModel: ObservableObject {
                     )
                 }
                 
-                print("✅ Successfully joined community: \(community.name)")
-                
+            } catch let error as CommunityJoinError {
+                if case .banned = error { isBanned = true }
+                errorMessage = error.errorDescription ?? ""
             } catch {
                 await handleError(error, context: "joining community")
             }
@@ -212,8 +248,8 @@ class CommunityDetailViewModel: ObservableObject {
                 userRole = "member"
                 canManageChannels = false
                 memberSince = nil
-                
-                print("✅ Successfully left community: \(community.name)")
+                subscription = nil
+                await loadContent(for: community)
                 
             } catch {
                 await handleError(error, context: "leaving community")
@@ -225,7 +261,7 @@ class CommunityDetailViewModel: ObservableObject {
     
     /// Reload the channel list (after a channel is created or edited)
     func reloadChannels() async {
-        guard let communityId = community?.id else { return }
+        guard let communityId = community?.id, canViewChannels else { return }
         await loadChannels(for: communityId)
     }
 
@@ -253,7 +289,6 @@ class CommunityDetailViewModel: ObservableObject {
             }
             
             channels = sortedChannels
-            print("✅ Loaded \(channels.count) channels")
             
         } catch {
             await handleError(error, context: "loading channels")
@@ -266,13 +301,14 @@ class CommunityDetailViewModel: ObservableObject {
             isUserMember = false
             userRole = "member"
             canManageChannels = false
+            subscription = nil
             return
         }
         
         do {
             // Check if user is a member
             let userCommunities = try await firebaseService.getUserCommunities(userId: userId)
-            isUserMember = userCommunities.contains { $0.id == community.id }
+            isUserMember = userCommunities.contains { $0.id == community.id } || community.createdBy == userId
             
             if isUserMember {
                 // Owners and admins can manage channels
@@ -281,30 +317,29 @@ class CommunityDetailViewModel: ObservableObject {
                 ) ?? .member
                 userRole = role.rawValue
                 canManageChannels = role == .owner || role == .admin
-                memberSince = await loadJoinDate(communityId: community.id, userId: userId)
+                let memberData = await loadMemberData(communityId: community.id, userId: userId)
+                memberSince = (memberData?["joinedAt"] as? Timestamp)?.dateValue()
+                subscription = memberData.flatMap { MemberSubscription(data: $0) }
+                isBanned = false
             } else {
                 userRole = "member"
                 canManageChannels = false
                 memberSince = nil
+                subscription = nil
+                isBanned = (try? await firebaseService.isUserBanned(communityId: community.id, userId: userId)) ?? false
             }
-            
-            print("👤 User state loaded:")
-            print("   Is member: \(isUserMember)")
-            print("   Role: \(userRole)")
-            print("   Can manage channels: \(canManageChannels)")
-            
         } catch {
             await handleError(error, context: "loading user state")
         }
     }
     
-    /// The member document's joinedAt, or nil if it's missing or can't be read
-    private func loadJoinDate(communityId: String, userId: String) async -> Date? {
+    /// The member document, or nil if it's missing or can't be read
+    private func loadMemberData(communityId: String, userId: String) async -> [String: Any]? {
         let doc = try? await Firestore.firestore()
             .collection("communities").document(communityId)
             .collection("members").document(userId)
             .getDocument()
-        return (doc?.data()?["joinedAt"] as? Timestamp)?.dateValue()
+        return doc?.data()
     }
     
     /// Check if we should prompt for channel setup

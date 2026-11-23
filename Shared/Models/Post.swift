@@ -9,6 +9,9 @@ struct Post: Identifiable, Codable {
     var content: String
     var authorId: String
     var authorUsername: String
+    /// Stored when the post is created so feeds don't look up each author. Older posts don't have them.
+    var authorFullName: String?
+    var authorAvatarURL: String?
     var likesCount: Int
     var commentsCount: Int
     var createdAt: Date
@@ -25,6 +28,9 @@ struct Post: Identifiable, Codable {
     // ✅ Enhanced content analysis
     var hashtags: [String] = []
     var mentions: [String] = []
+
+    /// Set on the server copy after repeated reports; hidden posts stay out of feeds
+    var isHidden = false
 
     // Basic initializer
     init(content: String, authorId: String, authorUsername: String) {
@@ -85,6 +91,13 @@ struct Post: Identifiable, Codable {
             "mentions": mentions
         ]
         
+        if let authorFullName {
+            data["authorFullName"] = authorFullName
+        }
+        if let authorAvatarURL, !authorAvatarURL.isEmpty {
+            data["authorAvatarURL"] = authorAvatarURL
+        }
+
         // Add trading data if exists
         if let tradingData = tradingData {
             data["tradingData"] = tradingData.toFirestore()
@@ -117,6 +130,9 @@ struct Post: Identifiable, Codable {
         post.imageUrls = data["imageUrls"] as? [String] ?? []
         post.hashtags = data["hashtags"] as? [String] ?? []
         post.mentions = data["mentions"] as? [String] ?? []
+        post.authorFullName = (data["authorFullName"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        post.authorAvatarURL = (data["authorAvatarURL"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        post.isHidden = data["isHidden"] as? Bool ?? false
         
         // Load trading data if exists
         if let tradingDataDict = data["tradingData"] as? [String: Any] {

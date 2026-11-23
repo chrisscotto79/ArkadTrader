@@ -3,6 +3,7 @@
 
 import Foundation
 import SwiftUI
+import FirebaseFirestore
 
 struct TradeCallout: Codable, Equatable {
     enum Direction: String, Codable, CaseIterable {
@@ -62,6 +63,53 @@ struct TradeCallout: Codable, Equatable {
     var note: String?
     var status: Status = .open
 
+    // Track record. The app sets these three when the callout is created.
+    var authorId: String? = nil
+    var communityId: String? = nil
+    var postedAt: Date? = nil
+
+    // Written by the server's price checks while the callout is open.
+    var lastPrice: Double? = nil
+    var lastPriceAt: Date? = nil
+
+    // Set when the callout closes (by the server, or by the author closing it).
+    var exitPrice: Double? = nil
+    var closedAt: Date? = nil
+    /// Signed percent move for the callout's direction; positive is a gain.
+    var resultPercent: Double? = nil
+
+    var isOpen: Bool { status == .open }
+
+    /// Live move from entry to the last checked price, for open callouts.
+    var livePercent: Double? {
+        guard isOpen, let lastPrice, lastPrice > 0 else { return nil }
+        return percentMove(to: lastPrice)
+    }
+
+    /// Final result of a closed callout. Falls back to the exit price for older docs.
+    var finalPercent: Double? {
+        guard !isOpen else { return nil }
+        if let resultPercent { return resultPercent }
+        if let exitPrice, exitPrice > 0 { return percentMove(to: exitPrice) }
+        return nil
+    }
+
+    /// Where a price sits between the stop (0) and the target (1). Works for longs and shorts.
+    /// Nil unless both a stop and a target are set.
+    func progress(at price: Double) -> Double? {
+        guard let stop = stopPrice, let target = targetPrice, target != stop else { return nil }
+        return (price - stop) / (target - stop)
+    }
+
+    /// The same callout with the fields the app must set when posting it.
+    func stamped(authorId: String, communityId: String, postedAt: Date = Date()) -> TradeCallout {
+        var copy = self
+        copy.authorId = authorId
+        copy.communityId = communityId
+        copy.postedAt = postedAt
+        return copy
+    }
+
     /// Reward-to-risk ratio, when both a stop and a target are set.
     var riskReward: Double? {
         guard let stop = stopPrice, let target = targetPrice else { return nil }
@@ -113,12 +161,20 @@ struct TradeCallout: Codable, Equatable {
         if let stopPrice { data["stopPrice"] = stopPrice }
         if let targetPrice { data["targetPrice"] = targetPrice }
         if let note, !note.isEmpty { data["note"] = note }
+        if let authorId { data["authorId"] = authorId }
+        if let communityId { data["communityId"] = communityId }
+        if let postedAt { data["postedAt"] = Timestamp(date: postedAt) }
+        if let lastPrice { data["lastPrice"] = lastPrice }
+        if let lastPriceAt { data["lastPriceAt"] = Timestamp(date: lastPriceAt) }
+        if let exitPrice { data["exitPrice"] = exitPrice }
+        if let closedAt { data["closedAt"] = Timestamp(date: closedAt) }
+        if let resultPercent { data["resultPercent"] = resultPercent }
         return data
     }
 
     static func fromFirestore(_ data: [String: Any]) -> TradeCallout? {
         guard let ticker = data["ticker"] as? String,
-              let entry = (data["entryPrice"] as? Double) ?? (data["entryPrice"] as? Int).map(Double.init) else {
+              let entry = TrackRecordDecode.double(data["entryPrice"]) else {
             return nil
         }
         return TradeCallout(
@@ -126,10 +182,18 @@ struct TradeCallout: Codable, Equatable {
             assetType: TradeType(rawValue: data["assetType"] as? String ?? "") ?? .stock,
             direction: Direction(rawValue: data["direction"] as? String ?? "") ?? .long,
             entryPrice: entry,
-            stopPrice: data["stopPrice"] as? Double,
-            targetPrice: data["targetPrice"] as? Double,
+            stopPrice: TrackRecordDecode.double(data["stopPrice"]),
+            targetPrice: TrackRecordDecode.double(data["targetPrice"]),
             note: data["note"] as? String,
-            status: Status(rawValue: data["status"] as? String ?? "") ?? .open
+            status: Status(rawValue: data["status"] as? String ?? "") ?? .open,
+            authorId: data["authorId"] as? String,
+            communityId: data["communityId"] as? String,
+            postedAt: TrackRecordDecode.date(data["postedAt"]),
+            lastPrice: TrackRecordDecode.double(data["lastPrice"]),
+            lastPriceAt: TrackRecordDecode.date(data["lastPriceAt"]),
+            exitPrice: TrackRecordDecode.double(data["exitPrice"]),
+            closedAt: TrackRecordDecode.date(data["closedAt"]),
+            resultPercent: TrackRecordDecode.double(data["resultPercent"])
         )
     }
 }

@@ -93,17 +93,32 @@ struct CommunityMessage: Identifiable, Codable {
     var content: String
     var authorId: String
     var authorUsername: String
+    /// Author's photo when the message was sent (newer messages only)
+    var authorAvatarURL: String?
     var channelId: String
     var communityId: String
     var createdAt: Date
     /// Structured trade callout, when this message is one
     var callout: TradeCallout?
-    
-    init(content: String, authorId: String, authorUsername: String, channelId: String, communityId: String) {
+
+    // Editing and moderation (docs/backend-contracts.md, section 1)
+    var editedAt: Date?
+    /// Soft delete: the content is cleared and the row shows "Message deleted"
+    var isDeleted: Bool = false
+    var deletedBy: String?
+    var deletedAt: Date?
+    var isPinned: Bool = false
+    var pinnedBy: String?
+    var pinnedAt: Date?
+
+    var isEdited: Bool { editedAt != nil }
+
+    init(content: String, authorId: String, authorUsername: String, channelId: String, communityId: String, authorAvatarURL: String? = nil) {
         self.id = UUID().uuidString
         self.content = content
         self.authorId = authorId
         self.authorUsername = authorUsername
+        self.authorAvatarURL = authorAvatarURL
         self.channelId = channelId
         self.communityId = communityId
         self.createdAt = Date()
@@ -117,9 +132,13 @@ struct CommunityMessage: Identifiable, Codable {
             "authorUsername": authorUsername,
             "channelId": channelId,
             "communityId": communityId,
-            "createdAt": Timestamp(date: createdAt)
+            "createdAt": Timestamp(date: createdAt),
+            "isDeleted": isDeleted,
+            "isPinned": isPinned
         ]
+        if let authorAvatarURL, !authorAvatarURL.isEmpty { data["authorAvatarURL"] = authorAvatarURL }
         if let callout { data["callout"] = callout.toFirestore() }
+        if let editedAt { data["editedAt"] = Timestamp(date: editedAt) }
         return data
     }
     
@@ -138,11 +157,19 @@ struct CommunityMessage: Identifiable, Codable {
             authorId: authorId,
             authorUsername: authorUsername,
             channelId: channelId,
-            communityId: communityId
+            communityId: communityId,
+            authorAvatarURL: data["authorAvatarURL"] as? String
         )
         message.id = id
         message.createdAt = createdAtTimestamp.dateValue()
-        if let calloutData = data["callout"] as? [String: Any] {
+        message.editedAt = (data["editedAt"] as? Timestamp)?.dateValue()
+        message.isDeleted = data["isDeleted"] as? Bool ?? false
+        message.deletedBy = data["deletedBy"] as? String
+        message.deletedAt = (data["deletedAt"] as? Timestamp)?.dateValue()
+        message.isPinned = data["isPinned"] as? Bool ?? false
+        message.pinnedBy = data["pinnedBy"] as? String
+        message.pinnedAt = (data["pinnedAt"] as? Timestamp)?.dateValue()
+        if !message.isDeleted, let calloutData = data["callout"] as? [String: Any] {
             message.callout = TradeCallout.fromFirestore(calloutData)
         }
         return message

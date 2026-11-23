@@ -27,7 +27,7 @@ extension CommunitiesView {
         EmptyStateView(
             systemImage: "trophy.fill",
             title: "Join a community first",
-            message: "Each community ranks its members by their closed trades. Join one to see where you stand, or check the global board.",
+            message: "Each community ranks its members by their closed callouts. Join one to see where you stand, or check the global board.",
             actionTitle: "Discover communities",
             action: goToDiscover
         )

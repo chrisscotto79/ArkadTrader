@@ -481,19 +481,11 @@ class CommunityFirebaseService: ObservableObject {
             throw FirestoreError.invalidData
         }
         
-        // Remove from the members subcollection
-        let db = Firestore.firestore()
-        try await db.collection("communities")
-            .document(communityId)
-            .collection("members")
-            .document(userId)
-            .delete()
-        
-        // Also remove community from user's communityIds array
-        try await leaveCommunity(communityId: communityId, userId: userId)
+        // One batch: delete the member doc, decrement memberCount, update their communityIds
+        try await FirebaseServices.shared.removeMember(communityId: communityId, userId: userId)
     }
     /// Get single community (helper method). Reads the document directly so private communities work too.
-    private func getSingleCommunity(communityId: String) async throws -> Community {
+    func getSingleCommunity(communityId: String) async throws -> Community {
         let snapshot = try await Firestore.firestore().collection("communities").document(communityId).getDocument()
         guard let data = snapshot.data() else {
             throw CommunityError.noCommunity

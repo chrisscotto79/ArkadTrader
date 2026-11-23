@@ -85,7 +85,8 @@ struct MessageSearchSheet: View {
 
         let query = searchText.lowercased()
         searchResults = messages.filter { message in
-            message.content.lowercased().contains(query) ||
+            guard !message.isDeleted else { return false }
+            return message.content.lowercased().contains(query) ||
             message.authorUsername.lowercased().contains(query) ||
             (userCache[message.authorId]?.fullName.lowercased().contains(query) ?? false)
         }
@@ -103,7 +104,7 @@ struct SearchMessageRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: DS.Spacing.m) {
-                UserAvatar(username: message.authorUsername, imageURL: author?.profileImageUrl, size: 32)
+                UserAvatar(username: message.authorUsername, imageURL: message.authorAvatarURL ?? author?.profileImageUrl, size: 32)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {

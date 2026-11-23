@@ -1,0 +1,82 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f6f6f4;
+  --text: #16181d;
+  --muted: #5b6070;
+  --border: #e3e3df;
+  --accent: #a07a1e;
+  --accent-strong: #7d5e12;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --surface: #181b21;
+    --text: #e9eaee;
+    --muted: #a0a5b2;
+    --border: #2a2e37;
+    --accent: #d8b25a;
+    --accent-strong: #ecc96f;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+a { color: var(--accent-strong); }
+header.site, footer.site {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+header.site { border-bottom: 1px solid var(--border); }
+footer.site { border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.02em; color: var(--text); text-decoration: none; }
+nav a { margin-left: 18px; color: var(--muted); text-decoration: none; font-size: 15px; }
+nav a:hover { color: var(--text); }
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 56px; }
+.doc h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; }
+.doc h2 { font-size: 21px; margin: 36px 0 8px; }
+.doc h3 { font-size: 18px; margin: 28px 0 6px; }
+.doc p, .doc li { overflow-wrap: anywhere; }
+.doc ul { padding-left: 22px; }
+.doc li { margin: 6px 0; }
+blockquote {
+  margin: 20px 0;
+  padding: 14px 18px;
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+blockquote p { margin: 0; }
+.hero { padding-top: 56px; }
+.hero h1 { font-size: 40px; line-height: 1.1; margin: 0 0 14px; }
+.hero p.lead { font-size: 20px; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 32px 0; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+.card h2 { font-size: 17px; margin: 0 0 6px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.fine { color: var(--muted); font-size: 14px; }
+.button {
+  display: inline-block;
+  padding: 12px 20px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #111;
+  font-weight: 600;
+  text-decoration: none;
+}
+@media (max-width: 480px) {
+  body { font-size: 16px; }
+  .hero h1 { font-size: 32px; }
+  .doc h1 { font-size: 27px; }
+  nav a { margin-left: 12px; }
+}

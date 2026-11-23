@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Detail/CommunitySettingsSheet.swift
-// Community settings sheet for owners and admins, including custom rules.
+// Community settings sheet for owners and admins, including custom rules and pricing (free or paid).
 
 import SwiftUI
 import PhotosUI
@@ -9,6 +9,7 @@ struct EnhancedCommunitySettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CommunitySettingsViewModel
     @State private var showingDeleteAlert = false
+    @State private var showPayouts = false
 
     init(community: Community) {
         self.community = community
@@ -25,6 +26,7 @@ struct EnhancedCommunitySettingsSheet: View {
                     detailsSection
                     imagesSection
                     saveSection
+                    membershipSection
                     membersSection
                     dangerSection
                 } else {
@@ -106,6 +108,14 @@ struct EnhancedCommunitySettingsSheet: View {
                     await viewModel.loadCommunityRules()
                 }
             }
+        }
+        .task {
+            await viewModel.loadPayoutStatus()
+        }
+        .sheet(isPresented: $showPayouts, onDismiss: {
+            Task { await viewModel.loadPayoutStatus() }
+        }) {
+            PayoutsSheet()
         }
         .sheet(isPresented: $viewModel.showingAddRule) {
             AddCustomRuleSheet { title, description, isRequired in
@@ -413,6 +423,107 @@ struct EnhancedCommunitySettingsSheet: View {
         }
     }
 
+    // MARK: - Membership price (owner)
+
+    private var membershipSection: some View {
+        Section {
+            Picker("Membership", selection: $viewModel.pricingIsPaid) {
+                Text("Free").tag(false)
+                Text("Paid").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .padding(.vertical, DS.Spacing.xs)
+
+            if viewModel.pricingIsPaid {
+                if viewModel.canChargeMembers {
+                    paidPricingRows
+                } else {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text(viewModel.payoutStatus?.stage == .inReview ? "Payouts are in review" : "Set up payouts first")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Stripe needs to approve your payout account before members can pay.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Set up payouts") { showPayouts = true }
+                            .buttonStyle(PillButtonStyle(kind: .gold))
+                            .padding(.top, DS.Spacing.xs)
+                    }
+                    .padding(.vertical, DS.Spacing.xs)
+                }
+            }
+
+            if let error = viewModel.pricingError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.marketRed)
+            } else if viewModel.pricingSaved && !viewModel.hasPricingChanges {
+                Label("Pricing saved", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.marketGreen)
+            }
+
+            if viewModel.hasPricingChanges {
+                Button {
+                    Task { await viewModel.savePricing() }
+                } label: {
+                    HStack(spacing: DS.Spacing.s) {
+                        if viewModel.isSavingPricing {
+                            ProgressView()
+                        }
+                        Text(viewModel.pricingIsPaid ? "Save price" : "Make community free")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .disabled(!viewModel.canSavePricing)
+            }
+        } header: {
+            Text("Membership")
+        } footer: {
+            Text("Arkad keeps \(CommunityPricing.feePercentText) of each payment. \(CommunityPricing.processingFeeNote)")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    @ViewBuilder
+    private var paidPricingRows: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            fieldLabel("Monthly price")
+            HStack(spacing: DS.Spacing.xs) {
+                Text("$")
+                    .foregroundStyle(.secondary)
+                TextField("9.99", text: $viewModel.pricingPriceText)
+                    .keyboardType(.decimalPad)
+                    .font(.body.monospacedDigit())
+                Text("/ month")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, DS.Spacing.m)
+            .frame(height: 44)
+            .background(fieldBackground)
+
+            if let message = viewModel.pricingValidationMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(Color.marketRed)
+            }
+        }
+        .padding(.vertical, DS.Spacing.xs)
+
+        Picker("Free trial", selection: $viewModel.pricingTrialDays) {
+            ForEach(CommunityPricing.trialOptions, id: \.self) { days in
+                Text(CommunityPricing.trialChipTitle(days)).tag(days)
+            }
+        }
+
+        if let price = viewModel.pricingPrice, viewModel.pricingValidationMessage == nil {
+            CommunityEarningsBreakdown(price: price)
+                .padding(.vertical, DS.Spacing.xs)
+        }
+    }
+
     // MARK: - Members (owner)
 
     private var membersSection: some View {
@@ -489,6 +600,7 @@ struct EnhancedCommunitySettingsSheet: View {
             .padding(.vertical, DS.Spacing.xs)
 
             LabeledContent("Privacy", value: community.isPrivate ? "Private" : "Public")
+            LabeledContent("Membership", value: community.priceTagText ?? "Free")
             LabeledContent("Members", value: community.memberCount.formatted())
         } header: {
             Text("Community info")

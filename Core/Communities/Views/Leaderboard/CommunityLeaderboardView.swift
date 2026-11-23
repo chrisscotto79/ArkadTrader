@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Leaderboard/CommunityLeaderboardView.swift
-// A community's leaderboard: members ranked by their closed trades, plus member search.
+// A community's leaderboard: traders ranked by their closed callouts in this community, plus member search.
 
 import SwiftUI
 
@@ -46,7 +46,6 @@ struct CommunityLeaderboardView: View {
             members = (try? await authService.getCommunityMembers(communityId: community.id)) ?? []
         }
         .onChange(of: viewModel.category) { _, _ in viewModel.reload(communityId: community.id) }
-        .onChange(of: viewModel.timeframe) { _, _ in viewModel.reload(communityId: community.id) }
         .sheet(item: $profileUser) { user in
             OtherUserProfileView(user: user)
                 .environmentObject(authService)
@@ -70,13 +69,18 @@ struct CommunityLeaderboardView: View {
             }
 
             // The filter bar's chips bleed to the screen edges; it expects a page-margin container.
-            LeaderboardFilterBar(category: $viewModel.category, timeframe: $viewModel.timeframe)
+            LeaderboardFilterBar(category: $viewModel.category)
 
             if let mine = viewModel.entry(for: currentUserId), mine.rank > 3 {
                 yourRank(mine)
             }
 
             rankings
+
+            if let currentUserId, viewModel.entry(for: currentUserId) == nil,
+               !viewModel.isLoading, viewModel.errorMessage.isEmpty {
+                yourRecordHere(userId: currentUserId)
+            }
         }
     }
 
@@ -99,7 +103,7 @@ struct CommunityLeaderboardView: View {
             EmptyStateView(
                 systemImage: "trophy",
                 title: "No rankings yet",
-                message: emptyDetail
+                message: "Rankings appear once traders have \(TraderStats.minimumClosedCallouts) closed callouts in \(community.name)."
             )
             .cardStyle(padding: 0)
         } else {
@@ -109,16 +113,6 @@ struct CommunityLeaderboardView: View {
                 currentUserId: currentUserId,
                 onSelect: { openProfile(userId: $0.userId) }
             )
-        }
-    }
-
-    private var emptyDetail: String {
-        let window = viewModel.timeframe == .allTime ? "" : " this \(viewModel.timeframe.displayName.lowercased())"
-        switch viewModel.category {
-        case .consistencyMasters, .riskMasters:
-            return "Members need at least \(CommunityLeaderboardService.minimumTradesForRatios) closed trades\(window) to rank here."
-        default:
-            return "Close a trade in your portfolio\(window) to get on the board."
         }
     }
 
@@ -132,6 +126,18 @@ struct CommunityLeaderboardView: View {
             LeaderboardRow(entry: entry, category: viewModel.category, isCurrentUser: true)
                 .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
                 .cardStyle(padding: 0)
+        }
+    }
+
+    /// Not ranked yet: show the viewer how far along their record in this community is.
+    private func yourRecordHere(userId: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("YOUR RECORD HERE")
+                .font(.caption.weight(.semibold))
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+                .padding(.leading, DS.Spacing.xs)
+            TrackRecordCard(userId: userId, communityId: community.id)
         }
     }
 

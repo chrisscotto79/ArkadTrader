@@ -1,5 +1,6 @@
 // Fixed HomeViewModel.swift - No new files, just fix the existing code
 import Foundation
+import Combine
 import Firebase
 import FirebaseStorage
 
@@ -176,6 +177,8 @@ class HomeViewModel: ObservableObject {
     }
     
     private let authService = FirebaseAuthService.shared
+    private let blockStore = BlockStore.shared
+    private var cancellables = Set<AnyCancellable>()
     private var currentPage = 0
     private let postsPerPage = 20
     
@@ -188,6 +191,17 @@ class HomeViewModel: ObservableObject {
     
     // MARK: - Initialization
     init() {
+        // Drop a person's posts as soon as they're blocked (from a profile, chat, anywhere)
+        blockStore.$blockedIds
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] blockedIds in
+                MainActor.assumeIsolated {
+                    self?.removePosts(fromAuthors: blockedIds)
+                }
+            }
+            .store(in: &cancellables)
+
         // Monitor authentication state
         Task {
             // Wait for authentication to complete
@@ -206,9 +220,9 @@ class HomeViewModel: ObservableObject {
         currentPage = 0
         
         do {
-            // FIXED: Complete the getFeedPosts() method call
+            await blockStore.loadIfNeeded()
             let allPosts = try await authService.getFeedPosts()
-            posts = allPosts
+            posts = allPosts.filter(isVisible)
             
             // Load user interactions
             await loadUserInteractions()
@@ -250,10 +264,9 @@ class HomeViewModel: ObservableObject {
     /// Without a postType, it's guessed from the text (for callers that don't have the composer's choice)
     func createPost(content: String, tickers: [String] = [], images: [UIImage] = [],
                     postType chosenType: PostType? = nil, tradingData: TradingData? = nil) async {
-        guard let userId = authService.currentUser?.id,
-              let username = authService.currentUser?.username else { return }
-        
-        print("🔄 Creating post with \(images.count) images")
+        guard let currentUser = authService.currentUser else { return }
+        let userId = currentUser.id
+        let username = currentUser.username
         
         let postType = chosenType ?? determinePostType(from: content)
         
@@ -292,6 +305,8 @@ class HomeViewModel: ObservableObject {
             tickers: tickers,
             imageUrls: imageUrls // ✅ FIXED: Use actual uploaded URLs
         )
+        newPost.authorFullName = currentUser.fullName
+        newPost.authorAvatarURL = currentUser.profileImageUrl
         
         // Trade numbers come from the composer's Trade Details; fall back to a "P&L: $50" line in the text
         if postType == .tradeResult {
@@ -406,22 +421,32 @@ class HomeViewModel: ObservableObject {
     }
     
     func blockUser(_ userId: String) async {
-        guard let currentUserId = authService.currentUser?.id else { return }
-        
         do {
-            // Store block in Firebase
-            try await authService.blockUser(userId: userId, blockedBy: currentUserId)
-            
-            // Remove posts from blocked user
-            posts.removeAll { $0.authorId == userId }
-            followingPosts.removeAll { $0.authorId == userId }
-            
+            // Also removes follows both ways; the store's update drops their posts here
+            try await blockStore.block(userId)
+            removePosts(fromAuthors: [userId])
         } catch {
             errorMessage = "Failed to block user: \(error.localizedDescription)"
             showError = true
         }
     }
     
+    // MARK: - Blocked and hidden posts
+
+    /// Hidden by reports, reported by you, or written by someone you blocked
+    private func isVisible(_ post: Post) -> Bool {
+        !post.isHidden
+            && !hiddenPosts.contains(post.id)
+            && !reportedPostsByUser.contains(post.id)
+            && !blockStore.isBlocked(post.authorId)
+    }
+
+    private func removePosts(fromAuthors authorIds: Set<String>) {
+        guard !authorIds.isEmpty else { return }
+        posts.removeAll { authorIds.contains($0.authorId) }
+        followingPosts.removeAll { authorIds.contains($0.authorId) }
+    }
+
     // MARK: - Firebase Sync Methods
     private func syncLikeWithFirebase(postId: String, isLiked: Bool) async {
         guard let userId = authService.currentUser?.id else { return }
@@ -496,42 +521,14 @@ class HomeViewModel: ObservableObject {
     }
     
     private func loadUserInteractions() async {
-        print("🔍 === LOADING USER INTERACTIONS ===")
-        print("📱 Is authenticated: \(authService.isAuthenticated)")
-        print("👤 Current user: \(authService.currentUser?.username ?? "nil")")
-        print("🆔 Current user ID: \(authService.currentUser?.id ?? "nil")")
-        
-        guard let userId = authService.currentUser?.id else {
-            print("❌ No user ID found - SKIPPING like loading")
-            return
-        }
-        
-        print("🔄 Fetching liked posts for user: \(userId)")
-        
+        guard let userId = authService.currentUser?.id else { return }
+
         do {
-            let fetchedLikes = try await authService.getUserLikedPosts(userId: userId)
-            print("✅ Firebase returned \(fetchedLikes.count) liked posts:")
-            print("📝 Liked post IDs: \(fetchedLikes)")
-            
-            await MainActor.run {
-                likedPosts = fetchedLikes
-                print("💾 Updated likedPosts in HomeViewModel: \(likedPosts)")
-            }
-            
-            let fetchedBookmarks = try await authService.getUserBookmarkedPosts(userId: userId)
-            print("✅ Firebase returned \(fetchedBookmarks.count) bookmarked posts")
-            
-            await MainActor.run {
-                bookmarkedPosts = fetchedBookmarks
-            }
-            
+            likedPosts = try await authService.getUserLikedPosts(userId: userId)
+            bookmarkedPosts = try await authService.getUserBookmarkedPosts(userId: userId)
         } catch {
-            print("❌ ERROR loading user interactions: \(error)")
-            print("📋 Error details: \(error.localizedDescription)")
+            // Likes and bookmarks just show as unset; the feed itself still loads.
         }
-        
-        print("🏁 === FINISHED LOADING USER INTERACTIONS ===")
-    
     }
     
     // MARK: - Post Filtering and Categorization

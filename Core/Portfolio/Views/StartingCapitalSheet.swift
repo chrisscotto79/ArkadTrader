@@ -69,7 +69,7 @@ struct StartingCapitalSheet: View {
     private var quickAmountChips: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.s), count: 3), spacing: DS.Spacing.s) {
             ForEach(quickAmounts, id: \.self) { amount in
-                Button(amount.asCurrency) {
+                Button(amount.asWholeCurrency) {
                     UISelectionFeedbackGenerator().selectionChanged()
                     startingCapitalInput = String(format: "%.0f", amount)
                 }

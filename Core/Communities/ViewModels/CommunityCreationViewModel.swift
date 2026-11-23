@@ -13,12 +13,23 @@ class CommunityCreationViewModel: ObservableObject {
     @Published var description = ""
     @Published var type: CommunityType = .general
     @Published var isPrivate = false
+
+    // Pricing (paid communities go through Stripe Connect)
+    @Published var isPaid = false
+    @Published var priceText = ""
+    @Published var trialDays = 0
+    /// The owner's Stripe account; nil until loaded
+    @Published var payoutStatus: StripeAccountStatus?
+    @Published var isLoadingPayoutStatus = false
+    @Published var payoutStatusFailed = false
     
     // State
     @Published var isCreating = false
     @Published var showError = false
     @Published var showSuccess = false
     @Published var errorMessage = ""
+    /// Body of the success alert
+    @Published var successMessage = ""
     
     // Validation
     @Published var isFormValid = false
@@ -142,7 +153,6 @@ class CommunityCreationViewModel: ObservableObject {
             }
         } catch {
             // Don't update validation state if name check fails
-            print("Error checking name availability: \(error)")
         }
     }
     
@@ -158,6 +168,36 @@ class CommunityCreationViewModel: ObservableObject {
         return ""
     }
     
+    // MARK: - Pricing
+
+    /// Paid communities need finished payout setup (`stripeAccounts/{uid}.chargesEnabled`)
+    var canChargeMembers: Bool { payoutStatus?.chargesEnabled == true }
+
+    var price: Double? { CommunityPricing.parsePrice(priceText) }
+
+    /// nil when the price is fine (or the community is free)
+    var priceValidationMessage: String? {
+        guard isPaid else { return nil }
+        return CommunityPricing.validationMessage(for: priceText)
+    }
+
+    /// The pricing step can continue: free, or paid with payouts ready and a valid price
+    var isPricingValid: Bool {
+        !isPaid || (canChargeMembers && priceValidationMessage == nil)
+    }
+
+    func loadPayoutStatus() async {
+        guard let userId = authService.currentUser?.id else { return }
+        isLoadingPayoutStatus = true
+        payoutStatusFailed = false
+        do {
+            payoutStatus = try await PaymentsService.stripeAccount(userId: userId)
+        } catch {
+            payoutStatusFailed = true
+        }
+        isLoadingPayoutStatus = false
+    }
+
     // MARK: - Public Methods
     
     /// Create the community
@@ -189,8 +229,27 @@ class CommunityCreationViewModel: ObservableObject {
                     isPrivate: isPrivate
                 )
                 
+                // Every community starts free; a paid price is set through setCommunityPrice afterwards
                 try await communityService.createCommunity(community)
                 
+                let createdName = community.name
+                if isPaid, let price = self.price {
+                    do {
+                        try await PaymentsService.setCommunityPrice(
+                            communityId: community.id,
+                            isPaid: true,
+                            priceMonthly: price,
+                            trialDays: trialDays
+                        )
+                        successMessage = "\(createdName) is ready at \(CommunityPricing.format(price))/mo. Share it with traders who want your callouts."
+                    } catch {
+                        let reason = CloudFunctions.friendlyMessage(for: error)
+                        successMessage = "\(createdName) was created as a free community. We couldn't set the price: \(reason) You can set it later in community settings."
+                    }
+                } else {
+                    successMessage = "\(createdName) is ready. Invite traders to join you."
+                }
+
                 // Success!
                 showSuccess = true
                 resetForm()
@@ -210,6 +269,9 @@ class CommunityCreationViewModel: ObservableObject {
         description = ""
         type = .general
         isPrivate = false
+        isPaid = false
+        priceText = ""
+        trialDays = 0
         nameValidation = .none
         descriptionValidation = .none
         errorMessage = ""

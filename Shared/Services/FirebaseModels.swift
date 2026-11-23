@@ -176,35 +176,40 @@ struct Conversation: Identifiable, Codable {
 
 // MARK: - User Notification Model
 
+/// A `notifications/{id}` document. Cloud Functions create these; the app only reads
+/// them and sets `isRead` (docs/backend-contracts.md, section 2).
 struct UserNotification: Identifiable {
     let id: String
     let userId: String
+    /// "callout", "callout_result", "mention", "reply", "like", "follow",
+    /// "member_joined", "subscription" or "price_alert"
     let type: String
     let title: String
     let body: String
+    /// Deep-link keys: `route` plus optional ids (see `DeepLink`)
     let data: [String: Any]
-    let isRead: Bool
+    var isRead: Bool
     let createdAt: Date
-    
+
+    /// Where tapping this notification should go, if anywhere
+    var deepLink: DeepLink? { DeepLink(data: data) }
+
     static func fromFirestore(data: [String: Any], id: String) throws -> UserNotification {
         guard let userId = data["userId"] as? String,
               let type = data["type"] as? String,
-              let title = data["title"] as? String,
-              let body = data["body"] as? String,
-              let isRead = data["isRead"] as? Bool,
-              let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() else {
+              let title = data["title"] as? String else {
             throw FirestoreError.invalidData
         }
-        
+
         return UserNotification(
             id: id,
             userId: userId,
             type: type,
             title: title,
-            body: body,
+            body: data["body"] as? String ?? "",
             data: data["data"] as? [String: Any] ?? [:],
-            isRead: isRead,
-            createdAt: createdAt
+            isRead: data["isRead"] as? Bool ?? false,
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
         )
     }
 }

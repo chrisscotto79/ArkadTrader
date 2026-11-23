@@ -39,6 +39,19 @@ class CommunitySettingsViewModel: ObservableObject {
     @Published var bannerUploadProgress: Double = 0
     @Published var showingImagePicker = false
     @Published var imagePickerType: ImagePickerType = .avatar
+
+    // Pricing (owner only). Saved through the setCommunityPrice function, never written directly.
+    @Published var pricingIsPaid: Bool
+    @Published var pricingPriceText: String
+    @Published var pricingTrialDays: Int
+    @Published var payoutStatus: StripeAccountStatus?
+    @Published var isSavingPricing = false
+    @Published var pricingError: String?
+    @Published var pricingSaved = false
+    /// The saved pricing, updated after a successful save
+    @Published private(set) var savedIsPaid: Bool
+    @Published private(set) var savedPrice: Double?
+    @Published private(set) var savedTrialDays: Int
     
     private let community: Community
     private let communityService = CommunityFirebaseService.shared
@@ -48,6 +61,12 @@ class CommunitySettingsViewModel: ObservableObject {
     init(community: Community) {
         self.community = community
         self.settings = CommunitySettings(from: community)
+        self.pricingIsPaid = community.isPaid
+        self.pricingPriceText = CommunityPricing.inputText(for: community.priceMonthly)
+        self.pricingTrialDays = community.trialDays
+        self.savedIsPaid = community.isPaid
+        self.savedPrice = community.priceMonthly
+        self.savedTrialDays = community.trialDays
         
         // Set up image selection handlers
         setupImageHandlers()
@@ -535,17 +554,67 @@ class CommunitySettingsViewModel: ObservableObject {
         settings.bannerURL != community.bannerURL
     }
     
+    // MARK: - Pricing
+
+    var canChargeMembers: Bool { payoutStatus?.chargesEnabled == true }
+
+    var pricingPrice: Double? { CommunityPricing.parsePrice(pricingPriceText) }
+
+    var pricingValidationMessage: String? {
+        guard pricingIsPaid else { return nil }
+        return CommunityPricing.validationMessage(for: pricingPriceText)
+    }
+
+    var hasPricingChanges: Bool {
+        if pricingIsPaid != savedIsPaid { return true }
+        guard pricingIsPaid else { return false }
+        return pricingPrice != savedPrice || pricingTrialDays != savedTrialDays
+    }
+
+    var canSavePricing: Bool {
+        guard hasPricingChanges, !isSavingPricing else { return false }
+        if pricingIsPaid {
+            return canChargeMembers && pricingValidationMessage == nil
+        }
+        return true
+    }
+
+    func loadPayoutStatus() async {
+        guard isOwner, let userId = authService.currentUser?.id else { return }
+        payoutStatus = try? await PaymentsService.stripeAccount(userId: userId)
+    }
+
+    func savePricing() async {
+        guard isOwner, canSavePricing else { return }
+        isSavingPricing = true
+        pricingError = nil
+        pricingSaved = false
+        do {
+            let price = pricingIsPaid ? pricingPrice : nil
+            try await PaymentsService.setCommunityPrice(
+                communityId: community.id,
+                isPaid: pricingIsPaid,
+                priceMonthly: price,
+                trialDays: pricingIsPaid ? pricingTrialDays : 0
+            )
+            savedIsPaid = pricingIsPaid
+            savedPrice = price
+            savedTrialDays = pricingIsPaid ? pricingTrialDays : 0
+            pricingSaved = true
+        } catch {
+            pricingError = CloudFunctions.friendlyMessage(for: error)
+        }
+        isSavingPricing = false
+    }
+
     // MARK: - Member Management
     func loadMembers() async {
-        print("🏁 Starting to load members for community: \(community.id)")
         isLoadingMembers = true
         errorMessage = ""
         
         do {
             members = try await communityService.getCommunityMembersWithRoles(communityId: community.id)
-            print("✅ Successfully loaded \(members.count) members")
         } catch {
-            print("❌ Failed to load members: \(error)")
             errorMessage = "Failed to load members: \(error.localizedDescription)"
         }
         

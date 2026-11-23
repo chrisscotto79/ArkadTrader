@@ -1,6 +1,7 @@
 // File: Core/Communities/Views/Detail/ChatMessageRow.swift
 // A single chat message: grouped bubble (yours in gold on the right, others' on the left),
-// author line, media, callout card and reactions. Long-press for reply / react / copy / edit / delete.
+// author line, media, callout card and reactions. Long-press for reply / react / copy / edit /
+// pin / report / delete. Deleted messages show as a muted "Message deleted" row.
 
 import SwiftUI
 import UIKit
@@ -25,11 +26,14 @@ struct EnhancedMessageRowWithReactions: View {
     let currentUserId: String
     /// Used to highlight @mentions of the current user
     var currentUsername: String = ""
-    var canManageCallout: Bool = false
     var onTrackCallout: () -> Void = {}
-    var onUpdateCalloutStatus: (TradeCallout.Status) -> Void = { _ in }
     /// Last message of a group: shows the time and the rounded tail corner
     var isLastInGroup: Bool = true
+    /// Owners, admins and moderators can pin
+    var canPin: Bool = false
+    var onTogglePin: () -> Void = {}
+    /// Report this message (nil for your own messages)
+    var onReport: (() -> Void)? = nil
 
     @Environment(\.openURL) private var openURL
 
@@ -50,18 +54,19 @@ struct EnhancedMessageRowWithReactions: View {
                     authorLine
                 }
 
-                messageContent
-                    .contextMenu { contextActions }
+                if message.isDeleted {
+                    deletedBubble
+                } else {
+                    messageContent
+                        .contextMenu { contextActions }
 
-                if !reactions.isEmpty {
-                    reactionsRow
+                    if !reactions.isEmpty {
+                        reactionsRow
+                    }
                 }
 
-                if isLastInGroup && isUserMessage {
-                    Text(formatTime(message.createdAt))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                if showsFooter {
+                    footerLine
                 }
             }
 
@@ -75,13 +80,19 @@ struct EnhancedMessageRowWithReactions: View {
 
     // MARK: - Avatar & author
 
+    /// Photo stored on the message when it was sent, else the author's current one
+    private var avatarURL: String? {
+        if let stored = message.authorAvatarURL, !stored.isEmpty { return stored }
+        return author?.profileImageUrl
+    }
+
     @ViewBuilder
     private var avatarColumn: some View {
         if showUsername {
             Button {
                 if let author { onProfileTap(author) }
             } label: {
-                UserAvatar(username: message.authorUsername, imageURL: author?.profileImageUrl, size: avatarSize)
+                UserAvatar(username: message.authorUsername, imageURL: avatarURL, size: avatarSize)
             }
             .buttonStyle(PressableStyle())
             .accessibilityLabel("View \(message.authorUsername)'s profile")
@@ -140,6 +151,62 @@ struct EnhancedMessageRowWithReactions: View {
         }
     }
 
+    // MARK: - Deleted, edited, pinned
+
+    private var deletedBubble: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "trash")
+                .font(.caption)
+            Text("Message deleted")
+                .font(.subheadline)
+                .italic()
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .overlay(bubbleShape.stroke(Color.hairline, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Message deleted")
+    }
+
+    private var isEditedVisible: Bool {
+        message.isEdited && !message.isDeleted
+    }
+
+    private var isPinnedVisible: Bool {
+        message.isPinned && !message.isDeleted
+    }
+
+    private var showsFooter: Bool {
+        (isLastInGroup && isUserMessage) || isEditedVisible || isPinnedVisible
+    }
+
+    /// "Pinned · edited · 3:41 PM" under the bubble
+    private var footerLine: some View {
+        HStack(spacing: 4) {
+            if isPinnedVisible {
+                Label("Pinned", systemImage: "pin.fill")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(Color.goldText)
+            }
+            if isPinnedVisible && (isEditedVisible || (isLastInGroup && isUserMessage)) {
+                Text("·")
+            }
+            if isEditedVisible {
+                Text("edited")
+            }
+            if isEditedVisible && isLastInGroup && isUserMessage {
+                Text("·")
+            }
+            if isLastInGroup && isUserMessage {
+                Text(formatTime(message.createdAt))
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 4)
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -148,9 +215,11 @@ struct EnhancedMessageRowWithReactions: View {
             CalloutCardView(
                 callout: callout,
                 authorUsername: message.authorUsername,
-                canManage: canManageCallout,
-                onTrack: onTrackCallout,
-                onUpdateStatus: onUpdateCalloutStatus
+                messageId: message.id,
+                channelId: message.channelId,
+                communityId: message.communityId,
+                authorId: message.authorId,
+                onTrack: onTrackCallout
             )
             .frame(maxWidth: 360)
         } else if let media = getMediaContent(from: message) {
@@ -392,6 +461,16 @@ struct EnhancedMessageRowWithReactions: View {
         if canEdit && message.callout == nil && getMediaContent(from: message) == nil {
             Button(action: onEdit) {
                 Label("Edit", systemImage: "pencil")
+            }
+        }
+        if canPin {
+            Button(action: onTogglePin) {
+                Label(message.isPinned ? "Unpin" : "Pin", systemImage: message.isPinned ? "pin.slash" : "pin")
+            }
+        }
+        if let onReport, !isUserMessage {
+            Button(action: onReport) {
+                Label("Report", systemImage: "flag")
             }
         }
         if canDelete {

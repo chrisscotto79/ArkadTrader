@@ -1,5 +1,5 @@
 // File: Shared/Models/User.swift
-// Updated User Model with Profile Image Support
+// The signed-in user's profile, stored at users/{uid}.
 
 import Foundation
 import FirebaseFirestore
@@ -21,6 +21,18 @@ struct User: Identifiable, Codable {
     var createdAt: Date
     var updatedAt: Date
     var communityIds: [String]
+
+    // Onboarding (see docs/backend-contracts.md, section 7)
+    /// "new", "intermediate" or "experienced"; nil until the user answers
+    var experienceLevel: String?
+    /// `CommunityType` raw values the user picked during onboarding
+    var interests: [String]
+    /// False only for accounts that still need onboarding. A missing field reads as true.
+    var onboardingCompleted: Bool
+
+    /// Push preferences keyed by `NotificationPreference` raw values. Missing keys mean on.
+    /// Written separately (FirebaseServices.setNotificationPreference), never by `toFirestore()`.
+    var notificationPrefs: [String: Bool]
     
     // Simplified init
     init(id: String, email: String, username: String, fullName: String) {
@@ -40,11 +52,23 @@ struct User: Identifiable, Codable {
         self.createdAt = Date()
         self.updatedAt = Date()
         self.communityIds = []
+        self.experienceLevel = nil
+        self.interests = []
+        self.onboardingCompleted = true
+        self.notificationPrefs = [:]
+    }
+
+    /// True while the user still needs to go through onboarding
+    var needsOnboarding: Bool { !onboardingCompleted }
+
+    /// Whether a push preference is on. Every preference defaults to on.
+    func isNotificationEnabled(_ key: String) -> Bool {
+        notificationPrefs[key] ?? true
     }
     
     // Firebase conversion
     func toFirestore() -> [String: Any] {
-        return [
+        var data: [String: Any] = [
             "email": email,
             "username": username,
             "fullName": fullName,
@@ -59,8 +83,16 @@ struct User: Identifiable, Codable {
             "startingCapital": startingCapital,
             "createdAt": Timestamp(date: createdAt),
             "updatedAt": Timestamp(date: updatedAt),
-            "communityIds": communityIds
+            "communityIds": communityIds,
+            "onboardingCompleted": onboardingCompleted
         ]
+        if let experienceLevel {
+            data["experienceLevel"] = experienceLevel
+        }
+        if !interests.isEmpty {
+            data["interests"] = interests
+        }
+        return data
     }
     
     static func fromFirestore(data: [String: Any], id: String) throws -> User {
@@ -81,6 +113,11 @@ struct User: Identifiable, Codable {
         user.winRate = data["winRate"] as? Double ?? 0.0
         user.startingCapital = data["startingCapital"] as? Double ?? 0.0
         user.communityIds = data["communityIds"] as? [String] ?? []
+        user.experienceLevel = data["experienceLevel"] as? String
+        user.interests = data["interests"] as? [String] ?? []
+        // Accounts created before onboarding existed have no field and count as completed
+        user.onboardingCompleted = data["onboardingCompleted"] as? Bool ?? true
+        user.notificationPrefs = data["notificationPrefs"] as? [String: Bool] ?? [:]
         
         if let tierString = data["subscriptionTier"] as? String {
             user.subscriptionTier = SubscriptionTier(rawValue: tierString) ?? .basic

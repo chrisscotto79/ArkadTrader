@@ -1,5 +1,5 @@
 // File: Core/Communities/ViewModels/CommunityLeaderboardViewModel.swift
-// State for a community's leaderboard: the chosen category and timeframe, and the ranked entries.
+// State for a community's callout leaderboard: the chosen sort and the ranked entries.
 
 import Foundation
 
@@ -7,9 +7,9 @@ import Foundation
 class CommunityLeaderboardViewModel: ObservableObject {
 
     @Published var entries: [CommunityLeaderboardEntry] = []
-    @Published var category: LeaderboardCategory = .profitKings
-    @Published var timeframe: LeaderboardTimeframe = .allTime
-    @Published var isLoading = false
+    @Published var category: LeaderboardCategory = .winRate
+    /// Starts true so the board doesn't flash its empty state before the first load
+    @Published var isLoading = true
     @Published var errorMessage = ""
 
     private let service = CommunityLeaderboardService.shared
@@ -20,17 +20,18 @@ class CommunityLeaderboardViewModel: ObservableObject {
         isLoading = entries.isEmpty
         errorMessage = ""
         do {
-            entries = try await service.getLeaderboard(communityId: communityId, category: category, timeframe: timeframe)
+            entries = try await service.getLeaderboard(communityId: communityId, category: category)
+        } catch is CancellationError {
+            return
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = TraderStats.friendlyLoadMessage(for: error)
         }
         isLoading = false
     }
 
-    /// Reload after the category or timeframe changes, cancelling any load still in flight
+    /// Re-sort after the category changes, cancelling any load still in flight
     func reload(communityId: String) {
         loadTask?.cancel()
-        entries = []
         loadTask = Task { await load(communityId: communityId) }
     }
 

@@ -125,6 +125,10 @@ extension CommunitiesView {
             Group {
                 if isMember {
                     JoinedTag()
+                } else if community.requiresSubscription {
+                    Button("View") { join(community) }
+                        .buttonStyle(PillButtonStyle(kind: .gold))
+                        .accessibilityLabel("View \(community.name)")
                 } else {
                     Button("Join") { join(community) }
                         .buttonStyle(PillButtonStyle(kind: .gold))
@@ -139,7 +143,7 @@ extension CommunitiesView {
             } label: {
                 Label("Quick Look", systemImage: "info.circle")
             }
-            if !isMember {
+            if !isMember && !community.requiresSubscription {
                 Button {
                     join(community)
                 } label: {
@@ -189,7 +193,12 @@ extension CommunitiesView {
         showCommunityPreview = true
     }
 
+    /// Free communities are joined right away; paid ones open the preview, which has the Subscribe button.
     func join(_ community: Community) {
+        if community.requiresSubscription {
+            showCommunityPreview(community)
+            return
+        }
         viewModel.joinCommunity(community)
         HapticManager.shared.notification(type: .success)
     }

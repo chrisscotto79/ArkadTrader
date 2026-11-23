@@ -1,6 +1,7 @@
 // File: Core/Communities/Views/Detail/CommunityDetailView.swift
-// A community's home page: hero header with the join / manage action, shortcuts to members
-// and the leaderboard, and the channel list.
+// A community's home page: hero header with the join / subscribe / manage action, shortcuts to members
+// and the leaderboard, and the channel list. Non-members of a paid community see a preview instead
+// of the channels: price, trial, the owner's track record and the rules.
 
 import SwiftUI
 
@@ -19,11 +20,25 @@ struct CommunityDetailView: View {
     @State private var channelForInfo: Channel?
     @State private var showLeaderboard = false
     @State private var showLeaveConfirmation = false
+    @State private var showDashboard = false
+    @State private var showReport = false
+    @State private var showWelcome = false
+    @StateObject private var subscription = CommunitySubscriptionController()
 
     /// Latest copy of the community (refreshed after settings change), falling back to the one passed in.
     private var current: Community { viewModel.community ?? community }
 
     private var isOwner: Bool { viewModel.userRole == "owner" }
+
+    /// A paid community the viewer hasn't subscribed to: preview only
+    private var showsPaidPreview: Bool {
+        current.requiresSubscription && !viewModel.isUserMember && !viewModel.isLoading
+    }
+
+    /// Members with a Stripe subscription manage it (and cancel) in the billing portal instead of leaving
+    private var hasSubscription: Bool {
+        viewModel.isUserMember && !isOwner && viewModel.subscription != nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,17 +46,40 @@ struct CommunityDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                     heroCard
-                    shortcuts
-                    channelsSection
+                    if showsPaidPreview {
+                        paidPreview
+                    } else {
+                        shortcuts
+                        channelsSection
+                    }
                 }
                 .padding(.horizontal, DS.pageMargin)
                 .padding(.top, DS.Spacing.s)
                 .padding(.bottom, DS.Spacing.xxl)
             }
             .refreshable {
-                await viewModel.reloadCommunity()
-                await viewModel.reloadChannels()
-                await viewModel.refreshUserMembership()
+                await viewModel.refreshAfterSubscriptionChange()
+            }
+            .alert(
+                "Couldn't subscribe",
+                isPresented: Binding(get: { subscription.errorMessage != nil }, set: { if !$0 { subscription.errorMessage = nil } })
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(subscription.errorMessage ?? "")
+            }
+            .alert(
+                "Almost there",
+                isPresented: Binding(get: { subscription.pendingMessage != nil }, set: { if !$0 { subscription.pendingMessage = nil } })
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(subscription.pendingMessage ?? "")
+            }
+            .alert("Welcome to \(current.name)", isPresented: $showWelcome) {
+                Button("Let's go") { subscription.acknowledgeJoined() }
+            } message: {
+                Text("You're in. Channels and callouts are open to you now.")
             }
         }
         .screenBackground()
@@ -73,6 +111,19 @@ struct CommunityDetailView: View {
         }
         .navigationDestination(isPresented: $showLeaderboard) {
             CommunityLeaderboardView(community: current)
+        }
+        .navigationDestination(isPresented: $showDashboard) {
+            CommunityDashboardView(community: current)
+        }
+        .sheet(isPresented: $showReport) {
+            ReportSheet(target: .community(id: current.id, ownerId: current.createdBy))
+        }
+        .onChange(of: subscription.phase) { _, phase in
+            if phase == .joined {
+                HapticManager.shared.notification(type: .success)
+                showWelcome = true
+                Task { await viewModel.refreshAfterSubscriptionChange() }
+            }
         }
         .alert(
             "Something went wrong",
@@ -138,11 +189,23 @@ extension CommunityDetailView {
             Spacer()
 
             Menu {
-                Button(action: { showMembersList = true }) {
-                    Label("View Members", systemImage: "person.2")
+                if !showsPaidPreview {
+                    Button(action: { showMembersList = true }) {
+                        Label("View Members", systemImage: "person.2")
+                    }
+                    Button(action: { showLeaderboard = true }) {
+                        Label("Leaderboard", systemImage: "trophy")
+                    }
                 }
-                Button(action: { showLeaderboard = true }) {
-                    Label("Leaderboard", systemImage: "trophy")
+                if isOwner {
+                    Button(action: { showDashboard = true }) {
+                        Label("Dashboard", systemImage: "chart.bar.xaxis")
+                    }
+                }
+                if hasSubscription {
+                    Button(action: manageSubscription) {
+                        Label("Manage subscription", systemImage: "creditcard")
+                    }
                 }
                 if viewModel.isUserMember {
                     Button(action: { showCommunitySettings = true }) {
@@ -153,11 +216,17 @@ extension CommunityDetailView {
                             Label("New Channel", systemImage: "plus.bubble")
                         }
                     }
-                    if !isOwner {
+                    if !isOwner && !hasSubscription {
                         Divider()
                         Button(role: .destructive, action: { showLeaveConfirmation = true }) {
                             Label("Leave Community", systemImage: "rectangle.portrait.and.arrow.right")
                         }
+                    }
+                }
+                if current.createdBy != viewModel.currentUserId {
+                    Divider()
+                    Button(role: .destructive, action: { showReport = true }) {
+                        Label("Report community", systemImage: "flag")
                     }
                 }
             } label: {
@@ -232,6 +301,7 @@ extension CommunityDetailView {
 
     private var heroTags: some View {
         HStack(spacing: DS.Spacing.s) {
+            CommunityPriceTag(community: current)
             if viewModel.isUserMember {
                 Tag(text: viewModel.userRole.capitalized, systemImage: roleIcon, tint: roleTint)
             }
@@ -248,20 +318,41 @@ extension CommunityDetailView {
     @ViewBuilder
     private var heroActions: some View {
         if !viewModel.isUserMember {
-            Button {
-                HapticManager.shared.notification(type: .success)
-                viewModel.joinCommunity()
-            } label: {
-                Label("Join community", systemImage: "person.badge.plus")
+            if viewModel.isBanned {
+                Text(CommunityJoinError.banned.errorDescription ?? "")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(Capsule().fill(Color.surfaceRaised))
+            } else if current.requiresSubscription {
+                CommunitySubscribeButton(community: current, controller: subscription)
+                    .disabled(viewModel.isLoading)
+            } else {
+                Button {
+                    HapticManager.shared.notification(type: .success)
+                    viewModel.joinCommunity()
+                } label: {
+                    Label("Join community", systemImage: "person.badge.plus")
+                }
+                .buttonStyle(PrimaryButtonStyle())
             }
-            .buttonStyle(PrimaryButtonStyle())
         } else if isOwner {
-            Button {
-                showCommunitySettings = true
-            } label: {
-                Label("Manage community", systemImage: "gearshape")
+            HStack(spacing: DS.Spacing.s) {
+                Button {
+                    showDashboard = true
+                } label: {
+                    Label("Dashboard", systemImage: "chart.bar.xaxis")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+
+                Button {
+                    showCommunitySettings = true
+                } label: {
+                    Label("Manage", systemImage: "gearshape")
+                }
+                .buttonStyle(SecondaryButtonStyle())
             }
-            .buttonStyle(SecondaryButtonStyle())
         } else {
             HStack(spacing: DS.Spacing.s) {
                 Button {
@@ -271,20 +362,45 @@ extension CommunityDetailView {
                 }
                 .buttonStyle(SecondaryButtonStyle())
 
-                Button {
-                    showLeaveConfirmation = true
-                } label: {
-                    Text("Leave")
+                if hasSubscription {
+                    Button(action: manageSubscription) {
+                        if subscription.isOpeningPortal {
+                            ProgressView()
+                        } else {
+                            Text("Manage subscription")
+                        }
+                    }
+                    .buttonStyle(SecondaryButtonStyle(fullWidth: false))
+                    .disabled(subscription.isOpeningPortal)
+                } else {
+                    Button {
+                        showLeaveConfirmation = true
+                    } label: {
+                        Text("Leave")
+                    }
+                    .buttonStyle(SecondaryButtonStyle(fullWidth: false))
                 }
-                .buttonStyle(SecondaryButtonStyle(fullWidth: false))
             }
         }
 
-        if viewModel.isUserMember, let joined = viewModel.memberSince {
+        if viewModel.isUserMember, let plan = viewModel.subscription, !isOwner {
+            Text(plan.summary)
+                .font(.caption)
+                .foregroundStyle(plan.status == .pastDue ? Color.marketRed : .secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .multilineTextAlignment(.center)
+        } else if viewModel.isUserMember, let joined = viewModel.memberSince {
             Text("Member since \(joined.formatted(.dateTime.month(.wide).year()))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    private func manageSubscription() {
+        Task {
+            await subscription.manageSubscription()
+            await viewModel.refreshAfterSubscriptionChange()
         }
     }
 
@@ -303,6 +419,38 @@ extension CommunityDetailView {
         case "admin": return .orange
         case "moderator": return .blue
         default: return .secondary
+        }
+    }
+}
+
+// MARK: - Paid preview (non-members)
+extension CommunityDetailView {
+    private var paidPreview: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+            CommunityPriceSummary(community: current)
+
+            VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                SectionHeader(title: "The owner")
+                TrackRecordCard(userId: current.createdBy)
+            }
+
+            if !viewModel.rules.isEmpty {
+                CommunityRulesList(rules: viewModel.rules)
+            }
+
+            HStack(spacing: DS.Spacing.m) {
+                IconWell(systemName: "lock.fill", tint: .secondary, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Channels are for subscribers")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Subscribe to read and post in this community's channels and callouts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .cardStyle()
         }
     }
 }

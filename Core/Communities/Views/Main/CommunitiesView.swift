@@ -6,6 +6,7 @@ import SwiftUI
 
 struct CommunitiesView: View {
     @EnvironmentObject var authService: FirebaseAuthService
+    @EnvironmentObject var tabRouter: TabRouter
     @StateObject var viewModel = CommunitiesViewModel()
     @State var showCreateCommunity = false
     @State var selectedTab: CommunityMainTab = .myCommunities
@@ -41,6 +42,8 @@ struct CommunitiesView: View {
                         .environmentObject(authService)
                 }
             }
+            .onAppear { openLinkedCommunity(tabRouter.pendingDeepLink) }
+            .onChange(of: tabRouter.pendingDeepLink) { _, link in openLinkedCommunity(link) }
             .navigationDestination(isPresented: $navigateToCommunity) {
                 if let community = selectedCommunity {
                     CommunityDetailView(community: community)
@@ -68,12 +71,26 @@ struct CommunitiesView: View {
                         onClose: {
                             selectedCommunityForPreview = nil
                             showCommunityPreview = false
+                        },
+                        onSubscribed: {
+                            Task { await viewModel.loadUserCommunities() }
                         }
                     )
                 }
             }
             .sheet(isPresented: $showFilterSheet) {
                 CommunityFilterSheet(viewModel: viewModel)
+            }
+            .alert(
+                "Couldn't join",
+                isPresented: Binding(
+                    get: { viewModel.joinErrorMessage != nil },
+                    set: { if !$0 { viewModel.joinErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(viewModel.joinErrorMessage ?? "")
             }
             .onAppear {
                 viewModel.loadInitialData()
@@ -122,6 +139,21 @@ struct CommunitiesView: View {
     }
 
     // MARK: - Navigation Helpers
+    /// Opens the community a notification points at. Paid-community gating happens in the detail screen.
+    func openLinkedCommunity(_ link: DeepLink?) {
+        let communityId: String
+        switch link {
+        case .community(let id): communityId = id
+        case .channel(let id, _, _): communityId = id
+        default: return
+        }
+        tabRouter.pendingDeepLink = nil
+        Task {
+            guard let community = try? await CommunityFirebaseService.shared.getSingleCommunity(communityId: communityId) else { return }
+            navigateToCommunitDetail(community)
+        }
+    }
+
     func navigateToCommunitDetail(_ community: Community) {
         HapticManager.shared.impact(style: .light)
         selectedCommunity = community

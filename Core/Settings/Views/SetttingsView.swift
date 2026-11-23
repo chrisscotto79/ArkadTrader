@@ -1,5 +1,6 @@
 // File: Core/Settings/Views/SettingsView.swift
-// Settings: profile, data export, appearance, help, about, sign out and account deletion.
+// Settings: profile, linked brokerages, payouts, data export, notifications, appearance,
+// blocked accounts, help, about, sign out and account deletion.
 // Also defines the grouped-card row components shared by the other Settings screens.
 
 import SwiftUI
@@ -21,9 +22,8 @@ struct SettingsView: View {
     @State private var isDeletingAccount = false
     @State private var showDeleteError = false
     @State private var deleteErrorMessage = ""
-
-    /// Firebase only allows deleting an account shortly after signing in.
-    private static let recentLoginWindow: TimeInterval = 5 * 60
+    @State private var showPasswordPrompt = false
+    @State private var confirmPassword = ""
 
     var body: some View {
         NavigationStack {
@@ -32,6 +32,7 @@ struct SettingsView: View {
                     profileCard
                     accountSection
                     preferencesSection
+                    privacySection
                     supportSection
                     aboutSection
                     logOutSection
@@ -90,10 +91,22 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("""
-            This permanently deletes your Arkad sign-in and your profile (name, username and bio). It can't be undone.
+            This permanently deletes your Arkad account: your profile, posts, comments, trades and watchlist. Communities you own are deleted, and any paid subscriptions are cancelled.
 
-            Trades, posts, comments, images and community messages you created are not removed by this step. To have them removed too, email \(AppInfo.supportEmail).
+            This can't be undone.
             """)
+        }
+        .alert("Confirm It's You", isPresented: $showPasswordPrompt) {
+            SecureField("Password", text: $confirmPassword)
+                .textContentType(.password)
+            Button("Delete Account", role: .destructive) {
+                reauthenticateAndDelete()
+            }
+            Button("Cancel", role: .cancel) {
+                confirmPassword = ""
+            }
+        } message: {
+            Text("For your security, enter your password to delete your account.")
         }
         .alert("Couldn't Delete Account", isPresented: $showDeleteError) {
             Button("OK", role: .cancel) { }
@@ -145,6 +158,14 @@ struct SettingsView: View {
                 showEditProfile = true
             }
             SettingsRowDivider()
+            SettingsNavigationRow(icon: "building.columns", title: "Linked brokerages", subtitle: "Import trades from your broker, read-only") {
+                LinkedAccountsView()
+            }
+            SettingsRowDivider()
+            SettingsNavigationRow(icon: "banknote", title: "Payouts", subtitle: "Get paid for your community") {
+                PayoutsView()
+            }
+            SettingsRowDivider()
             SettingsListRow(icon: "square.and.arrow.up", title: "Export data", subtitle: "Your trades and posts as CSV files") {
                 showDataExport = true
             }
@@ -153,6 +174,10 @@ struct SettingsView: View {
 
     private var preferencesSection: some View {
         SettingsGroupCard(title: "Preferences") {
+            SettingsNavigationRow(icon: "bell.badge", title: "Notifications", subtitle: "Callouts, replies, followers and price alerts") {
+                NotificationSettingsView()
+            }
+            SettingsRowDivider()
             VStack(alignment: .leading, spacing: DS.Spacing.m) {
                 HStack(spacing: DS.Spacing.m) {
                     IconWell(systemName: "circle.lefthalf.filled", size: 34)
@@ -173,6 +198,14 @@ struct SettingsView: View {
                 .accessibilityLabel("Appearance")
             }
             .padding(DS.Spacing.l)
+        }
+    }
+
+    private var privacySection: some View {
+        SettingsGroupCard(title: "Privacy & safety") {
+            SettingsNavigationRow(icon: "hand.raised", title: "Blocked accounts", subtitle: "People you've blocked can't reach you") {
+                BlockedUsersView()
+            }
         }
     }
 
@@ -213,7 +246,7 @@ struct SettingsView: View {
     }
 
     private var deleteSection: some View {
-        SettingsGroupCard(footer: "Permanently deletes your sign-in and profile. This can't be undone.") {
+        SettingsGroupCard(footer: "Permanently deletes your account and everything in it. This can't be undone.") {
             SettingsListRow(
                 icon: "trash",
                 title: "Delete account",
@@ -254,40 +287,66 @@ struct SettingsView: View {
 
     // MARK: - Account Deletion
 
+    /// Deletes the sign-in; the server then removes everything else (Auth onDelete trigger).
+    /// Firebase asks for the password again if the last sign-in wasn't recent.
     private func deleteAccount() {
-        // FirebaseAuthService.deleteAccount() removes the profile document before the
-        // sign-in. Check for a recent sign-in first so Firebase can't reject the second
-        // step after the first has already happened.
-        if let lastSignIn = Auth.auth().currentUser?.metadata.lastSignInDate,
-           Date().timeIntervalSince(lastSignIn) > Self.recentLoginWindow {
-            deleteErrorMessage = Self.recentLoginMessage
-            showDeleteError = true
-            return
-        }
-
         isDeletingAccount = true
         Task {
             do {
                 try await authService.deleteAccount()
-                UserDefaults.standard.removeObject(forKey: "saved_email")
+                didDeleteAccount()
+            } catch let error where Self.requiresRecentLogin(error) {
                 isDeletingAccount = false
-                // Signed out now: the app returns to the sign-in screen.
+                confirmPassword = ""
+                showPasswordPrompt = true
             } catch {
-                isDeletingAccount = false
-                deleteErrorMessage = Self.message(for: error)
-                showDeleteError = true
+                showDeleteFailure(error)
             }
         }
     }
 
-    private static let recentLoginMessage = "For your security, you need to have signed in recently to delete your account. Sign out, sign back in, then come back here and try again."
+    private func reauthenticateAndDelete() {
+        let password = confirmPassword
+        confirmPassword = ""
+        guard !password.isEmpty else { return }
+
+        isDeletingAccount = true
+        Task {
+            do {
+                try await authService.reauthenticate(password: password)
+                try await authService.deleteAccount()
+                didDeleteAccount()
+            } catch {
+                showDeleteFailure(error)
+            }
+        }
+    }
+
+    private func didDeleteAccount() {
+        UserDefaults.standard.removeObject(forKey: "saved_email")
+        isDeletingAccount = false
+        // Signed out now: the app returns to the sign-in screen.
+    }
+
+    private func showDeleteFailure(_ error: Error) {
+        isDeletingAccount = false
+        deleteErrorMessage = Self.message(for: error)
+        showDeleteError = true
+    }
+
+    private static func requiresRecentLogin(_ error: Error) -> Bool {
+        AuthErrorCode(rawValue: (error as NSError).code) == .requiresRecentLogin
+    }
 
     private static func message(for error: Error) -> String {
-        let nsError = error as NSError
-        if AuthErrorCode(rawValue: nsError.code) == .requiresRecentLogin {
-            return recentLoginMessage
+        switch AuthErrorCode(rawValue: (error as NSError).code) {
+        case .wrongPassword, .invalidCredential:
+            return "That password isn't right. Please try again."
+        case .networkError:
+            return "Check your connection and try again."
+        default:
+            return "Something went wrong: \(error.localizedDescription) Please try again."
         }
-        return "Something went wrong: \(error.localizedDescription) Please try again."
     }
 
     // MARK: - Helper Properties
@@ -425,6 +484,31 @@ struct SettingsListRow: View {
                 tint: tint,
                 titleColor: titleColor,
                 accessory: accessory
+            )
+        }
+        .buttonStyle(SettingsRowButtonStyle())
+    }
+}
+
+/// A settings row that pushes another screen onto the Settings navigation stack.
+struct SettingsNavigationRow<Destination: View>: View {
+    let icon: String
+    let title: String
+    var subtitle: String? = nil
+    var value: String? = nil
+    var tint: Color = .goldText
+    @ViewBuilder var destination: () -> Destination
+
+    var body: some View {
+        NavigationLink {
+            destination()
+        } label: {
+            SettingsRowLabel(
+                icon: icon,
+                title: title,
+                subtitle: subtitle,
+                value: value,
+                tint: tint
             )
         }
         .buttonStyle(SettingsRowButtonStyle())

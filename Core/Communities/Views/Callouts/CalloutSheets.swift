@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Callouts/CalloutSheets.swift
-// Forms for posting a trade callout and for tracking one in your portfolio.
+// Forms for posting a trade callout, tracking one in your portfolio, and closing your own.
 
 import SwiftUI
 
@@ -378,6 +378,189 @@ struct TrackCalloutSheet: View {
                 dismiss()
             } catch {
                 errorMessage = "Couldn't add the trade: \(error.localizedDescription)"
+                isSaving = false
+            }
+        }
+    }
+}
+
+// MARK: - Close Callout
+
+/// The author closes an open callout at an exit price. The result counts toward their record.
+struct CloseCalloutSheet: View {
+    let callout: TradeCallout
+    let onClose: (_ exitPrice: Double) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var exitText: String
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(callout: TradeCallout, onClose: @escaping (Double) async throws -> Void) {
+        self.callout = callout
+        self.onClose = onClose
+        _exitText = State(initialValue: callout.lastPrice.map(Self.editableString) ?? "")
+    }
+
+    /// Accepts "182.4", "$182.40" and "182,4".
+    private var exitValue: Double? {
+        var text = exitText.replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespaces)
+        if text.contains(",") && !text.contains(".") {
+            text = text.replacingOccurrences(of: ",", with: ".")
+        } else {
+            text = text.replacingOccurrences(of: ",", with: "")
+        }
+        guard let value = Double(text), value > 0, value.isFinite else { return nil }
+        return value
+    }
+
+    private var resultPercent: Double? {
+        exitValue.map { CalloutTrackingService.resultPercent(for: callout, exitPrice: $0) }
+    }
+
+    private var canSave: Bool { exitValue != nil && !isSaving }
+
+    private static func editableString(_ price: Double) -> String {
+        String(format: abs(price) < 1 ? "%.4f" : "%.2f", price)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    summaryCard
+                    exitSection
+                    resultCard
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(Color.marketRed)
+                            .padding(.horizontal, DS.Spacing.xs)
+                    }
+                }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.vertical, DS.Spacing.l)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .screenBackground()
+            .navigationTitle("Close Callout")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .tint(Color.goldText)
+                }
+            }
+            .safeAreaInset(edge: .bottom) { closeBar }
+        }
+        .presentationDragIndicator(.visible)
+    }
+
+    private var summaryCard: some View {
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: callout.direction.icon, tint: callout.direction.color, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("$\(callout.ticker)")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                    Tag(text: callout.direction.displayName.uppercased(), tint: callout.direction.color)
+                }
+                Text("Entry \(TradeCallout.formatPrice(callout.entryPrice))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .cardStyle(padding: DS.Spacing.l)
+    }
+
+    private var exitSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            CalloutFormLabel(text: "Exit")
+            VStack(spacing: 0) {
+                CalloutInputRow(title: "Exit price") {
+                    CalloutPriceField(placeholder: "0.00", text: $exitText)
+                }
+                if let lastPrice = callout.lastPrice {
+                    CalloutRowDivider()
+                    Button {
+                        exitText = Self.editableString(lastPrice)
+                    } label: {
+                        HStack {
+                            Text("Use last price")
+                                .foregroundStyle(Color.goldText)
+                            Spacer(minLength: DS.Spacing.s)
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text(TradeCallout.formatPrice(lastPrice))
+                                    .arkadNumber(15, weight: .semibold)
+                                    .foregroundStyle(Color.primary)
+                                if let at = callout.lastPriceAt {
+                                    Text("as of \(TradeCallout.formatTime(at))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, DS.Spacing.l)
+                        .frame(minHeight: 50)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressableStyle())
+                }
+            }
+            .cardStyle(padding: 0)
+        }
+    }
+
+    private var resultCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("Result")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(resultPercent.map(TradeCallout.formatPercent) ?? "—")
+                .arkadNumber(32)
+                .foregroundStyle(resultPercent.map(TraderStats.color(for:)) ?? .secondary)
+            if let exitValue {
+                Text("\(callout.direction.displayName) from \(TradeCallout.formatPrice(callout.entryPrice)) to \(TradeCallout.formatPrice(exitValue))")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Text("Closing is final. The result counts toward your callout record.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DS.Spacing.xs)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle(padding: DS.Spacing.l)
+    }
+
+    private var closeBar: some View {
+        Button(action: save) {
+            if isSaving {
+                ProgressView().tint(Color.onGold)
+            } else {
+                Label("Close callout", systemImage: "flag.checkered")
+            }
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(!canSave)
+        .padding(.horizontal, DS.pageMargin)
+        .padding(.vertical, DS.Spacing.s)
+        .background(Color.appBackground.ignoresSafeArea(edges: .bottom))
+    }
+
+    private func save() {
+        guard let exitValue else { return }
+        isSaving = true
+        errorMessage = nil
+        Task {
+            do {
+                try await onClose(exitValue)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                dismiss()
+            } catch {
+                errorMessage = "Couldn't close the callout: \(error.localizedDescription)"
                 isSaving = false
             }
         }

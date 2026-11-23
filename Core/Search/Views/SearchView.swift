@@ -1,6 +1,6 @@
 // File: Core/Search/Views/SearchView.swift
 // The Discover tab: search communities, traders, posts and trades. Before you type it shows
-// recent searches, popular communities and popular traders.
+// Learn and Watchlist shortcuts, recent searches, popular communities and popular traders.
 
 import SwiftUI
 
@@ -13,6 +13,11 @@ struct SearchView: View {
     @FocusState private var isSearchFocused: Bool
     @EnvironmentObject private var authService: FirebaseAuthService
     @EnvironmentObject private var tabRouter: TabRouter
+    @ObservedObject private var watchlist = WatchlistStore.shared
+    @ObservedObject private var learnProgress = LearnProgressStore.shared
+    @State private var watchlistError: String?
+    @State private var showLearnFromLink = false
+    @State private var showWatchlistFromLink = false
 
     /// Result scopes, communities first because they're the heart of Arkad.
     private let scopes: [SearchType] = [.all, .groups, .users, .posts, .stocks]
@@ -35,12 +40,20 @@ struct SearchView: View {
 
                 content
                     .padding(.top, DS.Spacing.s)
+                    .navigationDestination(isPresented: $showLearnFromLink) { LearnHubView() }
+                    .navigationDestination(isPresented: $showWatchlistFromLink) { WatchlistView() }
+                    .onAppear { openLinkedScreen(tabRouter.pendingDeepLink) }
+                    .onChange(of: tabRouter.pendingDeepLink) { _, link in openLinkedScreen(link) }
             }
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
             .animation(.snappy(duration: 0.25), value: hasQuery)
         }
         .task {
+            await learnProgress.load()
+            if !watchlist.hasLoaded {
+                await watchlist.load()
+            }
             if !searchViewModel.hasLoadedSuggestions {
                 await searchViewModel.loadDiscoverSuggestions()
             }
@@ -49,6 +62,14 @@ struct SearchView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(searchViewModel.errorMessage)
+        }
+        .alert("Watchlist", isPresented: Binding(
+            get: { watchlistError != nil },
+            set: { if !$0 { watchlistError = nil } }
+        )) {
+            Button("OK", role: .cancel) { watchlistError = nil }
+        } message: {
+            Text(watchlistError ?? "")
         }
     }
 
@@ -155,6 +176,8 @@ struct SearchView: View {
     private var discoverHome: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                shortcutsSection
+
                 if !searchViewModel.searchHistory.isEmpty {
                     recentSearchesSection
                 }
@@ -183,7 +206,131 @@ struct SearchView: View {
             .padding(.bottom, DS.Spacing.xxl)
         }
         .scrollDismissesKeyboard(.immediately)
-        .refreshable { await searchViewModel.loadDiscoverSuggestions() }
+        .refreshable {
+            await searchViewModel.loadDiscoverSuggestions()
+            await watchlist.load()
+        }
+    }
+
+    // MARK: - Learn and Watchlist shortcuts
+
+    /// Notifications can point at Learn or the watchlist.
+    private func openLinkedScreen(_ link: DeepLink?) {
+        switch link {
+        case .learn: showLearnFromLink = true
+        case .watchlist: showWatchlistFromLink = true
+        default: return
+        }
+        tabRouter.pendingDeepLink = nil
+    }
+
+    private var shortcutsSection: some View {
+        VStack(spacing: DS.Spacing.m) {
+            NavigationLink {
+                LearnHubView()
+            } label: {
+                learnCard
+            }
+            .buttonStyle(PressableStyle())
+
+            NavigationLink {
+                WatchlistView()
+            } label: {
+                watchlistCard
+            }
+            .buttonStyle(PressableStyle())
+        }
+        .padding(.horizontal, DS.pageMargin)
+    }
+
+    private var learnCard: some View {
+        let total = LearnContent.totalLessonCount
+        let done = learnProgress.totalCompletedLessons
+
+        return VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            HStack(alignment: .top, spacing: DS.Spacing.m) {
+                IconWell(systemName: "graduationcap.fill", size: 52)
+                Spacer(minLength: 0)
+                if done > 0 {
+                    LearnPercentRing(progress: total == 0 ? 0 : Double(done) / Double(total), size: 52)
+                } else {
+                    Tag(text: "New", systemImage: "sparkles")
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(done > 0 ? "Keep learning" : "Learn to trade")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Color.primary)
+                Text(learnSubtitle(done: done, total: total))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: DS.Spacing.xs) {
+                Text(done > 0 ? "Continue" : "Start learning")
+                Image(systemName: "arrow.right")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.goldText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DS.Spacing.l)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous)
+                .fill(Color.goldTint)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous)
+                .strokeBorder(Color.goldText.opacity(0.25), lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens Learn")
+    }
+
+    private func learnSubtitle(done: Int, total: Int) -> String {
+        if done == 0 {
+            return "\(LearnContent.tracks.count) short tracks on stocks, options, crypto, forex, risk and staying safe in communities."
+        }
+        if done >= total { return "All \(total) lessons done. Review any time." }
+        if let next = learnProgress.continueLesson {
+            return "\(done) of \(total) lessons done. Next up: \(next.title)."
+        }
+        return "\(done) of \(total) lessons done."
+    }
+
+    private var watchlistCard: some View {
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: "star.fill", tint: .orange, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Watchlist")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                Text(watchlistSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .cardStyle(padding: 14)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    private var watchlistSubtitle: String {
+        let count = watchlist.items.count
+        guard count > 0 else { return "Follow symbols and set price alerts" }
+        var parts = ["\(count) symbol\(count == 1 ? "" : "s")"]
+        let alerts = watchlist.activeAlerts.count
+        if alerts > 0 { parts.append("\(alerts) alert\(alerts == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ")
     }
 
     private var hasSuggestions: Bool {
@@ -319,12 +466,23 @@ struct SearchView: View {
     private var resultsList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                let tickers = searchViewModel.resultTickers
+                let showTickersFirst = selectedSearchType == .stocks || queryIsTicker(in: tickers)
+
+                if showTickersFirst && !tickers.isEmpty {
+                    tickersSection(tickers)
+                }
+
                 if selectedSearchType == .all {
                     ForEach(scopes.filter { $0 != .all }, id: \.self) { scope in
                         let scoped = results(for: scope)
                         if !scoped.isEmpty {
                             resultsSection(scope: scope, results: scoped, limit: previewLimit)
                         }
+                    }
+
+                    if !showTickersFirst && !tickers.isEmpty {
+                        tickersSection(tickers)
                     }
                 } else {
                     resultsSection(scope: selectedSearchType, results: filteredResults, limit: nil)
@@ -362,6 +520,74 @@ struct SearchView: View {
                 }
             }
             .cardStyle(padding: 0)
+        }
+    }
+
+    // MARK: - Tickers
+
+    /// True when the query is one of the tickers, e.g. "aapl", so tickers lead the results.
+    private func queryIsTicker(in tickers: [SearchTicker]) -> Bool {
+        let query = WatchlistSymbol.normalize(trimmedQuery)
+        return tickers.contains { $0.symbol == query }
+    }
+
+    /// Tickers found in trade results, each with a watchlist toggle.
+    private func tickersSection(_ tickers: [SearchTicker]) -> some View {
+        let shown = selectedSearchType == .all ? Array(tickers.prefix(previewLimit)) : tickers
+
+        return VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Tickers", count: tickers.count)
+
+            VStack(spacing: 0) {
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, ticker in
+                    if index > 0 { rowDivider(inset: DS.Spacing.l + 40 + DS.Spacing.m) }
+                    tickerRow(ticker)
+                }
+            }
+            .cardStyle(padding: 0)
+        }
+    }
+
+    private func tickerRow(_ ticker: SearchTicker) -> some View {
+        let isWatching = watchlist.contains(ticker.symbol)
+
+        return HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: ticker.assetType.icon, tint: ticker.assetType.color, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ticker.symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                Text(ticker.assetType.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: DS.Spacing.s)
+            Button {
+                toggleWatch(ticker, isWatching: isWatching)
+            } label: {
+                Label(isWatching ? "Watching" : "Watch", systemImage: isWatching ? "checkmark" : "star")
+            }
+            .buttonStyle(PillButtonStyle(kind: isWatching ? .neutral : .gold))
+            .accessibilityLabel(isWatching ? "Remove \(ticker.symbol) from watchlist" : "Add \(ticker.symbol) to watchlist")
+        }
+        .padding(.horizontal, DS.Spacing.l)
+        .padding(.vertical, DS.Spacing.m)
+    }
+
+    private func toggleWatch(_ ticker: SearchTicker, isWatching: Bool) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            do {
+                if isWatching {
+                    if let item = watchlist.items.first(where: { $0.symbol == ticker.symbol }) {
+                        try await watchlist.remove(item)
+                    }
+                } else {
+                    try await watchlist.add(symbol: ticker.symbol, assetType: ticker.assetType)
+                }
+            } catch {
+                watchlistError = error.localizedDescription
+            }
         }
     }
 

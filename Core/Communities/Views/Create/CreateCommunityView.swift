@@ -1,5 +1,6 @@
 // File: Core/Communities/Views/Create/CreateCommunityView.swift
-// Four-step community creation flow: basics, category, privacy, review.
+// Five-step community creation flow: basics, category, privacy, free or paid, review.
+// A paid community is saved as free first, then priced with the setCommunityPrice function.
 
 import SwiftUI
 
@@ -7,8 +8,9 @@ struct CreateCommunityView: View {
     @StateObject private var viewModel = CommunityCreationViewModel()
     @Environment(\.dismiss) private var dismiss
     @State private var currentStep = 1
+    @State private var showPayouts = false
 
-    private var totalSteps: Int { 4 }
+    private var totalSteps: Int { 5 }
 
     var body: some View {
         NavigationStack {
@@ -41,7 +43,12 @@ struct CreateCommunityView: View {
                 dismiss()
             }
         } message: {
-            Text("\(viewModel.name) is ready. Invite traders to join you.")
+            Text(viewModel.successMessage)
+        }
+        .sheet(isPresented: $showPayouts, onDismiss: {
+            Task { await viewModel.loadPayoutStatus() }
+        }) {
+            PayoutsSheet()
         }
         .alert("Couldn't create community", isPresented: $viewModel.showError) {
             Button("OK") {}
@@ -80,7 +87,8 @@ struct CreateCommunityView: View {
         case 1: basicInfoStep
         case 2: categoryStep
         case 3: settingsStep
-        case 4: reviewStep
+        case 4: pricingStep
+        case 5: reviewStep
         default: EmptyView()
         }
     }
@@ -281,7 +289,153 @@ struct CreateCommunityView: View {
         }
     }
 
-    // MARK: Step 4 — Review
+    // MARK: Step 4 — Free or paid
+
+    private var pricingStep: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+            stepHeader(
+                title: "Free or paid?",
+                subtitle: "Charge a monthly price for access, or keep it free. You can change this later."
+            )
+
+            VStack(spacing: DS.Spacing.m) {
+                privacyOption(
+                    title: "Free",
+                    subtitle: "Anyone can join at no cost",
+                    icon: "person.2.fill",
+                    isSelected: !viewModel.isPaid,
+                    action: { viewModel.isPaid = false }
+                )
+                privacyOption(
+                    title: "Paid",
+                    subtitle: "Members subscribe monthly through Stripe",
+                    icon: "dollarsign.circle.fill",
+                    isSelected: viewModel.isPaid,
+                    action: { viewModel.isPaid = true }
+                )
+            }
+
+            if viewModel.isPaid {
+                paidSettings
+            }
+        }
+        .task {
+            if viewModel.payoutStatus == nil {
+                await viewModel.loadPayoutStatus()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var paidSettings: some View {
+        if viewModel.isLoadingPayoutStatus && viewModel.payoutStatus == nil {
+            HStack(spacing: DS.Spacing.m) {
+                ProgressView()
+                Text("Checking your payout setup…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardStyle()
+        } else if !viewModel.canChargeMembers {
+            payoutsRequiredCard
+        } else {
+            priceFields
+        }
+    }
+
+    private var payoutsRequiredCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack(alignment: .top, spacing: DS.Spacing.m) {
+                IconWell(systemName: "banknote.fill", size: 40)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(viewModel.payoutStatus?.stage == .inReview ? "Payouts are in review" : "Set up payouts first")
+                        .font(.body.weight(.semibold))
+                    Text(payoutsRequiredMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Button("Set up payouts") { showPayouts = true }
+                .buttonStyle(PrimaryButtonStyle())
+
+            Button("Create as free for now") {
+                withAnimation(.snappy(duration: 0.2)) { viewModel.isPaid = false }
+            }
+            .buttonStyle(SecondaryButtonStyle())
+        }
+        .cardStyle()
+    }
+
+    private var payoutsRequiredMessage: String {
+        if viewModel.payoutStatusFailed {
+            return "We couldn't check your payout setup. Open payouts to try again, or start free and add a price later."
+        }
+        if viewModel.payoutStatus?.stage == .inReview {
+            return "Stripe is still checking your details. Start free now and add a price in settings once you're approved."
+        }
+        return "Stripe pays you each month. Setup takes a few minutes, or start free and add a price later in settings."
+    }
+
+    private var priceFields: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                fieldLabel("Monthly price")
+                HStack(spacing: DS.Spacing.xs) {
+                    Text("$")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("9.99", text: $viewModel.priceText)
+                        .keyboardType(.decimalPad)
+                        .font(.body.monospacedDigit())
+                    Text("/ month")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, DS.Spacing.l)
+                .frame(height: 52)
+                .background(inputBackground)
+
+                if !viewModel.priceText.isEmpty, let message = viewModel.priceValidationMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(Color.marketRed)
+                        .padding(.horizontal, DS.Spacing.xs)
+                } else {
+                    Text("Between \(CommunityPricing.format(CommunityPricing.minimumPrice)) and \(CommunityPricing.format(CommunityPricing.maximumPrice)) a month")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, DS.Spacing.xs)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                fieldLabel("Free trial")
+                HStack(spacing: DS.Spacing.s) {
+                    ForEach(CommunityPricing.trialOptions, id: \.self) { days in
+                        Chip(title: CommunityPricing.trialChipTitle(days), isSelected: viewModel.trialDays == days) {
+                            viewModel.trialDays = days
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if let price = viewModel.price, viewModel.priceValidationMessage == nil {
+                CommunityEarningsBreakdown(price: price)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cardStyle()
+            } else {
+                Text(CommunityPricing.processingFeeNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: Step 5 — Review
 
     private var reviewStep: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.xl) {
@@ -300,10 +454,18 @@ struct CreateCommunityView: View {
                     summaryRow("Category", viewModel.type.displayName)
                     summaryDivider
                     summaryRow("Privacy", viewModel.isPrivate ? "Private" : "Public")
+                    summaryDivider
+                    summaryRow("Membership", membershipSummary)
                 }
                 .cardStyle(padding: 0)
             }
         }
+    }
+
+    private var membershipSummary: String {
+        guard viewModel.isPaid, let price = viewModel.price else { return "Free" }
+        let trial = viewModel.trialDays > 0 ? " · \(CommunityPricing.trialLabel(viewModel.trialDays))" : ""
+        return "\(CommunityPricing.format(price))/mo\(trial)"
     }
 
     private var previewCard: some View {
@@ -336,6 +498,9 @@ struct CreateCommunityView: View {
             HStack(spacing: DS.Spacing.s) {
                 Tag(text: "Owner", systemImage: "crown.fill")
                 Tag(text: viewModel.type.displayName, tint: viewModel.type.tint)
+                if viewModel.isPaid, let price = viewModel.price {
+                    Tag(text: "\(CommunityPricing.format(price))/mo")
+                }
                 if viewModel.isPrivate {
                     Tag(text: "Private", systemImage: "lock.fill", tint: .secondary)
                 }
@@ -489,7 +654,9 @@ struct CreateCommunityView: View {
         case 2, 3:
             return true
         case 4:
-            return viewModel.isFormValid && !viewModel.isCreating
+            return viewModel.isPricingValid
+        case 5:
+            return viewModel.isFormValid && viewModel.isPricingValid && !viewModel.isCreating
         default:
             return false
         }

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Arkad</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<!--
+  Return page for web flows (Stripe Checkout, Stripe Connect onboarding, the Stripe
+  billing portal, SnapTrade). They require an https return URL, so they send the user to
+    https://arkad-ios-app.web.app/open/<path>?<query>
+  and this page forwards to
+    arkad://<path>?<query>
+  which ASWebAuthenticationSession (callbackURLScheme "arkad") catches.
+  Only the paths below are forwarded, so this can't be used as an open redirect.
+-->
+<main class="hero">
+  <h1>Returning to Arkad…</h1>
+  <p class="lead">If the app doesn't open by itself, tap the button.</p>
+  <p><a id="open" class="button" href="arkad://">Open Arkad</a></p>
+</main>
+<script>
+  (function () {
+    var allowed = [
+      "payouts/done",
+      "checkout/success",
+      "checkout/cancel",
+      "billing/done",
+      "brokerage/connected"
+    ];
+    var path = location.pathname.replace(/^\/open\/?/, "").replace(/\/+$/, "");
+    if (allowed.indexOf(path) === -1) path = "";
+    var target = "arkad://" + path + (path ? location.search : "");
+    document.getElementById("open").setAttribute("href", target);
+    location.replace(target);
+  })();
+</script>
+</body>
+</html>

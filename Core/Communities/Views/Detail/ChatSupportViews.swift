@@ -159,3 +159,99 @@ extension View {
         clipShape(RoundedCorner(radius: radius, corners: corners))
     }
 }
+
+// MARK: - Pinned Messages Sheet
+/// Every pinned message in the channel. Tap one to jump to it; moderators can unpin.
+struct PinnedMessagesSheet: View {
+    let messages: [CommunityMessage]
+    let userCache: [String: User]
+    let canUnpin: Bool
+    let previewText: (CommunityMessage) -> String
+    let onSelect: (CommunityMessage) -> Void
+    let onUnpin: (CommunityMessage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Group {
+                    if messages.isEmpty {
+                        EmptyStateView(
+                            systemImage: "pin",
+                            title: "No pinned messages",
+                            message: "Owners and moderators can pin important messages from a message's menu."
+                        )
+                        .cardStyle(padding: 0)
+                    } else {
+                        CommunityCardList(items: messages, dividerInset: 60) { message in
+                            row(message)
+                        }
+                    }
+                }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.vertical, DS.Spacing.m)
+            }
+            .screenBackground()
+            .navigationTitle("Pinned")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                        .tint(Color.goldText)
+                }
+            }
+        }
+    }
+
+    private func row(_ message: CommunityMessage) -> some View {
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            Button {
+                onSelect(message)
+            } label: {
+                HStack(alignment: .top, spacing: DS.Spacing.m) {
+                    UserAvatar(
+                        username: message.authorUsername,
+                        imageURL: message.authorAvatarURL ?? userCache[message.authorId]?.profileImageUrl,
+                        size: 32
+                    )
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(message.authorUsername)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.primary)
+                            Text(message.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(previewText(message))
+                            .font(.subheadline)
+                            .foregroundStyle(Color.primary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle())
+            .accessibilityHint("Jumps to the message")
+
+            if canUnpin {
+                Button {
+                    onUnpin(message)
+                } label: {
+                    Image(systemName: "pin.slash")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.surfaceRaised))
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Unpin")
+            }
+        }
+        .padding(.horizontal, DS.Spacing.l)
+        .padding(.vertical, DS.Spacing.m)
+    }
+}

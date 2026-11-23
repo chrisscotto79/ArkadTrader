@@ -57,6 +57,16 @@ struct Community: Identifiable, Codable, Hashable {
     var activityLevel: ActivityLevel?
     var tags: [String] // Additional tags beyond just type
     var memberAvatars: [String] // URLs of recent member profile images (max 4)
+
+    // Paid membership (Stripe Connect). The owner changes these through the `setCommunityPrice`
+    // function and the server writes the Stripe ids, so `toFirestore()` never includes them.
+    var isPaid: Bool = false
+    /// Monthly price in US dollars, set when `isPaid` is true
+    var priceMonthly: Double? = nil
+    /// Free trial length for new subscribers: 0, 3 or 7
+    var trialDays: Int = 0
+    var stripePriceId: String? = nil
+    var stripeProductId: String? = nil
     
     // MARK: - Initializers
     init(name: String, description: String, type: CommunityType = .general, creatorId: String, memberCount: Int = 1, isPrivate: Bool = false) {
@@ -178,6 +188,19 @@ struct Community: Identifiable, Codable, Hashable {
         }
     }
     
+    // MARK: - Paid membership
+
+    /// True when joining needs a subscription (paid with a price set)
+    var requiresSubscription: Bool {
+        isPaid && (priceMonthly ?? 0) > 0
+    }
+
+    /// "$9.99/mo" for paid communities, nil for free ones
+    var priceTagText: String? {
+        guard requiresSubscription, let priceMonthly else { return nil }
+        return "\(CommunityPricing.format(priceMonthly))/mo"
+    }
+
     // MARK: - Firebase Conversion
     func toFirestore() -> [String: Any] {
         var data: [String: Any] = [
@@ -250,6 +273,13 @@ struct Community: Identifiable, Codable, Hashable {
         
         community.tags = data["tags"] as? [String] ?? []
         community.memberAvatars = data["memberAvatars"] as? [String] ?? []
+
+        // Paid fields; older documents don't have them and read as a free community
+        community.isPaid = data["isPaid"] as? Bool ?? false
+        community.priceMonthly = (data["priceMonthly"] as? NSNumber)?.doubleValue
+        community.trialDays = (data["trialDays"] as? NSNumber)?.intValue ?? 0
+        community.stripePriceId = data["stripePriceId"] as? String
+        community.stripeProductId = data["stripeProductId"] as? String
         
         return community
     }

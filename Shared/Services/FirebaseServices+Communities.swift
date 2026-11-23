@@ -246,25 +246,10 @@ extension FirebaseServices {
         try await db.collection("communities").document(community.id).setData(community.toFirestore(), merge: true)
     }
     
+    /// Deletes the community doc. The server (onCommunityDeleted) cancels subscriptions,
+    /// clears members' communityIds and deletes the subcollections.
     func deleteCommunity(communityId: String) async throws {
-        let batch = db.batch()
-        
-        // Get all members
-        let members = try await db.collection("communities").document(communityId)
-            .collection("members").getDocuments()
-        
-        // Remove community from each member's list
-        for member in members.documents {
-            let userRef = db.collection("users").document(member.documentID)
-            batch.updateData([
-                "communityIds": FieldValue.arrayRemove([communityId])
-            ], forDocument: userRef)
-        }
-        
-        // Delete community
-        batch.deleteDocument(db.collection("communities").document(communityId))
-        
-        try await batch.commit()
+        try await db.collection("communities").document(communityId).delete()
     }
     
     func getCommunities(limit: Int = 20) async throws -> [Community] {
@@ -361,7 +346,17 @@ extension FirebaseServices {
         return Set(communityIds.filter { !$0.isEmpty })
     }
     
+    /// Joins a free community. Banned users can't join, and paid communities are joined
+    /// only through Stripe Checkout (the webhook creates the membership).
     func joinCommunity(communityId: String, userId: String) async throws {
+        if try await isUserBanned(communityId: communityId, userId: userId) {
+            throw CommunityJoinError.banned
+        }
+        let communityDoc = try await db.collection("communities").document(communityId).getDocument()
+        if communityDoc.data()?["isPaid"] as? Bool == true {
+            throw CommunityJoinError.requiresSubscription
+        }
+
         let batch = db.batch()
         
         // Add member to community
@@ -592,21 +587,6 @@ extension FirebaseServices {
             }
     }
     
-    /// Update the status of a trade callout (open, target hit, stopped out, closed).
-    func updateCalloutStatus(messageId: String, channelId: String, communityId: String, status: TradeCallout.Status) async throws {
-        try await db.collection("communities").document(communityId)
-            .collection("channels").document(channelId)
-            .collection("messages").document(messageId)
-            .updateData(["callout.status": status.rawValue])
-    }
-    
-    func deleteCommunityMessage(messageId: String, communityId: String, channelId: String) async throws {
-        try await db.collection("communities").document(communityId)
-            .collection("channels").document(channelId)
-            .collection("messages").document(messageId)
-            .delete()
-    }
-    
     func editCommunityMessage(messageId: String, channelId: String, communityId: String, newContent: String) async throws {
         let messageRef = db.collection("communities").document(communityId)
             .collection("channels").document(channelId)
@@ -683,6 +663,22 @@ extension FirebaseServices {
             ])
         } else {
             try await typingRef.delete()
+        }
+    }
+}
+
+// MARK: - Join errors
+
+enum CommunityJoinError: LocalizedError {
+    case banned
+    case requiresSubscription
+
+    var errorDescription: String? {
+        switch self {
+        case .banned:
+            return "You can't join this community"
+        case .requiresSubscription:
+            return "This is a paid community. Open it to subscribe."
         }
     }
 }

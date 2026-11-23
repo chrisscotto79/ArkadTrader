@@ -13,6 +13,9 @@
 		CEB113C02E4B93090045546D /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = CEB113BF2E4B93090045546D /* FirebaseDatabase */; };
 		CEB113C22E4B93090045546D /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = CEB113C12E4B93090045546D /* FirebaseFirestore */; };
 		CEB113C42E4B93090045546D /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = CEB113C32E4B93090045546D /* FirebaseStorage */; };
+		CEB113C62E4B93090045546D /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = CEB113C52E4B93090045546D /* FirebaseMessaging */; };
+		CEB113C82E4B93090045546D /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = CEB113C72E4B93090045546D /* FirebaseCrashlytics */; };
+		CEB113CA2E4B93090045546D /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = CEB113C92E4B93090045546D /* FirebaseFunctions */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -169,6 +172,56 @@
 				Settings/Views/HelpCenterView.swift,
 				Settings/Views/LegalDocuments.swift,
 				Settings/Views/SetttingsView.swift,
+				Brokerage/BrokerageHoldingsSection.swift,
+				Brokerage/BrokerageService.swift,
+				Brokerage/LinkedAccountsView.swift,
+				Learn/LearnComponents.swift,
+				"Learn/LearnContent+Basics.swift",
+				"Learn/LearnContent+Charts.swift",
+				"Learn/LearnContent+Markets.swift",
+				"Learn/LearnContent+Mindset.swift",
+				Learn/LearnContent.swift,
+				Learn/LearnGlossary.swift,
+				Learn/LearnGlossaryView.swift,
+				Learn/LearnHubView.swift,
+				Learn/LearnLessonView.swift,
+				Learn/LearnModels.swift,
+				Learn/LearnProgressStore.swift,
+				Learn/LearnPromoCard.swift,
+				Learn/LearnQuizView.swift,
+				Learn/LearnTrackView.swift,
+				Learn/PositionSizeCalculatorView.swift,
+				Notifications/AppDelegate.swift,
+				Notifications/DeepLink.swift,
+				Notifications/NotificationPreference.swift,
+				Notifications/NotificationSettingsView.swift,
+				Notifications/NotificationsInboxView.swift,
+				Notifications/NotificationsInboxViewModel.swift,
+				Notifications/PushNotificationManager.swift,
+				Onboarding/OnboardingView.swift,
+				Onboarding/OnboardingViewModel.swift,
+				Payments/CloudFunctions.swift,
+				Payments/CommunityDashboardView.swift,
+				Payments/CommunityPricing.swift,
+				Payments/CommunitySubscriptionController.swift,
+				Payments/PaymentsService.swift,
+				Payments/PayoutsView.swift,
+				Payments/WebAuthSession.swift,
+				Safety/BlockStore.swift,
+				Safety/BlockedUsersView.swift,
+				Safety/ReportSheet.swift,
+				Safety/ReportTarget.swift,
+				TrackRecord/CalloutTrackingService.swift,
+				TrackRecord/TrackRecordCard.swift,
+				TrackRecord/TraderStats.swift,
+				TrackRecord/TraderStatsService.swift,
+				Watchlist/AddWatchlistSymbolSheet.swift,
+				Watchlist/PriceAlertSheet.swift,
+				Watchlist/PriceAlertsView.swift,
+				Watchlist/WatchlistModels.swift,
+				Watchlist/WatchlistQuotes.swift,
+				Watchlist/WatchlistStore.swift,
+				Watchlist/WatchlistView.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
@@ -235,6 +288,9 @@
 				CEB113C22E4B93090045546D /* FirebaseFirestore in Frameworks */,
 				CEB113BC2E4B93090045546D /* FirebaseAuth in Frameworks */,
 				CEB113C42E4B93090045546D /* FirebaseStorage in Frameworks */,
+				CEB113C62E4B93090045546D /* FirebaseMessaging in Frameworks */,
+				CEB113C82E4B93090045546D /* FirebaseCrashlytics in Frameworks */,
+				CEB113CA2E4B93090045546D /* FirebaseFunctions in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -280,6 +336,7 @@
 				CE6AB6902DF7D0AE006085B4 /* Sources */,
 				CE6AB6912DF7D0AE006085B4 /* Frameworks */,
 				CE6AB6922DF7D0AE006085B4 /* Resources */,
+				CEB113CB2E4B93090045546D /* Upload Crashlytics symbols */,
 			);
 			buildRules = (
 			);
@@ -293,6 +350,9 @@
 				CEB113BF2E4B93090045546D /* FirebaseDatabase */,
 				CEB113C12E4B93090045546D /* FirebaseFirestore */,
 				CEB113C32E4B93090045546D /* FirebaseStorage */,
+				CEB113C52E4B93090045546D /* FirebaseMessaging */,
+				CEB113C72E4B93090045546D /* FirebaseCrashlytics */,
+				CEB113C92E4B93090045546D /* FirebaseFunctions */,
 			);
 			productName = ArkadTrader;
 			productReference = CED442912E027AFC0056B849 /* ArkadTrader.app */;
@@ -408,6 +468,32 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		CEB113CB2E4B93090045546D /* Upload Crashlytics symbols */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "Upload Crashlytics symbols";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Release builds only: Debug builds have no dSYM.\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  \"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CE6AB6902DF7D0AE006085B4 /* Sources */ = {
@@ -831,6 +917,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CEB113B82E4B93090045546D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		CEB113C52E4B93090045546D /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CEB113B82E4B93090045546D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+		CEB113C72E4B93090045546D /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CEB113B82E4B93090045546D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
+		CEB113C92E4B93090045546D /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CEB113B82E4B93090045546D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

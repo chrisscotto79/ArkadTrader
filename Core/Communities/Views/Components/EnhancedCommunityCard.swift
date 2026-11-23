@@ -1,6 +1,6 @@
 // File: Core/Communities/Views/Components/EnhancedCommunityCard.swift
 // Building blocks shared by the Communities screens: the rounded-square community avatar,
-// list rows, card lists and the discovery spotlight card.
+// list rows, card lists and the discovery spotlight card. Paid communities show a "$X/mo" tag.
 
 import SwiftUI
 
@@ -121,6 +121,8 @@ struct CommunityRowContent<Accessory: View>: View {
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Private")
                     }
+                    CommunityPriceTag(community: community)
+                        .layoutPriority(1)
                 }
                 Text(subtitle ?? CommunityFormat.summary(community))
                     .font(.subheadline)
@@ -264,6 +266,9 @@ struct EnhancedCommunityCard: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                Spacer(minLength: 0)
+                CommunityPriceTag(community: community)
+                    .layoutPriority(1)
             }
 
             Text(CommunityFormat.summary(community))
@@ -297,9 +302,9 @@ struct EnhancedCommunityCard: View {
             if isUserMember {
                 JoinedTag()
             } else {
-                Button("Join", action: onJoin)
+                Button(community.requiresSubscription ? "View" : "Join", action: onJoin)
                     .buttonStyle(PillButtonStyle(kind: .gold))
-                    .accessibilityLabel("Join \(community.name)")
+                    .accessibilityLabel(community.requiresSubscription ? "View \(community.name)" : "Join \(community.name)")
             }
         }
         .frame(minHeight: 34)

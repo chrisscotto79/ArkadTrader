@@ -1,5 +1,5 @@
 // File: Core/Search/ViewModel/SearchViewModel.swift
-// FIXED - SearchViewModel with correct property names
+// Discover search: runs user, post, trade and community searches in parallel, ranks and caches them.
 
 import Foundation
 import SwiftUI
@@ -62,17 +62,14 @@ class SearchViewModel: ObservableObject {
     
     func search(query: String) async {
         let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("🔍 SearchViewModel: Starting search for '\(cleanQuery)'")
         
         guard !cleanQuery.isEmpty else {
-            print("⚠️ SearchViewModel: Empty query, clearing results")
             clearResults()
             return
         }
         
         // Check authentication first
         guard authService.currentUser != nil else {
-            print("❌ SearchViewModel: User not authenticated")
             await MainActor.run {
                 errorMessage = "Please log in to search"
                 showError = true
@@ -86,7 +83,6 @@ class SearchViewModel: ObservableObject {
         
         // Check cache first
         if let cachedResult = getCachedResult(for: cleanQuery) {
-            print("💾 SearchViewModel: Using cached results")
             await handleCachedResult(cachedResult, query: cleanQuery)
             return
         }
@@ -122,9 +118,7 @@ class SearchViewModel: ObservableObject {
             errorMessage = ""
             showError = false
         }
-        
-        print("🚀 SearchViewModel: Starting parallel search for '\(query)'")
-        
+
         // Run the four searches in parallel; each one handles its own errors.
         async let userResults = searchUsersWithErrorHandling(query: query)
         async let postResults = searchPostsWithErrorHandling(query: query)
@@ -132,67 +126,44 @@ class SearchViewModel: ObservableObject {
         async let communityResults = searchCommunitiesWithErrorHandling(query: query)
         
         let allResults = await userResults + postResults + tradeResults + communityResults
-            print("📊 SearchViewModel: Total results found: \(allResults.count)")
-            
-            await MainActor.run {
-                // Rank and set results
-                searchResults = rankSearchResults(allResults, query: query)
-                
-                // Cache the results
-                cacheSearchResults(allResults, query: query)
-                
-                // Record performance
-                recordSearchPerformance(query: query, resultCount: allResults.count, cacheHit: false)
-                
-                isLoading = false
-                
-                print("✅ SearchViewModel: Search completed with \(searchResults.count) results")
-            }
+
+        searchResults = rankSearchResults(allResults, query: query)
+        cacheSearchResults(allResults, query: query)
+        recordSearchPerformance(query: query, resultCount: allResults.count, cacheHit: false)
+        isLoading = false
     }
     private func searchUsersWithErrorHandling(query: String) async -> [SearchResult] {
         do {
-            print("👥 SearchViewModel: Searching users...")
             let users = try await authService.searchUsers(query: query, limit: 20)
-            print("✅ SearchViewModel: Found \(users.count) users")
             return users.map { SearchResult(user: $0) }
         } catch {
-            print("❌ SearchViewModel: User search failed: \(error)")
             return []
         }
     }
 
     private func searchPostsWithErrorHandling(query: String) async -> [SearchResult] {
         do {
-            print("📝 SearchViewModel: Searching posts...")
             let posts = try await authService.searchPosts(query: query, limit: 15)
-            print("✅ SearchViewModel: Found \(posts.count) posts")
             return posts.map { SearchResult(post: $0) }
         } catch {
-            print("❌ SearchViewModel: Posts search failed: \(error)")
             return []
         }
     }
 
     private func searchTradesWithErrorHandling(query: String) async -> [SearchResult] {
         do {
-            print("📈 SearchViewModel: Searching trades...")
             let trades = try await authService.searchTrades(query: query, limit: 10)
-            print("✅ SearchViewModel: Found \(trades.count) trades")
             return visibleTrades(trades).map { SearchResult(trade: $0) }
         } catch {
-            print("❌ SearchViewModel: Trades search failed: \(error)")
             return []
         }
     }
 
     private func searchCommunitiesWithErrorHandling(query: String) async -> [SearchResult] {
         do {
-            print("🏘️ SearchViewModel: Searching communities...")
             let communities = try await authService.searchCommunities(query: query, limit: 10)
-            print("✅ SearchViewModel: Found \(communities.count) communities")
             return communities.map { SearchResult(community: $0) }
         } catch {
-            print("❌ SearchViewModel: Communities search failed: \(error)")
             return []
         }
     }
@@ -621,10 +592,26 @@ class SearchViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Tickers
+
+    /// Unique tickers in the current trade results, in ranked order, so Discover can offer
+    /// "Add to watchlist". An option trade's ticker is its underlying, so it's watched as a stock.
+    var resultTickers: [SearchTicker] {
+        var seen = Set<String>()
+        var tickers: [SearchTicker] = []
+        for result in searchResults where result.type == .trade {
+            guard let trade = result.trade else { continue }
+            let symbol = WatchlistSymbol.normalize(trade.ticker)
+            guard WatchlistSymbol.isValid(symbol), seen.insert(symbol).inserted else { continue }
+            let assetType: TradeType = trade.tradeType == .option ? .stock : trade.tradeType
+            tickers.append(SearchTicker(symbol: symbol, assetType: assetType))
+        }
+        return tickers
+    }
+
     // MARK: - Utility Methods
     
     func clearResults() {
-        print("🧹 SearchViewModel: Clearing search results")
         searchResults = []
         currentQuery = ""
         searchPerformance = nil
@@ -662,25 +649,11 @@ class SearchViewModel: ObservableObject {
         errorMessage = friendlyMessage
         showError = true
         isLoading = false
-        
-        // Detailed logging for debugging
-        print("❌ SearchViewModel - Detailed error info:")
-        print("   Error type: \(type(of: error))")
-        print("   Error description: \(error.localizedDescription)")
-        
-        if let searchError = error as? SearchError {
-            print("   Search error type: \(searchError)")
-        }
-        
-        // Log to console for debugging
-        print("❌ SearchViewModel - Search error: \(error.localizedDescription)")
     }
-    
+
     private func getFriendlyErrorMessage(_ error: Error) -> String {
         let errorDescription = error.localizedDescription.lowercased()
-        
-        print("🔍 SearchViewModel: Analyzing error: \(errorDescription)")
-        
+
         if errorDescription.contains("network") || errorDescription.contains("internet") {
             return "Check your internet connection and try again"
         } else if errorDescription.contains("permission") || errorDescription.contains("unauthorized") {
@@ -695,17 +668,6 @@ class SearchViewModel: ObservableObject {
             return "Search failed. Please check your connection and try again"
         }
     }
-    func debugSearchState() {
-        print("🔍 SearchViewModel Debug State:")
-        print("   Current query: '\(currentQuery)'")
-        print("   Is loading: \(isLoading)")
-        print("   Has error: \(showError)")
-        print("   Error message: '\(errorMessage)'")
-        print("   Results count: \(searchResults.count)")
-        print("   Auth user: \(authService.currentUser?.username ?? "none")")
-        print("   Cache size: \(searchCache.count)")
-    }
-    
     private func recordSearchPerformance(query: String, resultCount: Int, cacheHit: Bool) {
         guard let startTime = searchStartTime else { return }
         
@@ -719,7 +681,14 @@ class SearchViewModel: ObservableObject {
     }
 }
 
-// MARK: - Supporting Enums
+// MARK: - Supporting Types
+
+/// A ticker found in Discover's trade results.
+struct SearchTicker: Identifiable, Hashable {
+    let symbol: String
+    let assetType: TradeType
+    var id: String { symbol }
+}
 
 enum SearchSortOption: String, CaseIterable {
     case relevance = "relevance"

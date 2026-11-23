@@ -28,6 +28,18 @@ struct Trade: Identifiable, Codable {
     var takeProfitPrice: Double?
     var sector: String?
     var tags: [String] = []
+
+    // MARK: - Brokerage import (written by the server, never by the app)
+    /// "brokerage" for trades imported through SnapTrade; nil or "manual" for trades the user entered
+    var source: String?
+    /// True for imported trades, which come straight from the brokerage
+    var isVerified: Bool?
+    /// The brokerage's id for this trade, used by the server to avoid importing it twice
+    var externalId: String?
+    var brokerageConnectionId: String?
+
+    /// Imported trades are read-only in the app
+    var isImported: Bool { source == "brokerage" }
     
     // MARK: - Computed Properties
     
@@ -182,6 +194,8 @@ struct Trade: Identifiable, Codable {
     
     // MARK: - Firebase Integration
     
+    /// The brokerage fields (`source`, `isVerified`, `externalId`, `brokerageConnectionId`) are left out
+    /// on purpose: only the server writes them, and merge updates keep the stored values.
     func toFirestore() -> [String: Any] {
         var data: [String: Any] = [
             "userId": userId,
@@ -252,6 +266,10 @@ struct Trade: Identifiable, Codable {
         trade.takeProfitPrice = data["takeProfitPrice"] as? Double
         trade.sector = data["sector"] as? String
         trade.tags = data["tags"] as? [String] ?? []
+        trade.source = data["source"] as? String
+        trade.isVerified = data["isVerified"] as? Bool
+        trade.externalId = data["externalId"] as? String
+        trade.brokerageConnectionId = data["brokerageConnectionId"] as? String
         
         return trade
     }

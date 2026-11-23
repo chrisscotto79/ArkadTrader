@@ -16,8 +16,9 @@ struct UserProfileSheet: View {
     @State private var closedTradeCount: Int?
     /// This user's communities that the viewer is allowed to see (public, or shared with the viewer)
     @State private var visibleCommunities: [Community] = []
-    @State private var showingReportReasons = false
+    @State private var reportTarget: ReportTarget?
     @State private var showingBlockConfirmation = false
+    @ObservedObject private var blockStore = BlockStore.shared
     @State private var showingFullProfile = false
     @State private var isWorking = false
     @State private var feedback: Feedback?
@@ -29,16 +30,12 @@ struct UserProfileSheet: View {
         var dismissesSheet = false
     }
 
-    private let reportReasons = [
-        "Spam or scam",
-        "Harassment or hate",
-        "Misleading trading claims",
-        "Impersonation",
-        "Something else"
-    ]
-
     private var isCurrentUser: Bool {
         user.id == authService.currentUser?.id
+    }
+
+    private var isBlocked: Bool {
+        blockStore.isBlocked(user.id)
     }
 
     private var displayName: String {
@@ -85,11 +82,17 @@ struct UserProfileSheet: View {
                 if !isCurrentUser {
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
-                            Button(action: { showingReportReasons = true }) {
-                                Label("Report User", systemImage: "flag")
+                            Button(action: { reportTarget = .user(id: user.id) }) {
+                                Label("Report", systemImage: "flag")
                             }
-                            Button(role: .destructive, action: { showingBlockConfirmation = true }) {
-                                Label("Block User", systemImage: "hand.raised")
+                            if isBlocked {
+                                Button(action: { showingBlockConfirmation = true }) {
+                                    Label("Unblock", systemImage: "hand.raised.slash")
+                                }
+                            } else {
+                                Button(role: .destructive, action: { showingBlockConfirmation = true }) {
+                                    Label("Block", systemImage: "hand.raised")
+                                }
                             }
                         } label: {
                             if isWorking {
@@ -104,19 +107,20 @@ struct UserProfileSheet: View {
                     }
                 }
             }
-            .confirmationDialog("Report \(displayName)", isPresented: $showingReportReasons, titleVisibility: .visible) {
-                ForEach(reportReasons, id: \.self) { reason in
-                    Button(reason) { report(reason: reason) }
+            .sheet(item: $reportTarget) { target in
+                ReportSheet(target: target)
+            }
+            .alert(isBlocked ? "Unblock \(displayName)?" : "Block \(displayName)?", isPresented: $showingBlockConfirmation) {
+                if isBlocked {
+                    Button("Unblock") { unblock() }
+                } else {
+                    Button("Block", role: .destructive) { block() }
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("Your report is sent to the Arkad team for review.")
-            }
-            .alert("Block \(displayName)?", isPresented: $showingBlockConfirmation) {
-                Button("Block", role: .destructive) { block() }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("You won't see their messages in community chats.")
+                Text(isBlocked
+                     ? "You'll see their posts, comments and messages again. Follows aren't restored."
+                     : "You won't see their posts, comments or messages, and you'll stop following each other.")
             }
             .sheet(isPresented: $showingFullProfile) {
                 OtherUserProfileView(user: user)
@@ -136,6 +140,7 @@ struct UserProfileSheet: View {
             Text(item.message)
         }
         .task {
+            await blockStore.loadIfNeeded()
             await loadDetails()
         }
     }
@@ -307,7 +312,15 @@ struct UserProfileSheet: View {
 
     private var actionsSection: some View {
         VStack(spacing: DS.Spacing.m) {
-            SimpleFollowButton(targetUserId: user.id, targetUsername: user.username)
+            if isBlocked {
+                Label("You blocked this account", systemImage: "hand.raised.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .cardStyle(padding: DS.Spacing.m, radius: DS.Radius.m)
+            } else {
+                SimpleFollowButton(targetUserId: user.id, targetUsername: user.username)
+            }
 
             Button("View full profile") { showingFullProfile = true }
                 .buttonStyle(SecondaryButtonStyle())
@@ -341,34 +354,31 @@ struct UserProfileSheet: View {
 
     // MARK: - Moderation
 
-    private func report(reason: String) {
-        guard let reporterId = authService.currentUser?.id else { return }
+    private func block() {
         isWorking = true
         Task {
             do {
-                try await authService.reportUser(userId: user.id, reportedBy: reporterId, reason: reason)
-                feedback = Feedback(title: "Report sent", message: "Thanks for letting us know. We'll review \(displayName)'s account.")
+                try await blockStore.block(user.id)
+                onBlocked?(user.id)
+                feedback = Feedback(
+                    title: "\(displayName) blocked",
+                    message: "You won't see their posts, comments or messages.",
+                    dismissesSheet: true
+                )
             } catch {
-                feedback = Feedback(title: "Couldn't send report", message: error.localizedDescription)
+                feedback = Feedback(title: "Couldn't block", message: "Check your connection and try again.")
             }
             isWorking = false
         }
     }
 
-    private func block() {
-        guard let blockerId = authService.currentUser?.id else { return }
+    private func unblock() {
         isWorking = true
         Task {
             do {
-                try await authService.blockUser(userId: user.id, blockedBy: blockerId)
-                onBlocked?(user.id)
-                feedback = Feedback(
-                    title: "\(displayName) blocked",
-                    message: "You won't see their messages in community chats.",
-                    dismissesSheet: true
-                )
+                try await blockStore.unblock(user.id)
             } catch {
-                feedback = Feedback(title: "Couldn't block user", message: error.localizedDescription)
+                feedback = Feedback(title: "Couldn't unblock", message: "Check your connection and try again.")
             }
             isWorking = false
         }

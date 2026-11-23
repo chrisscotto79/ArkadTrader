@@ -1,5 +1,6 @@
 // File: Core/Communities/Views/Main/CommunitiesView+Leaderboard.swift
-// The Leaderboard tab: your communities' boards, and the global board of every Arkad trader.
+// The Leaderboard tab: your communities' boards, and the global board of every Arkad trader,
+// all ranked by verified callout results.
 
 import SwiftUI
 
@@ -30,7 +31,7 @@ extension CommunitiesView {
             get: { selectedLeaderboardMode },
             set: { mode in
                 selectedLeaderboardMode = mode
-                if mode == .globalTraders && globalLeaderboardViewModel.entries.isEmpty {
+                if mode == .globalTraders && !globalLeaderboardViewModel.hasLoaded {
                     Task { await globalLeaderboardViewModel.loadGlobalLeaderboard() }
                 }
             }
@@ -41,7 +42,7 @@ extension CommunitiesView {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             VStack(alignment: .leading, spacing: 2) {
                 SectionHeader(title: "Your communities", count: viewModel.userCommunities.count)
-                Text("Each board ranks members by their closed trades")
+                Text("Each board ranks members by their closed callouts")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -72,23 +73,19 @@ extension CommunitiesView {
     var globalTradersContent: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
             VStack(alignment: .leading, spacing: 2) {
-                SectionHeader(title: "Top traders")
-                Text("Everyone on Arkad, ranked by their closed trades")
+                SectionHeader(title: "Top callers")
+                Text("Traders on Arkad, ranked by the results of their callouts")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
-            LeaderboardFilterBar(
-                category: $globalLeaderboardViewModel.category,
-                timeframe: $globalLeaderboardViewModel.timeframe
-            )
+            LeaderboardFilterBar(category: $globalLeaderboardViewModel.category)
 
             globalTradersBody
         }
         .onChange(of: globalLeaderboardViewModel.category) { _, _ in globalLeaderboardViewModel.reload() }
-        .onChange(of: globalLeaderboardViewModel.timeframe) { _, _ in globalLeaderboardViewModel.reload() }
         .onAppear {
-            if globalLeaderboardViewModel.entries.isEmpty && !globalLeaderboardViewModel.isLoading {
+            if !globalLeaderboardViewModel.hasLoaded && !globalLeaderboardViewModel.isLoading {
                 Task { await globalLeaderboardViewModel.loadGlobalLeaderboard() }
             }
         }
@@ -100,12 +97,12 @@ extension CommunitiesView {
 
     @ViewBuilder
     private var globalTradersBody: some View {
-        if globalLeaderboardViewModel.isLoading {
+        if globalLeaderboardViewModel.isLoading || !globalLeaderboardViewModel.hasLoaded {
             loadingView
         } else if !globalLeaderboardViewModel.errorMessage.isEmpty {
             errorView
         } else if globalLeaderboardViewModel.entries.isEmpty {
-            emptyGlobalTradersView
+            noRankedCallersView
         } else {
             LeaderboardRankingList(
                 entries: globalLeaderboardViewModel.entries,
@@ -114,6 +111,15 @@ extension CommunitiesView {
                 onSelect: { openGlobalProfile(userId: $0.userId) }
             )
         }
+    }
+
+    private var noRankedCallersView: some View {
+        EmptyStateView(
+            systemImage: "trophy.fill",
+            title: "No rankings yet",
+            message: "Rankings appear once traders have \(TraderStats.minimumClosedCallouts) closed callouts. Post callouts in a community to build your record."
+        )
+        .cardStyle(padding: 0)
     }
 
     func openGlobalProfile(userId: String) {

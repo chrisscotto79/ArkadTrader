@@ -6,18 +6,26 @@ import Foundation
 extension Double {
     // MARK: - Currency Formatting
     
+    /// US dollars. Under $10,000 it shows cents ("$0.42", "$1,234.50") so small gains don't
+    /// round to "$0"; from $10,000 up it rounds to whole dollars ("$12,345").
     var asCurrency: String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
-            formatter.locale = Locale(identifier: "en_US")
-            formatter.maximumFractionDigits = 0
-            
-            // For values over 1000, show in K format
-            
-            
-            return formatter.string(from: NSNumber(value: self)) ?? "$0"
-        }
-    
+        formatter.locale = Locale(identifier: "en_US")
+        let digits = abs(self) < 10_000 ? 2 : 0
+        formatter.minimumFractionDigits = digits
+        formatter.maximumFractionDigits = digits
+        return formatter.string(from: NSNumber(value: self)) ?? "$0"
+    }
+
+    /// Whole US dollars ("$1,000"), for round amounts like preset buttons.
+    var asWholeCurrency: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: self)) ?? "$0"
+    }
     
     var asCurrencyWithSign: String {
         let formatted = abs(self).asCurrency

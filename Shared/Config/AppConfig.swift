@@ -19,4 +19,12 @@ enum AppConfig {
     static var finnhubAPIKey: String {
         secrets["FinnhubAPIKey"] as? String ?? ""
     }
+
+    /// Arkad's cut of each paid community subscription, in percent. Must match
+    /// `PLATFORM_FEE_PERCENT` in functions/src/config.ts.
+    static let platformFeePercent = 10
+
+    /// Web copies of the legal documents (Firebase Hosting). The app also shows them in-app.
+    static let termsURL = URL(string: "https://arkad-ios-app.web.app/terms")!
+    static let privacyURL = URL(string: "https://arkad-ios-app.web.app/privacy")!
 }

@@ -1,5 +1,6 @@
 // File: Core/Profile/Views/ProfileCards.swift
-// Cards and rows shown in profile tabs: posts, post detail, trades, top trades and communities.
+// Cards and rows shown in profile tabs: posts, post detail, trades, top trades and communities,
+// plus the label that tells portfolio numbers apart from the callout record.
 
 import SwiftUI
 
@@ -491,6 +492,29 @@ struct ProfileUserGroupCard: View {
 }
 
 // MARK: - Shared Helpers
+
+/// Names where a block of numbers comes from, so portfolio stats (trades the user logs)
+/// aren't mistaken for the callout record (verified from posted callouts).
+struct ProfileSourceLabel: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title.uppercased())
+                .font(.caption.weight(.semibold))
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .padding(.leading, DS.Spacing.xs)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
 
 /// Hairline between rows inside a profile card.
 struct ProfileRowDivider: View {

@@ -1,47 +1,49 @@
 // File: Core/Communities/Models/LeaderboardCategory.swift
-// The ways a leaderboard can be ranked.
+// The ways a callout leaderboard can be sorted. Raw values are the `traderStats` field names.
 
 import Foundation
 
 enum LeaderboardCategory: String, CaseIterable {
-    case consistencyMasters = "consistency"
-    case profitKings = "profit"
-    case volumeTraders = "volume"
-    case riskMasters = "risk"
-    
+    case winRate = "winRate"
+    case avgReturn = "avgReturnPercent"
+    case totalReturn = "totalReturnPercent"
+    case mostCallouts = "calloutsClosed"
+
     var displayName: String {
         switch self {
-        case .consistencyMasters: return "Consistency Masters"
-        case .profitKings: return "Profit Kings"
-        case .volumeTraders: return "Volume Traders"
-        case .riskMasters: return "Risk Masters"
+        case .winRate: return "Win rate"
+        case .avgReturn: return "Average return"
+        case .totalReturn: return "Total return"
+        case .mostCallouts: return "Most callouts"
         }
     }
-    
+
     var description: String {
+        let minimum = TraderStats.minimumClosedCallouts
         switch self {
-        case .consistencyMasters: return "Highest win rate (3+ closed trades)"
-        case .profitKings: return "Highest total realized P&L"
-        case .volumeTraders: return "Most closed trades"
-        case .riskMasters: return "Best profit factor: gross wins ÷ gross losses (3+ trades)"
+        case .winRate: return "Share of closed callouts that made money (\(minimum)+ closed)"
+        case .avgReturn: return "Average result per closed callout (\(minimum)+ closed)"
+        case .totalReturn: return "Sum of all closed callout results (\(minimum)+ closed)"
+        case .mostCallouts: return "Most closed callouts (\(minimum)+ closed)"
         }
     }
-    
+
     var icon: String {
         switch self {
-        case .consistencyMasters: return "target"
-        case .profitKings: return "dollarsign.circle.fill"
-        case .volumeTraders: return "chart.bar.fill"
-        case .riskMasters: return "shield.fill"
+        case .winRate: return "target"
+        case .avgReturn: return "percent"
+        case .totalReturn: return "chart.line.uptrend.xyaxis"
+        case .mostCallouts: return "megaphone.fill"
         }
     }
-    
-    var color: String {
+
+    /// The value this board sorts by, highest first
+    func sortValue(for stats: TraderStats) -> Double {
         switch self {
-        case .consistencyMasters: return "blue"
-        case .profitKings: return "green"
-        case .volumeTraders: return "orange"
-        case .riskMasters: return "purple"
+        case .winRate: return stats.winRatePercent
+        case .avgReturn: return stats.avgReturnPercent
+        case .totalReturn: return stats.totalReturnPercent
+        case .mostCallouts: return Double(stats.calloutsClosed)
         }
     }
 }

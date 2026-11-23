@@ -25,6 +25,9 @@ class PortfolioViewModel: ObservableObject {
     @Published var showDepositWithdrawSheet = false
     @Published var showStartingCapitalPrompt = false
     @Published var lastUpdated: Date = Date()
+
+    /// Holdings synced from linked brokerages (read-only, written by the server)
+    @Published var brokerageHoldings: [BrokerageHolding] = []
     
     // Private Properties
     private var updateTimer: Timer?
@@ -569,6 +572,19 @@ class PortfolioViewModel: ObservableObject {
     // MARK: - Public Methods
     func refreshPortfolio() {
         loadPortfolioData()
+        Task { await loadBrokerageHoldings() }
+    }
+
+    /// Reads users/{uid}/brokerageHoldings. Holdings are shown separately and don't change account value.
+    func loadBrokerageHoldings() async {
+        guard let userId = authService.currentUser?.id else {
+            brokerageHoldings = []
+            return
+        }
+        // Keep what we have if the read fails (offline); there's nothing the user can fix here
+        if let holdings = try? await BrokerageService.holdings(userId: userId) {
+            brokerageHoldings = holdings
+        }
     }
     
     // MARK: - Enhanced Performance Analytics (PRODUCTION READY - FIXED)

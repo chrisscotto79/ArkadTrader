@@ -24,6 +24,7 @@ struct SearchResultView: View {
 
     // Community sheet states
     @State private var isJoiningCommunity = false
+    @State private var paidCommunityToOpen: Community?
     @State private var hasJoinedCommunity = false
     @State private var joinErrorMessage: String?
     @State private var showFullCommunity = false
@@ -296,7 +297,6 @@ struct SearchResultView: View {
                 profileUser = createMinimalUser()
             }
         } catch {
-            print("❌ Error loading user profile: \(error)")
             profileUser = createMinimalUser()
         }
 
@@ -418,6 +418,11 @@ struct SearchResultView: View {
                 }
                 Spacer(minLength: 0)
             }
+
+            WatchTickerButton(
+                symbol: trade.ticker,
+                assetType: trade.tradeType == .option ? .stock : trade.tradeType
+            )
 
             if !trade.isOpen {
                 VStack(alignment: .leading, spacing: 6) {
@@ -545,6 +550,20 @@ struct SearchResultView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
+            } else if community.requiresSubscription {
+                // Paid communities are joined by subscribing from their page
+                Button {
+                    paidCommunityToOpen = community
+                } label: {
+                    Text("View · \(community.priceTagText ?? "Paid")")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .sheet(item: $paidCommunityToOpen) { paid in
+                    NavigationStack {
+                        CommunityDetailView(community: paid)
+                    }
+                    .environmentObject(authService)
+                }
             } else {
                 Button {
                     Task { await join(community) }
@@ -616,6 +635,71 @@ private struct SearchPostDetail: View {
 
     var body: some View {
         UserPostCard(post: post, homeViewModel: homeViewModel)
+    }
+}
+
+// MARK: - Watchlist button
+
+/// "Add to watchlist" for a trade's ticker. An option's ticker is its underlying, so callers
+/// pass `.stock` for options.
+private struct WatchTickerButton: View {
+    let symbol: String
+    let assetType: TradeType
+    @ObservedObject private var watchlist = WatchlistStore.shared
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+
+    private var normalized: String { WatchlistSymbol.normalize(symbol) }
+
+    var body: some View {
+        if WatchlistSymbol.isValid(normalized) {
+            let isWatching = watchlist.contains(normalized)
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                Button {
+                    toggle(isWatching: isWatching)
+                } label: {
+                    HStack(spacing: DS.Spacing.s) {
+                        if isWorking {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: isWatching ? "checkmark" : "star")
+                        }
+                        Text(isWatching ? "On your watchlist" : "Add \(normalized) to watchlist")
+                    }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(isWorking)
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(Color.marketRed)
+                }
+            }
+            .task {
+                if !watchlist.hasLoaded { await watchlist.load() }
+            }
+        }
+    }
+
+    private func toggle(isWatching: Bool) {
+        isWorking = true
+        errorMessage = nil
+        Task {
+            do {
+                if isWatching {
+                    if let item = watchlist.items.first(where: { $0.symbol == normalized }) {
+                        try await watchlist.remove(item)
+                    }
+                } else {
+                    try await watchlist.add(symbol: normalized, assetType: assetType)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isWorking = false
+        }
     }
 }
 

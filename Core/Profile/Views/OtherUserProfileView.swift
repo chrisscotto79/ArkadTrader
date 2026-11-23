@@ -1,6 +1,6 @@
 // File: Core/Profile/Views/OtherUserProfileView.swift
-// Another trader's profile: hero, follow button, stats, public performance and their
-// posts, public trades and communities. Presented as a sheet.
+// Another trader's profile: hero, follow button, stats, callout track record, public performance
+// and their posts, public trades and communities. The "…" menu reports or blocks. Presented as a sheet.
 
 import SwiftUI
 
@@ -15,10 +15,24 @@ struct OtherUserProfileView: View {
     @State private var showFollowingList = false
     @State private var userTrades: [Trade] = []
     @State private var isLoadingTrades = true
+    @State private var reportTarget: ReportTarget?
+    @State private var showBlockConfirmation = false
+    @State private var isUpdatingBlock = false
+    @State private var blockError: String?
+    @ObservedObject private var blockStore = BlockStore.shared
     @Environment(\.dismiss) var dismiss
 
     private var isCurrentUser: Bool {
         user.id == authService.currentUser?.id
+    }
+
+    private var isBlocked: Bool {
+        blockStore.isBlocked(user.id)
+    }
+
+    private var displayName: String {
+        if !user.fullName.isEmpty { return user.fullName }
+        return user.username.isEmpty ? "this account" : "@\(user.username)"
     }
 
     var body: some View {
@@ -27,7 +41,7 @@ struct OtherUserProfileView: View {
                 topBar
 
                 ProfileHeroView(user: user) {
-                    if !isCurrentUser {
+                    if !isCurrentUser && !isBlocked {
                         SimpleFollowButton(
                             targetUserId: user.id,
                             targetUsername: user.username,
@@ -36,7 +50,13 @@ struct OtherUserProfileView: View {
                     }
                 }
 
+                if isBlocked {
+                    blockedNotice
+                }
+
                 statsSection
+
+                TrackRecordCard(userId: user.id)
 
                 OtherUserPortfolioBanner(
                     portfolioSummary: calculatePortfolioSummary(),
@@ -75,8 +95,32 @@ struct OtherUserProfileView: View {
             SimpleFollowListView(userId: user.id, listType: .following)
                 .environmentObject(authService)
         }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(target: target)
+        }
+        .alert(isBlocked ? "Unblock \(displayName)?" : "Block \(displayName)?", isPresented: $showBlockConfirmation) {
+            if isBlocked {
+                Button("Unblock") { setBlocked(false) }
+            } else {
+                Button("Block", role: .destructive) { setBlocked(true) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text(isBlocked
+                 ? "You'll see their posts, comments and messages again. Follows aren't restored."
+                 : "You won't see their posts, comments or messages, and you'll stop following each other.")
+        }
+        .alert(
+            "Something went wrong",
+            isPresented: Binding(get: { blockError != nil }, set: { if !$0 { blockError = nil } })
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(blockError ?? "")
+        }
         .onAppear {
             Task {
+                await blockStore.loadIfNeeded()
                 await loadUserData()
             }
         }
@@ -90,8 +134,84 @@ struct OtherUserProfileView: View {
                 dismiss()
             }
             Spacer()
+            if !isCurrentUser {
+                moreMenu
+            }
         }
         .padding(.top, DS.Spacing.l)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button {
+                reportTarget = .user(id: user.id)
+            } label: {
+                Label("Report", systemImage: "flag")
+            }
+            if isBlocked {
+                Button {
+                    showBlockConfirmation = true
+                } label: {
+                    Label("Unblock", systemImage: "hand.raised.slash")
+                }
+            } else {
+                Button(role: .destructive) {
+                    showBlockConfirmation = true
+                } label: {
+                    Label("Block", systemImage: "hand.raised")
+                }
+            }
+        } label: {
+            Group {
+                if isUpdatingBlock {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                }
+            }
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(Color.surfaceRaised))
+        }
+        .disabled(isUpdatingBlock)
+        .accessibilityLabel("More options")
+    }
+
+    private var blockedNotice: some View {
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: "hand.raised.fill", tint: .secondary, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("You blocked this account")
+                    .font(.subheadline.weight(.semibold))
+                Text("Their posts, comments and messages are hidden from you.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .cardStyle(padding: DS.Spacing.m, radius: DS.Radius.m)
+    }
+
+    // MARK: - Blocking
+
+    private func setBlocked(_ blocked: Bool) {
+        isUpdatingBlock = true
+        Task {
+            do {
+                if blocked {
+                    try await blockStore.block(user.id)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } else {
+                    try await blockStore.unblock(user.id)
+                }
+            } catch {
+                blockError = blocked
+                    ? "Couldn't block \(displayName). Check your connection and try again."
+                    : "Couldn't unblock \(displayName). Check your connection and try again."
+            }
+            isUpdatingBlock = false
+        }
     }
 
     private var statsSection: some View {
@@ -139,7 +259,6 @@ struct OtherUserProfileView: View {
             // Only show public trades for other users
             userTrades = trades.filter { $0.isPublic == true }
         } catch {
-            print("Error loading user trades: \(error)")
             userTrades = []
         }
 

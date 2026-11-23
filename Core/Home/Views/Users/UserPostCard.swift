@@ -1,6 +1,6 @@
 // File: Core/Home/Views/Users/UserPostCard.swift
 // A post in the Home feeds: author, text, tickers, trade numbers, photos and a quiet action row.
-// Also: the report sheet, TradeSummaryCard (shared with Profile) and the feed's short relative dates.
+// Also: TradeSummaryCard (shared with Profile) and the feed's short relative dates.
 
 import SwiftUI
 
@@ -21,6 +21,8 @@ struct UserPostCard: View {
     @State private var shareMessage = ""
     @State private var showShareConfirmation = false
     @State private var showReportSheet = false
+    /// Set once a report is sent; the post is hidden when the report sheet closes
+    @State private var didReport = false
     @State private var currentImageIndex = 0
 
     @EnvironmentObject var authService: FirebaseAuthService
@@ -28,176 +30,6 @@ struct UserPostCard: View {
     init(post: Post, homeViewModel: HomeViewModel) {
         self.post = post
         self.homeViewModel = homeViewModel
-    }
-
-    // MARK: - Report Post View
-    struct ReportPostView: View {
-        let post: Post
-        let onReport: (String) -> Void
-
-        @Environment(\.dismiss) var dismiss
-        @EnvironmentObject var authService: FirebaseAuthService
-
-        @State private var selectedReason = ""
-        @State private var customReason = ""
-        @State private var showCustomInput = false
-        @State private var isSubmitting = false
-
-        private let reportReasons = [
-            "Spam or misleading information",
-            "Harassment or bullying",
-            "Inappropriate content",
-            "False trading information",
-            "Hate speech or discrimination",
-            "Violation of community guidelines",
-            "Copyright infringement",
-            "Other"
-        ]
-
-        var body: some View {
-            NavigationStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: DS.Spacing.xl) {
-                        intro
-                        reasonsList
-                        if showCustomInput {
-                            customReasonField
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                    }
-                    .padding(.horizontal, DS.pageMargin)
-                    .padding(.top, DS.Spacing.s)
-                    .padding(.bottom, DS.Spacing.xl)
-                    .animation(.snappy(duration: 0.25), value: showCustomInput)
-                }
-                .safeAreaInset(edge: .bottom) { submitBar }
-                .screenBackground()
-                .navigationTitle("Report post")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
-                    }
-                }
-            }
-        }
-
-        private var intro: some View {
-            VStack(alignment: .leading, spacing: DS.Spacing.m) {
-                Text("What's wrong with this post?")
-                    .font(.title3.weight(.bold))
-                Text("Reports are anonymous. The post is hidden from your feed right away.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: DS.Spacing.s) {
-                        UserAvatar(username: post.authorUsername, size: 24)
-                        Text("@\(post.authorUsername)")
-                            .font(.caption.weight(.semibold))
-                    }
-                    Text(post.displayContent)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cardStyle(padding: DS.Spacing.m, radius: DS.Radius.m)
-            }
-        }
-
-        private var reasonsList: some View {
-            VStack(spacing: 0) {
-                ForEach(reportReasons, id: \.self) { reason in
-                    reasonRow(reason)
-                    if reason != reportReasons.last {
-                        Divider().overlay(Color.hairline).padding(.leading, DS.Spacing.l)
-                    }
-                }
-            }
-            .cardStyle(padding: 0)
-        }
-
-        private func reasonRow(_ reason: String) -> some View {
-            let isSelected = selectedReason == reason
-            return Button {
-                UISelectionFeedbackGenerator().selectionChanged()
-                selectedReason = reason
-                if reason == "Other" {
-                    showCustomInput = true
-                } else {
-                    showCustomInput = false
-                    customReason = ""
-                }
-            } label: {
-                HStack(spacing: DS.Spacing.m) {
-                    Text(reason)
-                        .font(.body)
-                        .foregroundStyle(Color.primary)
-                        .multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .foregroundStyle(isSelected ? Color.goldText : Color.secondary.opacity(0.5))
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .padding(.horizontal, DS.Spacing.l)
-                .padding(.vertical, 14)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-        }
-
-        private var customReasonField: some View {
-            VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                Text("Tell us more")
-                    .font(.subheadline.weight(.semibold))
-                TextField("Describe the problem", text: $customReason, axis: .vertical)
-                    .lineLimit(3...6)
-                    .padding(DS.Spacing.m)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                            .fill(Color.surfaceRaised)
-                    )
-            }
-        }
-
-        private var submitBar: some View {
-            Button(action: submitReport) {
-                HStack(spacing: DS.Spacing.s) {
-                    if isSubmitting {
-                        ProgressView().tint(Color.onGold)
-                    }
-                    Text(isSubmitting ? "Sending…" : "Submit report")
-                }
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(!canSubmit || isSubmitting)
-            .padding(.horizontal, DS.pageMargin)
-            .padding(.top, DS.Spacing.s)
-            .padding(.bottom, DS.Spacing.s)
-            .background(Color.appBackground)
-        }
-
-        private var canSubmit: Bool {
-            if selectedReason == "Other" {
-                return !customReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            return !selectedReason.isEmpty
-        }
-
-        private func submitReport() {
-            isSubmitting = true
-
-            let finalReason = selectedReason == "Other" ? customReason : selectedReason
-
-            // Short pause so the button state is visible before the sheet closes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                onReport(finalReason)
-                dismiss()
-            }
-        }
     }
 
     // MARK: - Main Body
@@ -213,7 +45,7 @@ struct UserPostCard: View {
         .overlay { deletingOverlay }
         .sheet(isPresented: $showOtherUserProfile) { profileSheet }
         .sheet(isPresented: $showComments) { commentsSheet }
-        .sheet(isPresented: $showReportSheet) { reportSheet }
+        .sheet(isPresented: $showReportSheet, onDismiss: hideIfReported) { reportSheet }
         .confirmationDialog("Share post", isPresented: $showShareSheet, titleVisibility: .visible) { shareDialog }
         .confirmationDialog("Delete this post?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             deleteDialog
@@ -228,16 +60,18 @@ struct UserPostCard: View {
         post.authorId == authService.currentUser?.id
     }
 
-    /// The author's name. Posts only store the username, so a real name is shown when we already
-    /// have it (your own posts, or a profile you've opened).
+    /// The author's name: stored on newer posts; for older ones, known only for your own posts
+    /// or once you've opened the author's profile.
     private var authorName: String {
         if isOwnPost, let name = authService.currentUser?.fullName, !name.isEmpty { return name }
+        if let name = post.authorFullName, !name.isEmpty { return name }
         if let name = profileUser?.fullName, !name.isEmpty { return name }
         return post.authorUsername
     }
 
     private var authorImageURL: String? {
-        isOwnPost ? authService.currentUser?.profileImageUrl : profileUser?.profileImageUrl
+        if isOwnPost { return authService.currentUser?.profileImageUrl }
+        return post.authorAvatarURL ?? profileUser?.profileImageUrl
     }
 
     /// "@username · 2h", or just "2h" when the name shown above already is the username.
@@ -296,10 +130,12 @@ struct UserPostCard: View {
                 }
             }
 
-            Button {
-                showReportSheet = true
-            } label: {
-                Label("Report post", systemImage: "flag")
+            if !isOwnPost {
+                Button {
+                    showReportSheet = true
+                } label: {
+                    Label("Report post", systemImage: "flag")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -491,17 +327,17 @@ struct UserPostCard: View {
         .presentationCornerRadius(DS.Radius.xl)
     }
 
-    @ViewBuilder
     private var reportSheet: some View {
-        ReportPostView(
-            post: post,
-            onReport: { reason in
-                Task {
-                    await reportPost(reason: reason)
-                }
-            }
-        )
-        .environmentObject(authService)
+        ReportSheet(target: .post(id: post.id, ownerId: post.authorId)) {
+            didReport = true
+        }
+    }
+
+    /// Hides a reported post from the reporter's feeds (after the sheet has closed, since this card goes away)
+    private func hideIfReported() {
+        guard didReport, let currentUserId = authService.currentUser?.id else { return }
+        didReport = false
+        homeViewModel.hideReportedPost(postId: post.id, reportedBy: currentUserId)
     }
 
     @ViewBuilder
@@ -633,30 +469,6 @@ struct UserPostCard: View {
         }
     }
 
-    // MARK: - Reporting
-
-    private func reportPost(reason: String) async {
-        guard let currentUserId = authService.currentUser?.id else {
-            showShareMessage("Sign in to report posts")
-            return
-        }
-
-        do {
-            try await authService.reportPost(
-                postId: post.id,
-                reportedBy: currentUserId,
-                reason: reason
-            )
-
-            // Hide the post from this user immediately
-            homeViewModel.hideReportedPost(postId: post.id, reportedBy: currentUserId)
-            showShareMessage("Reported and hidden")
-        } catch {
-            showShareMessage("Couldn't report post")
-            print("❌ Error reporting post: \(error)")
-        }
-    }
-
     // MARK: - Profile navigation
 
     private func handleProfileTap() {
@@ -683,8 +495,9 @@ struct UserPostCard: View {
             id: post.authorId,
             email: "",
             username: post.authorUsername,
-            fullName: post.authorUsername
+            fullName: post.authorFullName ?? post.authorUsername
         )
+        user.profileImageUrl = post.authorAvatarURL
 
         user.bio = nil
         user.followersCount = 0

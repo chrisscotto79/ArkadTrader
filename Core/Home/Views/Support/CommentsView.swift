@@ -11,6 +11,8 @@ struct CommentsView: View {
     @State private var isLoading = false
     @State private var hasLoaded = false
     @State private var likedComments: Set<String> = []
+    @State private var reportTarget: ReportTarget?
+    @ObservedObject private var blockStore = BlockStore.shared
 
     // Replies
     @State private var replyingToComment: Comment? = nil
@@ -21,14 +23,19 @@ struct CommentsView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
 
+    /// Comments minus anyone the user has blocked
+    private var visibleComments: [Comment] {
+        comments.filter { !blockStore.isBlocked($0.authorId) }
+    }
+
     private var topLevelComments: [Comment] {
-        comments.filter { $0.parentCommentId == nil }
+        visibleComments.filter { $0.parentCommentId == nil }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
     private func getReplies(for commentId: String) -> [Comment] {
         // Replies are flattened onto their root comment
-        comments.filter { $0.parentCommentId == commentId }
+        visibleComments.filter { $0.parentCommentId == commentId }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
@@ -45,8 +52,12 @@ struct CommentsView: View {
         }
         .background(Color.surface.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(target: target)
+        }
         .onAppear {
             Task {
+                await blockStore.loadIfNeeded()
                 await loadComments()
                 await loadLikedComments()
             }
@@ -84,7 +95,7 @@ struct CommentsView: View {
     private var commentsList: some View {
         if isLoading && !hasLoaded && comments.isEmpty {
             HomeFeedLoadingView(message: "Loading comments…")
-        } else if comments.isEmpty {
+        } else if visibleComments.isEmpty {
             EmptyStateView(
                 systemImage: "bubble.left.and.bubble.right.fill",
                 title: "No comments yet",
@@ -110,7 +121,8 @@ struct CommentsView: View {
                 comment: comment,
                 isInitiallyLiked: likedComments.contains(comment.id),
                 isReply: false,
-                onReply: { startReply(to: comment) }
+                onReply: { startReply(to: comment) },
+                onReport: { report(comment) }
             ) {
                 Task { await deleteComment(comment) }
             }
@@ -120,7 +132,8 @@ struct CommentsView: View {
                     comment: reply,
                     isInitiallyLiked: likedComments.contains(reply.id),
                     isReply: true,
-                    onReply: { startReply(to: reply) }
+                    onReply: { startReply(to: reply) },
+                    onReport: { report(reply) }
                 ) {
                     Task { await deleteComment(reply) }
                 }
@@ -216,6 +229,10 @@ struct CommentsView: View {
         }
     }
 
+    private func report(_ comment: Comment) {
+        reportTarget = .comment(id: comment.id, postId: postId, ownerId: comment.authorId)
+    }
+
     // MARK: - Replies
 
     private func startReply(to comment: Comment) {
@@ -297,7 +314,7 @@ struct CommentsView: View {
             await loadComments()
 
             // Update comment count (only count top-level comments)
-            onCommentCountChanged(topLevelComments.count)
+            onCommentCountChanged(comments.filter { $0.parentCommentId == nil }.count)
         } catch {
             print("❌ Error deleting comment: \(error)")
         }
@@ -324,7 +341,7 @@ struct CommentsView: View {
             await loadComments()
 
             // Update the comment count in the feed (only top-level comments)
-            onCommentCountChanged(topLevelComments.count)
+            onCommentCountChanged(comments.filter { $0.parentCommentId == nil }.count)
         } catch {
             print("❌ ERROR adding comment: \(error)")
         }
@@ -345,13 +362,16 @@ private struct CommentRowView: View {
     @State private var showDeleteConfirmation = false
 
     let onReply: () -> Void
+    let onReport: () -> Void
     let onDelete: () -> Void
 
-    init(comment: Comment, isInitiallyLiked: Bool, isReply: Bool = false, onReply: @escaping () -> Void, onDelete: @escaping () -> Void) {
+    init(comment: Comment, isInitiallyLiked: Bool, isReply: Bool = false, onReply: @escaping () -> Void,
+         onReport: @escaping () -> Void, onDelete: @escaping () -> Void) {
         self.comment = comment
         self.isInitiallyLiked = isInitiallyLiked
         self.isReply = isReply
         self.onReply = onReply
+        self.onReport = onReport
         self.onDelete = onDelete
         self._likesCount = State(initialValue: comment.likesCount)
         self._isLiked = State(initialValue: isInitiallyLiked)
@@ -400,22 +420,26 @@ private struct CommentRowView: View {
 
             Spacer(minLength: 0)
 
-            if isOwnComment {
-                Menu {
+            Menu {
+                if isOwnComment {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
                     } label: {
                         Label("Delete comment", systemImage: "trash")
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 22)
-                        .contentShape(Rectangle())
+                } else {
+                    Button(action: onReport) {
+                        Label("Report comment", systemImage: "flag")
+                    }
                 }
-                .accessibilityLabel("Comment options")
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 22)
+                    .contentShape(Rectangle())
             }
+            .accessibilityLabel("Comment options")
         }
     }
 

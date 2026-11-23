@@ -1,6 +1,7 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
 // The Portfolio tab: account value, realized P&L chart, key stats, and your open and closed trades.
-// Tap a trade to close, edit or delete it; the gold "+" logs a new one.
+// Tap a trade to close, edit or delete it; the gold "+" logs a new one. Linked brokerages add a
+// read-only holdings section and Verified imported trades.
 
 import SwiftUI
 import Charts
@@ -13,6 +14,7 @@ struct PortfolioView: View {
     @State private var selectedTrade: Trade?
     @State private var chartRange: ChartRange = .all
     @State private var showAllClosed = false
+    @State private var showLinkedAccounts = false
 
     /// Closed trades shown before "Show all"
     private let closedPreviewCount = 8
@@ -32,6 +34,16 @@ struct PortfolioView: View {
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { portfolioViewModel.refreshPortfolio() }
+            .navigationDestination(isPresented: $showLinkedAccounts) {
+                LinkedAccountsView()
+            }
+        }
+        .task { await portfolioViewModel.loadBrokerageHoldings() }
+        .onChange(of: showLinkedAccounts) { _, isShowing in
+            // Back from Linked brokerages: a sync or disconnect may have changed the holdings
+            if !isShowing {
+                Task { await portfolioViewModel.loadBrokerageHoldings() }
+            }
         }
         .sheet(isPresented: $showAddTrade) {
             AddTradeView()
@@ -67,8 +79,13 @@ struct PortfolioView: View {
 
     private var header: some View {
         ScreenHeader(title: "Portfolio") {
-            IconButton(systemName: "plus", accessibilityLabel: "Add trade", filled: true) {
-                showAddTrade = true
+            HStack(spacing: DS.Spacing.s) {
+                IconButton(systemName: "building.columns", accessibilityLabel: "Connect brokerage") {
+                    showLinkedAccounts = true
+                }
+                IconButton(systemName: "plus", accessibilityLabel: "Add trade", filled: true) {
+                    showAddTrade = true
+                }
             }
         }
     }
@@ -78,9 +95,11 @@ struct PortfolioView: View {
             heroCard
             if portfolioViewModel.trades.isEmpty && !isFirstLoad {
                 emptyJournal
+                holdingsSection
             } else {
                 statsGrid
                 openPositionsSection
+                holdingsSection
                 closedTradesSection
             }
         }
@@ -292,14 +311,30 @@ struct PortfolioView: View {
         .cardStyle()
     }
 
+    @ViewBuilder
+    private var holdingsSection: some View {
+        if !portfolioViewModel.brokerageHoldings.isEmpty {
+            BrokerageHoldingsSection(holdings: portfolioViewModel.brokerageHoldings) {
+                showLinkedAccounts = true
+            }
+        }
+    }
+
     private var emptyJournal: some View {
-        EmptyStateView(
-            systemImage: "chart.line.uptrend.xyaxis",
-            title: "Start your trading journal",
-            message: "Log a stock, option, crypto or forex trade to track your P&L and win rate here.",
-            actionTitle: "Add a trade",
-            action: { showAddTrade = true }
-        )
+        VStack(spacing: 0) {
+            EmptyStateView(
+                systemImage: "chart.line.uptrend.xyaxis",
+                title: "Start your trading journal",
+                message: "Log a stock, option, crypto or forex trade to track your P&L and win rate here.",
+                actionTitle: "Add a trade",
+                action: { showAddTrade = true }
+            )
+            Button("Or connect a brokerage") { showLinkedAccounts = true }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.goldText)
+                .padding(.top, -DS.Spacing.l)
+                .padding(.bottom, DS.Spacing.xl)
+        }
         .cardStyle(padding: 0)
     }
 
@@ -460,6 +495,9 @@ struct PortfolioTradeRow: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(terms.tint)
                     }
+                    if trade.isVerified == true {
+                        VerifiedTradeBadge(compact: true)
+                    }
                 }
                 Text(detailLine)
                     .font(.caption)
@@ -475,7 +513,12 @@ struct PortfolioTradeRow: View {
         .padding(.vertical, DS.Spacing.m)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityHint(trade.isOpen ? "Close, edit or delete this trade" : "Edit or delete this trade")
+        .accessibilityHint(accessibilityHint)
+    }
+
+    private var accessibilityHint: String {
+        if trade.isImported { return "View this imported trade" }
+        return trade.isOpen ? "Close, edit or delete this trade" : "Edit or delete this trade"
     }
 
     private var detailLine: String {
@@ -514,6 +557,26 @@ struct PortfolioTradeRow: View {
     private var hasLivePrice: Bool {
         guard terms.usesLiveQuotes, let current = trade.currentPrice, current > 0 else { return false }
         return current != trade.entryPrice
+    }
+}
+
+/// Green "Verified" mark for trades imported from a linked brokerage
+struct VerifiedTradeBadge: View {
+    /// Compact draws just the seal and a short label for list rows
+    var compact = false
+
+    var body: some View {
+        if compact {
+            HStack(spacing: 2) {
+                Image(systemName: "checkmark.seal.fill")
+                Text("Verified")
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Color.marketGreen)
+            .accessibilityElement(children: .combine)
+        } else {
+            Tag(text: "Verified", systemImage: "checkmark.seal.fill", tint: .marketGreen)
+        }
     }
 }
 

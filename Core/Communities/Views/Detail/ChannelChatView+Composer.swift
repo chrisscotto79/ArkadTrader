@@ -12,7 +12,9 @@ extension ChannelChatView {
             Rectangle().fill(Color.hairline).frame(height: 1)
 
             Group {
-                if viewModel.canUserPost || editingMessage != nil {
+                if viewModel.isMuted {
+                    mutedNotice
+                } else if viewModel.canUserPost || editingMessage != nil {
                     composerRow
                 } else {
                     readOnlyNotice
@@ -159,6 +161,29 @@ extension ChannelChatView {
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
         .frame(minHeight: 36)
+    }
+
+    private var mutedNotice: some View {
+        HStack(spacing: DS.Spacing.s) {
+            Image(systemName: "speaker.slash.fill")
+                .font(.footnote)
+            Text(mutedText)
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 36)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "You're muted until 4:30 PM" (or a date when it isn't today)
+    private var mutedText: String {
+        guard let until = viewModel.mutedUntil else { return "You're muted in this community" }
+        let when = Calendar.current.isDateInToday(until)
+            ? until.formatted(date: .omitted, time: .shortened)
+            : until.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+        return "You're muted until \(when)"
     }
 
     var inputBinding: Binding<String> {
@@ -315,11 +340,7 @@ extension ChannelChatView {
         let trimmedContent = editedContent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedContent.isEmpty else { return }
 
-        // Updated locally only for now (no Firestore write yet)
-        if let index = viewModel.messages.firstIndex(where: { $0.id == editingMessage.id }) {
-            viewModel.messages[index].content = trimmedContent + " (edited)"
-        }
-
+        viewModel.editMessage(editingMessage, newContent: trimmedContent)
         cancelEditing()
     }
 
@@ -337,8 +358,7 @@ extension ChannelChatView {
     func confirmDeleteMessage() {
         guard let messageToDelete = messageToDelete else { return }
 
-        // Removed locally only for now (no Firestore write yet)
-        viewModel.messages.removeAll { $0.id == messageToDelete.id }
+        viewModel.deleteMessage(messageToDelete)
 
         self.messageToDelete = nil
         showDeleteConfirmation = false

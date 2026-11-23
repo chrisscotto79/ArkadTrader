@@ -1,17 +1,23 @@
 // File: App/ArkadTraderApp.swift
 // App entry point. Shows the launch screen until the saved sign-in has been checked.
+// Firebase (including Crashlytics) is configured here; AppDelegate handles push notifications.
 
 import SwiftUI
-import Firebase
+import FirebaseCore
+import FirebaseCrashlytics
 
 @main
 struct ArkadTraderApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var authService = FirebaseAuthService.shared
     @State private var isLaunching = true
     @AppStorage(AppAppearance.storageKey) private var appearance: String = AppAppearance.system.rawValue
 
     init() {
-        FirebaseApp.configure()
+        // Crashlytics starts automatically once Firebase is configured.
+        if FirebaseApp.app() == nil {
+            FirebaseApp.configure()
+        }
     }
 
     var body: some Scene {

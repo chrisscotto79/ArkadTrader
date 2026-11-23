@@ -1,5 +1,6 @@
 // File: Core/Portfolio/Views/TradeManagementViews.swift
 // Trade detail sheet: see a trade, edit it, close it, or delete it.
+// Trades imported from a linked brokerage are read-only.
 
 import SwiftUI
 
@@ -137,7 +138,7 @@ struct TradeActionsSheet: View {
 
     private var bottomButtonTitle: String? {
         switch selectedAction {
-        case .view: return current.isOpen ? "Close position" : nil
+        case .view: return current.isOpen && !current.isImported ? "Close position" : nil
         case .edit: return "Save changes"
         case .close: return "Close position"
         }
@@ -159,14 +160,35 @@ struct TradeActionsSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cardStyle()
             }
-            Button(role: .destructive) {
-                showDeleteConfirmation = true
-            } label: {
-                Label("Delete trade", systemImage: "trash")
-                    .foregroundStyle(Color.marketRed)
+            if current.isImported {
+                importedNote
+            } else {
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("Delete trade", systemImage: "trash")
+                        .foregroundStyle(Color.marketRed)
+                }
+                .buttonStyle(SecondaryButtonStyle())
             }
-            .buttonStyle(SecondaryButtonStyle())
         }
+    }
+
+    /// Imported trades come from the brokerage, so they can't be edited, closed or deleted here
+    private var importedNote: some View {
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            IconWell(systemName: "checkmark.seal.fill", tint: .marketGreen, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Imported from your brokerage")
+                    .font(.subheadline.weight(.semibold))
+                Text("Verified trades sync automatically and can't be edited in Arkad.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .cardStyle()
     }
 
     private var detailsCard: some View {
@@ -528,9 +550,14 @@ private struct TradeHeroCard: View {
             HStack(spacing: DS.Spacing.m) {
                 AssetTickerBadge(symbol: trade.ticker, type: trade.tradeType, size: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(trade.ticker)
-                        .font(.title3.weight(.bold))
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(trade.ticker)
+                            .font(.title3.weight(.bold))
+                            .lineLimit(1)
+                        if trade.isVerified == true {
+                            VerifiedTradeBadge()
+                        }
+                    }
                     Text("\(trade.tradeType.displayName) · \(terms.quantityText(trade.quantity, symbol: trade.ticker))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -619,10 +646,12 @@ enum TradeAction: CaseIterable {
 
     func isAvailable(for trade: Trade) -> Bool {
         switch self {
-        case .view, .edit:
+        case .view:
             return true
+        case .edit:
+            return !trade.isImported
         case .close:
-            return trade.isOpen
+            return trade.isOpen && !trade.isImported
         }
     }
 }

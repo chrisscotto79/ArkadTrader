@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Detail/ChannelChatView.swift
-// A community channel's chat: header, grouped message list, typing indicator and mentions overlay.
+// A community channel's chat: header, pinned bar, grouped message list, typing indicator and mentions overlay.
 // The composer and attachments live in ChannelChatView+Composer.swift and ChannelChatView+Media.swift.
 
 import SwiftUI
@@ -26,6 +26,10 @@ struct ChannelChatView: View {
     @State var showEmojiPicker = false
     @State var emojiPickerForMessage: CommunityMessage?
     @FocusState var isMessageFieldFocused: Bool
+
+    // Moderation
+    @State var reportTarget: ReportTarget?
+    @State var showingPinnedMessages = false
 
     // Typing and search
     @State var lastTypingTime: Date = Date()
@@ -71,6 +75,10 @@ struct ChannelChatView: View {
         ZStack {
             VStack(spacing: 0) {
                 channelHeader
+                if let latestPin = viewModel.pinnedMessages.first {
+                    pinnedBar(latestPin)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 messagesScrollView
 
                 if !viewModel.typingUsernames.isEmpty {
@@ -92,6 +100,7 @@ struct ChannelChatView: View {
             }
             .animation(.snappy(duration: 0.2), value: replyingTo?.id)
             .animation(.snappy(duration: 0.2), value: editingMessage?.id)
+            .animation(.snappy(duration: 0.2), value: viewModel.pinnedMessages.first?.id)
 
             if showEmojiPicker {
                 emojiPickerOverlay
@@ -110,6 +119,30 @@ struct ChannelChatView: View {
                 })
                 .environmentObject(authService)
             }
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(target: target)
+        }
+        .sheet(isPresented: $showingPinnedMessages, onDismiss: {
+            if let target = searchSelectionId {
+                searchSelectionId = nil
+                scrollTargetMessageId = target
+            }
+        }) {
+            PinnedMessagesSheet(
+                messages: viewModel.pinnedMessages,
+                userCache: userCache,
+                canUnpin: viewModel.canPinMessages,
+                previewText: previewText(for:),
+                onSelect: { message in
+                    searchSelectionId = message.id
+                    showingPinnedMessages = false
+                },
+                onUnpin: { message in
+                    viewModel.togglePin(message)
+                }
+            )
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showCreateCallout) {
             CreateCalloutSheet(channelName: channel.name) { callout in
@@ -162,7 +195,7 @@ struct ChannelChatView: View {
         } message: {
             Text(uploadErrorMessage ?? "")
         }
-        .alert("Delete Message", isPresented: $showDeleteConfirmation) {
+        .alert("Delete message?", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 confirmDeleteMessage()
             }
@@ -170,7 +203,7 @@ struct ChannelChatView: View {
                 cancelDeleteMessage()
             }
         } message: {
-            Text("Are you sure you want to delete this message? This action cannot be undone.")
+            Text("It's removed for everyone in #\(channel.name) and shows as \"Message deleted\". This can't be undone.")
         }
         .onAppear {
             viewModel.loadChannelData(community: community, channel: channel)
@@ -259,6 +292,47 @@ extension ChannelChatView {
         case .text, .voice: return "number"
         case .callouts: return "megaphone.fill"
         }
+    }
+}
+
+// MARK: - Pinned bar
+extension ChannelChatView {
+    func pinnedBar(_ message: CommunityMessage) -> some View {
+        let count = viewModel.pinnedMessages.count
+        return Button(action: { showingPinnedMessages = true }) {
+            HStack(spacing: DS.Spacing.m) {
+                Image(systemName: "pin.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.goldTint))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(count > 1 ? "\(count) pinned messages" : "Pinned message")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.goldText)
+                    Text(previewText(for: message))
+                        .font(.subheadline)
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: DS.Spacing.s)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.vertical, DS.Spacing.s)
+            .background(Color.surface)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color.hairline).frame(height: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityHint("Shows pinned messages")
     }
 }
 
@@ -362,13 +436,25 @@ extension ChannelChatView {
             },
             currentUserId: authService.currentUser?.id ?? "",
             currentUsername: authService.currentUser?.username ?? "",
-            canManageCallout: viewModel.canManageCallout(message),
             onTrackCallout: { calloutToTrack = message },
-            onUpdateCalloutStatus: { status in
-                viewModel.updateCalloutStatus(message, to: status)
-            },
-            isLastInGroup: isLastInGroup(at: index)
+            isLastInGroup: isLastInGroup(at: index),
+            canPin: viewModel.canPin(message),
+            onTogglePin: { viewModel.togglePin(message) },
+            onReport: reportAction(for: message)
         )
+    }
+
+    /// Report option for other people's messages
+    func reportAction(for message: CommunityMessage) -> (() -> Void)? {
+        guard message.authorId != viewModel.currentUserId, !message.isDeleted else { return nil }
+        return {
+            reportTarget = .message(
+                id: message.id,
+                communityId: community.id,
+                channelId: channel.id,
+                ownerId: message.authorId
+            )
+        }
     }
 
     func daySeparator(for date: Date) -> some View {
@@ -460,6 +546,7 @@ extension ChannelChatView {
 
     /// One-line description of a message for reply / edit banners
     func previewText(for message: CommunityMessage) -> String {
+        if message.isDeleted { return "Message deleted" }
         if let callout = message.callout {
             return "\(callout.direction.displayName) $\(callout.ticker) callout"
         }
@@ -619,7 +706,7 @@ extension ChannelChatView {
                     }
                 }
             } catch {
-                print("❌ Error loading user \(userId): \(error)")
+                // The row falls back to the username stored on the message
             }
         }
     }

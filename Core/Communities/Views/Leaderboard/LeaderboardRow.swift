@@ -1,56 +1,59 @@
 // File: Core/Communities/Views/Leaderboard/LeaderboardRow.swift
-// Shared pieces for community and global leaderboards: the ranked list with a top-three podium,
-// the row, the rank badge and the category / timeframe filters.
+// Shared pieces for community and global callout leaderboards: the ranked list with a
+// top-three podium, the row, the rank badge and the sort chips.
 
 import SwiftUI
 
 extension LeaderboardCategory {
     var shortName: String {
         switch self {
-        case .consistencyMasters: return "Win Rate"
-        case .profitKings: return "P&L"
-        case .volumeTraders: return "Most Active"
-        case .riskMasters: return "Profit Factor"
+        case .winRate: return "Win rate"
+        case .avgReturn: return "Avg return"
+        case .totalReturn: return "Total return"
+        case .mostCallouts: return "Most callouts"
         }
     }
 
     /// The headline number for an entry on this board
     func primaryValue(for entry: CommunityLeaderboardEntry) -> String {
+        let stats = entry.stats
         switch self {
-        case .consistencyMasters: return String(format: "%.0f%%", entry.winRate)
-        case .profitKings: return entry.totalProfitLoss.asSignedCurrency
-        case .volumeTraders: return "\(entry.totalTrades)"
-        case .riskMasters: return entry.profitFactor >= 99 ? "∞" : String(format: "%.2f", entry.profitFactor)
+        case .winRate: return TraderStats.formatWinRate(stats.winRatePercent)
+        case .avgReturn: return TraderStats.formatPercent(stats.avgReturnPercent)
+        case .totalReturn: return TraderStats.formatPercent(stats.totalReturnPercent)
+        case .mostCallouts: return "\(stats.calloutsClosed)"
         }
     }
 
     var primaryLabel: String {
         switch self {
-        case .consistencyMasters: return "win rate"
-        case .profitKings: return "realized"
-        case .volumeTraders: return "trades"
-        case .riskMasters: return "profit factor"
+        case .winRate: return "win rate"
+        case .avgReturn: return "avg return"
+        case .totalReturn: return "total return"
+        case .mostCallouts: return "closed"
         }
     }
 
-    /// Colour of the headline number (P&L is green or red, everything else neutral)
+    /// Colour of the headline number (returns are green or red, counts and rates neutral)
     func primaryColor(for entry: CommunityLeaderboardEntry) -> Color {
         switch self {
-        case .profitKings:
-            if entry.totalProfitLoss > 0 { return .marketGreen }
-            if entry.totalProfitLoss < 0 { return .marketRed }
-            return .primary
-        default:
-            return .primary
+        case .avgReturn: return TraderStats.color(for: entry.stats.avgReturnPercent)
+        case .totalReturn: return TraderStats.color(for: entry.stats.totalReturnPercent)
+        case .winRate, .mostCallouts: return .primary
         }
     }
-}
 
-extension Double {
-    /// "+$1,234" / "-$56"
-    var asSignedCurrency: String {
-        let formatted = abs(self).formatted(.currency(code: "USD").precision(.fractionLength(0)))
-        return (self < 0 ? "-" : "+") + formatted
+    /// Supporting stats that aren't already the headline number
+    func secondaryLine(for entry: CommunityLeaderboardEntry) -> String {
+        let stats = entry.stats
+        let closed = "\(stats.calloutsClosed) closed"
+        let winRate = "\(TraderStats.formatWinRate(stats.winRatePercent)) wins"
+        let avg = "\(TraderStats.formatPercent(stats.avgReturnPercent)) avg"
+        switch self {
+        case .winRate: return "\(closed) · \(avg)"
+        case .avgReturn, .totalReturn: return "\(closed) · \(winRate)"
+        case .mostCallouts: return "\(winRate) · \(avg)"
+        }
     }
 }
 
@@ -179,16 +182,11 @@ struct LeaderboardRow: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.primary)
                         .lineLimit(1)
-                    if entry.isVerified {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.caption2)
-                            .foregroundStyle(Color.goldText)
-                    }
                     if isCurrentUser {
                         Tag(text: "You")
                     }
                 }
-                Text(secondaryLine)
+                Text(category.secondaryLine(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -212,19 +210,6 @@ struct LeaderboardRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Rank \(entry.rank), \(entry.username), \(category.primaryValue(for: entry)) \(category.primaryLabel)")
-    }
-
-    /// Supporting stats that aren't already the headline number
-    private var secondaryLine: String {
-        let trades = "\(entry.totalTrades) trade\(entry.totalTrades == 1 ? "" : "s")"
-        let winRate = String(format: "%.0f%% wins", entry.winRate)
-        let pnl = entry.totalProfitLoss.asSignedCurrency
-        switch category {
-        case .consistencyMasters: return "\(trades) · \(pnl)"
-        case .profitKings: return "\(trades) · \(winRate)"
-        case .volumeTraders: return "\(winRate) · \(pnl)"
-        case .riskMasters: return "\(trades) · \(pnl)"
-        }
     }
 }
 
@@ -268,11 +253,10 @@ struct RankBadge: View {
 
 // MARK: - Filters
 
-/// Category chips, timeframe switcher and a one-line explanation of the board.
+/// Sort chips and a one-line explanation of the board.
 /// Place it inside a container that already has the page margin; the chips scroll edge to edge.
 struct LeaderboardFilterBar: View {
     @Binding var category: LeaderboardCategory
-    @Binding var timeframe: LeaderboardTimeframe
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
@@ -288,12 +272,6 @@ struct LeaderboardFilterBar: View {
                 .padding(.horizontal, DS.pageMargin)
             }
             .padding(.horizontal, -DS.pageMargin)
-
-            SegmentedPicker(
-                options: LeaderboardTimeframe.allCases,
-                selection: $timeframe,
-                title: { $0.displayName }
-            )
 
             Text(category.description)
                 .font(.caption)

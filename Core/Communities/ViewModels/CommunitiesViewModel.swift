@@ -12,6 +12,8 @@ class CommunitiesViewModel: ObservableObject {
     @Published var userCommunities: [Community] = []
     @Published var isLoading = false
     @Published var errorMessage = ""
+    /// Shown as an alert when joining fails (banned, paid community, network)
+    @Published var joinErrorMessage: String?
     
     
     // User stats
@@ -192,12 +194,18 @@ class CommunitiesViewModel: ObservableObject {
                     userId: userId
                 )
                 
+                // A first join is a good moment to ask about notifications
+                await PushNotificationManager.shared.requestAuthorizationIfNeeded()
+
                 // Refresh data after joining
                 await loadUserCommunities()
                 await loadDiscoveryCommunities()
                 await loadUserStats()
                 
+            } catch let error as CommunityJoinError {
+                joinErrorMessage = error.errorDescription
             } catch {
+                joinErrorMessage = "Couldn't join \(community.name). Check your connection and try again."
                 handleError(error, context: "joining community")
             }
         }

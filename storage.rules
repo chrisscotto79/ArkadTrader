@@ -1,0 +1,60 @@
+rules_version = '2';
+
+// Arkad Storage rules. Paths come from the app:
+//   profile_images/{uid}.jpg                       FirebaseServices+Posts.swift
+//   post_images/{postId}_{index}.jpg               HomeViewModel.swift
+//   chat_images/{uuid}.jpg                         ChannelChatView+Media.swift
+//   chat_documents/{uuid}.{ext}                    ChannelChatView+Media.swift
+//   community_images/{cid}_{avatar|banner}_{ts}.jpg CommunitySettingsViewModel.swift
+//
+// Note: the app stores download URLs (with tokens) in Firestore. Anyone holding such a
+// URL can fetch the file without these rules, so chat attachments in paid communities
+// are only as private as the message that links to them.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function isImage() { return request.resource.contentType.matches('image/.*'); }
+    // The app uploads some files without metadata, so contentType may be missing or
+    // application/octet-stream; only reject types that are clearly not images.
+    function imageLike() {
+      return request.resource.contentType == null
+        || request.resource.contentType.matches('image/.*')
+        || request.resource.contentType == 'application/octet-stream';
+    }
+    function under(mb) { return request.resource.size < mb * 1024 * 1024; }
+
+    // Profile photos: one file per user, named after their uid.
+    match /profile_images/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn()
+        && fileName == request.auth.uid + '.jpg'
+        && (request.resource == null || (under(5) && imageLike()));
+    }
+
+    // Post images are written before the post exists, so they can't be tied to an
+    // author here; new files only, no overwrites.
+    match /post_images/{fileName} {
+      allow read: if signedIn();
+      allow create: if signedIn() && under(10) && imageLike();
+    }
+
+    match /chat_images/{fileName} {
+      allow read: if signedIn();
+      allow create: if signedIn() && under(10) && imageLike();
+    }
+
+    match /chat_documents/{fileName} {
+      allow read: if signedIn();
+      allow create: if signedIn() && under(20);
+    }
+
+    // Community avatar / banner: only the community's owner, checked against Firestore.
+    match /community_images/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn()
+        && firestore.get(/databases/(default)/documents/communities/$(fileName.split('_')[0])).data.createdBy == request.auth.uid
+        && (request.resource == null || (under(8) && isImage()));
+    }
+  }
+}
