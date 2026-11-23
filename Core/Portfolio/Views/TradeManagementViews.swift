@@ -33,7 +33,7 @@ struct TradeActionsSheet: View {
         _ticker = State(initialValue: trade.ticker)
         _tradeType = State(initialValue: trade.tradeType)
         _entryPrice = State(initialValue: String(format: "%.2f", trade.entryPrice))
-        _quantity = State(initialValue: "\(trade.quantity)")
+        _quantity = State(initialValue: trade.quantity.quantityString)
         _strategy = State(initialValue: trade.strategy ?? "")
         _notes = State(initialValue: trade.notes ?? "")
         _entryDate = State(initialValue: trade.entryDate)
@@ -197,7 +197,7 @@ struct TradeActionsSheet: View {
                 VStack(spacing: 8) {
                     DetailRow(title: "Trade Type", value: trade.tradeType.displayName)
                     DetailRow(title: "Entry Price", value: trade.entryPrice.asCurrency)
-                    DetailRow(title: "Quantity", value: "\(trade.quantity) shares")
+                    DetailRow(title: "Quantity", value: "\(trade.quantity.quantityString) shares")
                     DetailRow(title: "Total Value", value: trade.currentValue.asCurrency)
                     DetailRow(title: "Entry Date", value: formatDate(trade.entryDate))
                     
@@ -389,9 +389,9 @@ struct TradeActionsSheet: View {
                         .foregroundColor(.gray)
                     
                     if let entryPriceDouble = Double(entryPrice),
-                       let quantityInt = Int(quantity) {
+                       let quantityValue = Double(quantity.replacingOccurrences(of: ",", with: "")) {
                         VStack(spacing: 4) {
-                            Text("\(quantityInt) shares of \(ticker.uppercased())")
+                            Text("\(quantityValue.quantityString) of \(ticker.uppercased())")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                             
@@ -399,7 +399,7 @@ struct TradeActionsSheet: View {
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                             
-                            Text("Total: \((entryPriceDouble * Double(quantityInt)).asCurrency)")
+                            Text("Total: \((entryPriceDouble * quantityValue).asCurrency)")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.arkadGold)
@@ -424,7 +424,7 @@ struct TradeActionsSheet: View {
                     .fontWeight(.bold)
                 
                 VStack(spacing: 8) {
-                    Text("\(trade.quantity) shares at \(trade.entryPrice.asCurrency)")
+                    Text("\(trade.quantity.quantityString) shares at \(trade.entryPrice.asCurrency)")
                         .font(.subheadline)
                         .foregroundColor(.gray)
                     
@@ -432,7 +432,7 @@ struct TradeActionsSheet: View {
                         .font(.caption)
                         .foregroundColor(.gray)
                     
-                    Text("Position Value: \((trade.entryPrice * Double(trade.quantity)).asCurrency)")
+                    Text("Position Value: \((trade.entryPrice * trade.quantity).asCurrency)")
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
@@ -563,9 +563,9 @@ struct TradeActionsSheet: View {
                    !entryPrice.isEmpty &&
                    !quantity.isEmpty &&
                    Double(entryPrice) != nil &&
-                   Int(quantity) != nil &&
+                   Double(quantity.replacingOccurrences(of: ",", with: "")) != nil &&
                    Double(entryPrice)! > 0 &&
-                   Int(quantity)! > 0
+                   Double(quantity.replacingOccurrences(of: ",", with: ""))! > 0
         case .close:
             return !exitPrice.isEmpty && Double(exitPrice) != nil && Double(exitPrice)! > 0
         }
@@ -595,7 +595,7 @@ struct TradeActionsSheet: View {
             updatedTrade.ticker = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             updatedTrade.tradeType = tradeType
             updatedTrade.entryPrice = Double(entryPrice) ?? trade.entryPrice
-            updatedTrade.quantity = Int(quantity) ?? trade.quantity
+            updatedTrade.quantity = Double(quantity.replacingOccurrences(of: ",", with: "")) ?? trade.quantity
             updatedTrade.strategy = strategy.isEmpty ? nil : strategy
             updatedTrade.notes = notes.isEmpty ? nil : notes
             updatedTrade.entryDate = entryDate
@@ -625,7 +625,7 @@ struct TradeActionsSheet: View {
         
         portfolioViewModel.closeTrade(trade, exitPrice: price)
         
-        let profit = (price - trade.entryPrice) * Double(trade.quantity)
+        let profit = (price - trade.entryPrice) * trade.quantity
         alertMessage = profit >= 0 ?
             "Position closed with a profit of \(profit.asCurrency)" :
             "Position closed with a loss of \(abs(profit).asCurrency)"
@@ -815,11 +815,11 @@ struct ProjectedPLCard: View {
     let exitPrice: Double
     
     private var projectedPL: Double {
-        (exitPrice - trade.entryPrice) * Double(trade.quantity)
+        (exitPrice - trade.entryPrice) * trade.quantity
     }
     
     private var returnPercentage: Double {
-        (projectedPL / (trade.entryPrice * Double(trade.quantity))) * 100
+        (projectedPL / (trade.entryPrice * trade.quantity)) * 100
     }
     
     var body: some View {

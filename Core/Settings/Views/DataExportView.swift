@@ -221,7 +221,7 @@ enum CSVExport {
                 text(trade.ticker),
                 trade.tradeType.displayName,
                 trade.isOpen ? "Open" : "Closed",
-                "\(trade.quantity)",
+                "\(trade.quantity.quantityString)",
                 number(trade.entryPrice),
                 date(trade.entryDate),
                 trade.exitPrice.map(number) ?? "",

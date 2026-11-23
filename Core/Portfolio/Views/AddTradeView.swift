@@ -907,9 +907,8 @@ struct AddTradeView: View {
 extension AddTradeView {
     private var maxSteps: Int { 5 }
     
-    /// Asset types that can be saved correctly. Crypto and forex are left out:
-    /// Trade.quantity is an Int, so fractional coin amounts and lot sizes can't be stored.
-    private var supportedTradeTypes: [TradeType] { [.stock, .option] }
+    /// Every asset type can be logged; quantities may be fractional (except option contracts).
+    private var supportedTradeTypes: [TradeType] { TradeType.allCases }
     
     private var canProceed: Bool {
         switch currentStep {
@@ -936,8 +935,13 @@ extension AddTradeView {
         return value
     }
     
-    private var parsedQuantity: Int? {
-        guard let value = Int(quantityText.trimmingCharacters(in: .whitespaces)), value > 0 else { return nil }
+    private var parsedQuantity: Double? {
+        let cleaned = quantityText
+            .replacingOccurrences(of: ",", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        guard let value = Double(cleaned), value > 0 else { return nil }
+        // Option contracts are always whole numbers
+        if tradeType == .option && value.rounded() != value { return nil }
         return value
     }
     

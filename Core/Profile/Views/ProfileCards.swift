@@ -495,7 +495,7 @@ struct ProfileUserTradeCard: View {
                     Spacer()
                 }
                 
-                Text("\(trade.quantity) \(unitLabel) @ \(trade.entryPrice.asCurrency)")
+                Text("\(trade.quantity.quantityString) \(unitLabel) @ \(trade.entryPrice.asCurrency)")
                     .font(.caption)
                     .foregroundColor(.textSecondary)
             }
@@ -575,7 +575,7 @@ struct TopPositionCard: View {
                     .fontWeight(.bold)
                     .foregroundColor(.marketGreen)
                 
-                Text("\(trade.quantity) \(trade.tradeType == .option ? "contracts" : "shares")")
+                Text("\(trade.quantity.quantityString) \(trade.tradeType == .option ? "contracts" : "shares")")
                     .font(.caption)
                     .foregroundColor(.textSecondary)
             }

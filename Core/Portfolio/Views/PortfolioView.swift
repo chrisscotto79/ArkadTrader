@@ -410,7 +410,7 @@ struct PortfolioTradeRow: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                Text("\(trade.quantity) @ \(trade.entryPrice.asCurrency) · \(dateText)")
+                Text("\(trade.quantity.quantityString) @ \(trade.entryPrice.asCurrency) · \(dateText)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)

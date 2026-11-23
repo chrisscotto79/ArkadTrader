@@ -101,7 +101,7 @@ struct CreateCalloutSheet: View {
 struct TrackCalloutSheet: View {
     let callout: TradeCallout
     let communityName: String
-    let onTrack: (_ entryPrice: Double, _ quantity: Int) async throws -> Void
+    let onTrack: (_ entryPrice: Double, _ quantity: Double) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var entry: String
@@ -109,7 +109,7 @@ struct TrackCalloutSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(callout: TradeCallout, communityName: String, onTrack: @escaping (Double, Int) async throws -> Void) {
+    init(callout: TradeCallout, communityName: String, onTrack: @escaping (Double, Double) async throws -> Void) {
         self.callout = callout
         self.communityName = communityName
         self.onTrack = onTrack
@@ -117,7 +117,7 @@ struct TrackCalloutSheet: View {
     }
 
     private var entryValue: Double { Double(entry) ?? 0 }
-    private var quantityValue: Int { Int(quantity) ?? 0 }
+    private var quantityValue: Double { Double(quantity.replacingOccurrences(of: ",", with: "")) ?? 0 }
 
     var body: some View {
         NavigationStack {
@@ -143,10 +143,10 @@ struct TrackCalloutSheet: View {
                         Text("Quantity")
                         Spacer()
                         TextField("1", text: $quantity)
-                            .keyboardType(.numberPad)
+                            .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                     }
-                    LabeledContent("Position size", value: (entryValue * Double(quantityValue)).asCurrency)
+                    LabeledContent("Position size", value: (entryValue * quantityValue).asCurrency)
                 }
 
                 if let errorMessage {

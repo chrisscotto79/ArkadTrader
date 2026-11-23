@@ -459,7 +459,7 @@ struct SearchResultView: View {
                                 Text(trade.tradeType == .option ? "Contracts" : "Shares")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                Text("\(trade.quantity)")
+                                Text("\(trade.quantity.quantityString)")
                                     .font(.subheadline)
                                     .fontWeight(.semibold)
                             }

@@ -1,14 +1,14 @@
 // File: Shared/Components/TabBarView.swift
-// The app's five main tabs.
+// The app's five main tabs. Communities sits next to Home because it's the heart of Arkad.
 
 import SwiftUI
 
 /// The app's main tabs, in display order.
 enum AppTab: Hashable {
     case home
-    case search
-    case portfolio
     case communities
+    case portfolio
+    case search
     case profile
 }
 
@@ -24,27 +24,27 @@ struct TabBarView: View {
     var body: some View {
         TabView(selection: $tabRouter.selected) {
             HomeView()
-                .tabItem { Label("Home", systemImage: tabRouter.selected == .home ? "house.fill" : "house") }
+                .tabItem { Label("Home", systemImage: "house.fill") }
                 .tag(AppTab.home)
 
-            SearchView()
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
-                .tag(AppTab.search)
-
-            PortfolioView()
-                .tabItem { Label("Portfolio", systemImage: "chart.line.uptrend.xyaxis") }
-                .tag(AppTab.portfolio)
-
             CommunitiesView()
-                .tabItem { Label("Communities", systemImage: tabRouter.selected == .communities ? "person.3.fill" : "person.3") }
+                .tabItem { Label("Communities", systemImage: "person.3.fill") }
                 .tag(AppTab.communities)
 
+            PortfolioView()
+                .tabItem { Label("Portfolio", systemImage: "chart.pie.fill") }
+                .tag(AppTab.portfolio)
+
+            SearchView()
+                .tabItem { Label("Discover", systemImage: "magnifyingglass") }
+                .tag(AppTab.search)
+
             ProfileView()
-                .tabItem { Label("Profile", systemImage: tabRouter.selected == .profile ? "person.fill" : "person") }
+                .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
                 .tag(AppTab.profile)
         }
-        // Brand gold (Resources/assets.xcassets/AccentColor) for the selected tab
-        .tint(.accentColor)
+        // Readable gold for the selected tab in both light and dark mode
+        .tint(.goldText)
         .environmentObject(tabRouter)
     }
 }

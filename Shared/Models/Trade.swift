@@ -13,7 +13,8 @@ struct Trade: Identifiable, Codable {
     var entryPrice: Double
     var exitPrice: Double?
     var currentPrice: Double?
-    var quantity: Int
+    /// Shares, contracts, coins or units. Fractional amounts are allowed (crypto, forex, fractional shares).
+    var quantity: Double
     var entryDate: Date
     var exitDate: Date?
     var notes: String?
@@ -32,7 +33,7 @@ struct Trade: Identifiable, Codable {
     
     var profitLoss: Double {
         guard let exitPrice = exitPrice else { return 0 }
-        return (exitPrice - entryPrice) * Double(quantity)
+        return (exitPrice - entryPrice) * quantity
     }
     
     var profitLossPercentage: Double {
@@ -43,17 +44,17 @@ struct Trade: Identifiable, Codable {
     var currentValue: Double {
         if isOpen {
             let price = (currentPrice != nil && currentPrice! > 0) ? currentPrice! : entryPrice
-            return price * Double(quantity)
+            return price * quantity
         } else {
             let price = exitPrice ?? entryPrice
-            return price * Double(quantity)
+            return price * quantity
         }
     }
     
     var unrealizedPL: Double {
         guard isOpen else { return 0 }
         guard let current = currentPrice, current > 0 else { return 0 }
-        return (current - entryPrice) * Double(quantity)
+        return (current - entryPrice) * quantity
     }
     
     var unrealizedPLPercentage: Double {
@@ -88,7 +89,7 @@ struct Trade: Identifiable, Codable {
     }
     
     var totalInvested: Double {
-        return entryPrice * Double(quantity)
+        return entryPrice * quantity
     }
     
     var hasSignificantPriceMovement: Bool {
@@ -101,12 +102,12 @@ struct Trade: Identifiable, Codable {
     
     var riskAmount: Double {
         guard let stopLoss = stopLossPrice else { return totalInvested }
-        return abs(entryPrice - stopLoss) * Double(quantity)
+        return abs(entryPrice - stopLoss) * quantity
     }
     
     var potentialReward: Double {
         guard let takeProfit = takeProfitPrice else { return 0 }
-        return abs(takeProfit - entryPrice) * Double(quantity)
+        return abs(takeProfit - entryPrice) * quantity
     }
     
     var riskRewardRatio: Double {
@@ -129,11 +130,11 @@ struct Trade: Identifiable, Codable {
     
     // MARK: - Initializers
     
-    init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: UUID) {
+    init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Double, userId: UUID) {
         self.init(ticker: ticker, tradeType: tradeType, entryPrice: entryPrice, quantity: quantity, userId: userId.uuidString)
     }
     
-    init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Int, userId: String) {
+    init(ticker: String, tradeType: TradeType, entryPrice: Double, quantity: Double, userId: String) {
         self.id = UUID().uuidString
         self.userId = userId
         self.ticker = ticker.uppercased()
@@ -230,7 +231,7 @@ struct Trade: Identifiable, Codable {
               let tradeTypeString = data["tradeType"] as? String,
               let tradeType = TradeType(rawValue: tradeTypeString),
               let entryPrice = data["entryPrice"] as? Double,
-              let quantity = data["quantity"] as? Int,
+              let quantity = (data["quantity"] as? NSNumber)?.doubleValue,
               let entryDateTimestamp = data["entryDate"] as? Timestamp,
               let isOpen = data["isOpen"] as? Bool else {
             throw NSError(domain: "FirestoreError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid data"])

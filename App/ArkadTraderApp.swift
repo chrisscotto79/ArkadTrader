@@ -8,6 +8,7 @@ import Firebase
 struct ArkadTraderApp: App {
     @StateObject private var authService = FirebaseAuthService.shared
     @State private var isLaunching = true
+    @AppStorage(AppAppearance.storageKey) private var appearance: String = AppAppearance.system.rawValue
 
     init() {
         FirebaseApp.configure()
@@ -25,6 +26,7 @@ struct ArkadTraderApp: App {
                         .transition(.opacity)
                 }
             }
+            .preferredColorScheme(AppAppearance(rawValue: appearance)?.colorScheme)
             .task { await finishLaunch() }
         }
     }
@@ -57,19 +59,16 @@ struct LaunchScreenView: View {
 
     var body: some View {
         ZStack {
-            Color.white.ignoresSafeArea()
+            Color.appBackground.ignoresSafeArea()
 
             VStack(spacing: 32) {
-                Image("arkad_logo")
-                    .resizable()
-                    .scaledToFit()
+                ArkadLogo(height: 80)
                     .frame(maxWidth: 240)
                     .scaleEffect(appeared ? 1 : 0.94)
                     .opacity(appeared ? 1 : 0)
-                    .accessibilityLabel("Arkad")
 
                 ProgressView()
-                    .tint(.arkadGoldDark)
+                    .tint(.goldText)
                     .opacity(showSpinner ? 1 : 0)
             }
             .padding(.horizontal, 48)
@@ -78,7 +77,7 @@ struct LaunchScreenView: View {
                 Spacer()
                 Text(AppInfo.versionLine)
                     .font(.caption2)
-                    .foregroundColor(.black.opacity(0.35))
+                    .foregroundStyle(.tertiary)
                     .padding(.bottom, 24)
             }
         }

@@ -156,7 +156,7 @@ class ChannelChatViewModel: ObservableObject {
     }
     
     /// Add a callout to the current user's portfolio as an open trade.
-    func trackCallout(_ callout: TradeCallout, entryPrice: Double, quantity: Int) async throws {
+    func trackCallout(_ callout: TradeCallout, entryPrice: Double, quantity: Double) async throws {
         guard let currentUser = authService.currentUser else { throw FirestoreError.unauthorized }
         var trade = Trade(ticker: callout.ticker, tradeType: callout.assetType, entryPrice: entryPrice,
                           quantity: quantity, userId: currentUser.id)

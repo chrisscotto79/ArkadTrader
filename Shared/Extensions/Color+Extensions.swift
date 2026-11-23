@@ -1,5 +1,5 @@
 // File: Shared/Extensions/Color+Extensions.swift
-// Fixed Color Extensions - removed conflicting enums and fixed blend mode issues
+// Brand and market colours. Adaptive surfaces and tokens live in Shared/Components/DesignSystem.swift.
 
 import SwiftUI
 
@@ -11,12 +11,19 @@ extension Color {
     
     // MARK: - Brand Color Variations
     static let arkadGoldLight = Color(red: 255/255, green: 206/255, blue: 84/255)
-    static let arkadGoldDark = Color(red: 218/255, green: 160/255, blue: 0/255)
+    /// Gold for text and icons; darker in light mode so it stays readable.
+    static let arkadGoldDark = Color.goldText
     static let arkadGoldMuted = Color(red: 254/255, green: 186/255, blue: 23/255).opacity(0.6)
     
     // MARK: - Market Colors
-    static let marketGreen = Color(red: 34/255, green: 197/255, blue: 94/255)
-    static let marketRed = Color(red: 239/255, green: 68/255, blue: 68/255)
+    static let marketGreen = Color.dynamic(
+        light: UIColor(red: 22/255, green: 163/255, blue: 74/255, alpha: 1),   // #16A34A
+        dark: UIColor(red: 52/255, green: 211/255, blue: 110/255, alpha: 1)    // #34D36E
+    )
+    static let marketRed = Color.dynamic(
+        light: UIColor(red: 220/255, green: 38/255, blue: 38/255, alpha: 1),   // #DC2626
+        dark: UIColor(red: 248/255, green: 92/255, blue: 92/255, alpha: 1)     // #F85C5C
+    )
     static let marketGreenLight = Color(red: 134/255, green: 239/255, blue: 172/255)
     static let marketRedLight = Color(red: 252/255, green: 165/255, blue: 165/255)
     static let marketGreenDark = Color(red: 21/255, green: 128/255, blue: 61/255)
@@ -85,7 +92,7 @@ extension Color {
     )
     
     static let backgroundGradient = LinearGradient(
-        gradient: Gradient(colors: [arkadGold.opacity(0.1), Color.white]),
+        gradient: Gradient(colors: [arkadGold.opacity(0.1), Color.appBackground]),
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
@@ -253,5 +260,5 @@ extension Color {
     static let arkadDark = Color(red: 20/255, green: 20/255, blue: 30/255)
     static let arkadGreen = Color.marketGreen  // Reuse your existing marketGreen
     static let arkadRed = Color.marketRed      // Reuse your existing marketRed
-    static let cardBackground = Color.backgroundSecondary  // Reuse your existing backgroundSecondary
+    static let cardBackground = Color.surface
 }

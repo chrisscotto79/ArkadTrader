@@ -161,8 +161,17 @@ extension Double {
         return ((self - oldValue) / oldValue) * 100
     }
     
-    func profitLoss(from entryPrice: Double, quantity: Int) -> Double {
-        return (self - entryPrice) * Double(quantity)
+    func profitLoss(from entryPrice: Double, quantity: Double) -> Double {
+        return (self - entryPrice) * quantity
+    }
+
+    /// Quantity without trailing zeros: 10 -> "10", 0.5 -> "0.5", 0.00012345 -> "0.00012345"
+    var quantityString: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 8
+        return formatter.string(from: NSNumber(value: self)) ?? "\(self)"
     }
     
     func profitLossPercentage(from entryPrice: Double) -> Double {

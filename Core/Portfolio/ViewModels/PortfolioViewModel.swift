@@ -204,7 +204,7 @@ class PortfolioViewModel: ObservableObject {
         
         // Calculate portfolio values
         let currentValueOfOpenPositions = openTrades.reduce(0) { $0 + $1.currentValue }
-        let totalInvestedInOpenPositions = openTrades.reduce(0) { $0 + ($1.entryPrice * Double($1.quantity)) }
+        let totalInvestedInOpenPositions = openTrades.reduce(0) { $0 + ($1.entryPrice * $1.quantity) }
         let realizedPL = closedTrades.reduce(0) { $0 + $1.profitLoss }
         
         // Available Cash = Starting Capital + Realized P&L - Money Currently Invested
@@ -292,7 +292,7 @@ class PortfolioViewModel: ObservableObject {
         }
         
         let investedInOpenPositions = openTradesOnDate.reduce(0.0) {
-            $0 + ($1.entryPrice * Double($1.quantity))
+            $0 + ($1.entryPrice * $1.quantity)
         }
         
         // Available cash = Starting Capital + Realized P&L - Money in Open Positions
@@ -300,7 +300,7 @@ class PortfolioViewModel: ObservableObject {
         
         // Current value of open positions
         let currentValueOfOpenPositions = openTradesOnDate.reduce(0.0) {
-            $0 + ($1.entryPrice * Double($1.quantity))
+            $0 + ($1.entryPrice * $1.quantity)
         }
         
         // Total Portfolio Value = Available Cash + Current Value of Open Positions
@@ -364,7 +364,7 @@ class PortfolioViewModel: ObservableObject {
     
     private func calculateAverageTradeSize() -> Double {
         guard !trades.isEmpty else { return 0 }
-        let totalSize = trades.reduce(0.0) { $0 + ($1.entryPrice * Double($1.quantity)) }
+        let totalSize = trades.reduce(0.0) { $0 + ($1.entryPrice * $1.quantity) }
         return totalSize / Double(trades.count)
     }
     

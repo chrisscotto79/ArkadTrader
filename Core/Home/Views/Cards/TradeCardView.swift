@@ -102,7 +102,7 @@ struct TradeCardView: View {
                     Text(quantityLabel)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("\(trade.quantity)")
+                    Text("\(trade.quantity.quantityString)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                 }
