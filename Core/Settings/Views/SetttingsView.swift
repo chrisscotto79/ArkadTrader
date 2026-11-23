@@ -1,5 +1,6 @@
 // File: Core/Settings/Views/SettingsView.swift
-// Settings: profile, data export, help, about, sign out and account deletion.
+// Settings: profile, data export, appearance, help, about, sign out and account deletion.
+// Also defines the grouped-card row components shared by the other Settings screens.
 
 import SwiftUI
 import FirebaseAuth
@@ -7,6 +8,8 @@ import FirebaseAuth
 struct SettingsView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
+    @AppStorage(AppAppearance.storageKey) private var appearance: String = AppAppearance.system.rawValue
+
     @State private var showEditProfile = false
     @State private var showDataExport = false
     @State private var showHelpCenter = false
@@ -23,23 +26,36 @@ struct SettingsView: View {
     private static let recentLoginWindow: TimeInterval = 5 * 60
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Profile header section
-                profileHeaderSection
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: DS.Spacing.xl) {
+                    profileCard
+                    accountSection
+                    preferencesSection
+                    supportSection
+                    aboutSection
+                    logOutSection
+                    deleteSection
 
-                // Settings list
-                settingsListSection
+                    Text(AppInfo.versionLine)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
+            .screenBackground()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                     .disabled(isDeletingAccount)
                 }
             }
@@ -74,7 +90,7 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("""
-            This permanently deletes your ArkadTrader sign-in and your profile (name, username and bio). It can't be undone.
+            This permanently deletes your Arkad sign-in and your profile (name, username and bio). It can't be undone.
 
             Trades, posts, comments, images and community messages you created are not removed by this step. To have them removed too, email \(AppInfo.supportEmail).
             """)
@@ -86,151 +102,154 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Profile Header Section
-    private var profileHeaderSection: some View {
-        VStack(spacing: 16) {
-            // User avatar and info
-            HStack(spacing: 16) {
-                // Avatar
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.arkadGold, Color.arkadGoldLight]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 60, height: 60)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: 3)
-                    )
-                    .overlay(
-                        Text(initials)
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(.white)
-                    )
-                    .shadow(color: Color.arkadGold.opacity(0.4), radius: 8, x: 0, y: 4)
+    // MARK: - Profile Card
 
-                // User info
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(authService.currentUser?.fullName ?? "Unknown User")
+    private var profileCard: some View {
+        Button {
+            showEditProfile = true
+        } label: {
+            HStack(spacing: DS.Spacing.m) {
+                ProfileImageView(user: authService.currentUser, size: 56)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName)
                         .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-
-                    Text("@\(authService.currentUser?.username ?? "username")")
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    if let username = authService.currentUser?.username, !username.isEmpty {
+                        Text("@\(username)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
 
-                Spacer()
+                Spacer(minLength: DS.Spacing.s)
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 20)
+            .cardStyle()
+            .contentShape(Rectangle())
         }
-        .background(Color.backgroundSecondary)
+        .buttonStyle(PressableStyle())
+        .accessibilityHint("Edit your profile")
     }
 
-    // MARK: - Settings List Section
-    private var settingsListSection: some View {
-        List {
-            Section("Account") {
-                SettingsRowView(
-                    icon: "person.circle",
-                    title: "Edit Profile",
-                    color: .blue
-                ) {
-                    showEditProfile = true
-                }
+    // MARK: - Sections
 
-                SettingsRowView(
-                    icon: "square.and.arrow.up",
-                    title: "Export Data",
-                    color: .marketGreen
-                ) {
-                    showDataExport = true
-                }
+    private var accountSection: some View {
+        SettingsGroupCard(title: "Account") {
+            SettingsListRow(icon: "person.crop.circle", title: "Edit profile", subtitle: "Photo, name, username and bio") {
+                showEditProfile = true
             }
-
-            Section("Support") {
-                SettingsRowView(
-                    icon: "questionmark.circle",
-                    title: "Help Center",
-                    color: .gray
-                ) {
-                    showHelpCenter = true
-                }
-
-                SettingsRowView(
-                    icon: "envelope",
-                    title: "Contact Support",
-                    color: .gray
-                ) {
-                    showContactSupport = true
-                }
-
-                SettingsRowView(
-                    icon: "info.circle",
-                    title: "About ArkadTrader",
-                    color: .gray
-                ) {
-                    showAbout = true
-                }
-            }
-
-            Section {
-                SettingsRowView(
-                    icon: "arrow.right.square",
-                    title: "Logout",
-                    color: .red
-                ) {
-                    Task {
-                        await authService.logout()
-                    }
-                }
-            }
-
-            Section {
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 18, weight: .medium))
-                            .frame(width: 24, height: 24)
-                        Text("Delete Account")
-                            .font(.body)
-                            .fontWeight(.semibold)
-                        Spacer()
-                    }
-                    .foregroundColor(.marketRed)
-                    .padding(.vertical, 4)
-                }
-                .disabled(isDeletingAccount)
-            } footer: {
-                Text("Permanently deletes your sign-in and profile. This can't be undone.")
+            SettingsRowDivider()
+            SettingsListRow(icon: "square.and.arrow.up", title: "Export data", subtitle: "Your trades and posts as CSV files") {
+                showDataExport = true
             }
         }
-        .listStyle(InsetGroupedListStyle())
+    }
+
+    private var preferencesSection: some View {
+        SettingsGroupCard(title: "Preferences") {
+            VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                HStack(spacing: DS.Spacing.m) {
+                    IconWell(systemName: "circle.lefthalf.filled", size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Appearance")
+                            .font(.body.weight(.medium))
+                        Text("Follow your device, or always use light or dark")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                SegmentedPicker(options: AppAppearance.allCases, selection: appearanceSelection) { option in
+                    option.title
+                }
+                .accessibilityLabel("Appearance")
+            }
+            .padding(DS.Spacing.l)
+        }
+    }
+
+    private var supportSection: some View {
+        SettingsGroupCard(title: "Support") {
+            SettingsListRow(icon: "questionmark.circle", title: "Help Center", subtitle: "Answers to common questions") {
+                showHelpCenter = true
+            }
+            SettingsRowDivider()
+            SettingsListRow(icon: "envelope", title: "Contact support", subtitle: "Email the Arkad team") {
+                showContactSupport = true
+            }
+        }
+    }
+
+    private var aboutSection: some View {
+        SettingsGroupCard(title: "About") {
+            SettingsListRow(icon: "info.circle", title: "About Arkad", value: "v\(AppInfo.version)") {
+                showAbout = true
+            }
+        }
+    }
+
+    private var logOutSection: some View {
+        SettingsGroupCard {
+            SettingsListRow(
+                icon: "rectangle.portrait.and.arrow.right",
+                title: "Log out",
+                tint: .secondary,
+                accessory: .none
+            ) {
+                Task {
+                    await authService.logout()
+                }
+            }
+            .disabled(isDeletingAccount)
+        }
+    }
+
+    private var deleteSection: some View {
+        SettingsGroupCard(footer: "Permanently deletes your sign-in and profile. This can't be undone.") {
+            SettingsListRow(
+                icon: "trash",
+                title: "Delete account",
+                tint: .marketRed,
+                titleColor: .marketRed,
+                accessory: .none
+            ) {
+                showDeleteConfirmation = true
+            }
+            .disabled(isDeletingAccount)
+        }
     }
 
     private var deletingOverlay: some View {
         ZStack {
-            Color.black.opacity(0.25)
+            Color.black.opacity(0.3)
                 .ignoresSafeArea()
-            VStack(spacing: 12) {
+            VStack(spacing: DS.Spacing.m) {
                 ProgressView()
-                Text("Deleting account...")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .tint(Color.goldText)
+                Text("Deleting account…")
+                    .font(.subheadline.weight(.medium))
             }
-            .padding(24)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
-            )
+            .padding(DS.Spacing.xl)
+            .cardStyle(padding: 0)
         }
+        .transition(.opacity)
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceSelection: Binding<AppAppearance> {
+        Binding(
+            get: { AppAppearance(rawValue: appearance) ?? .system },
+            set: { appearance = $0.rawValue }
+        )
     }
 
     // MARK: - Account Deletion
@@ -272,44 +291,169 @@ struct SettingsView: View {
     }
 
     // MARK: - Helper Properties
-    private var initials: String {
-        guard let user = authService.currentUser else { return "U" }
-        let names = user.fullName.split(separator: " ")
-        let first = names.first?.first.map(String.init) ?? "U"
-        let last = names.count > 1 ? (names.last?.first.map(String.init) ?? "") : ""
-        return (first + last).uppercased()
+
+    private var displayName: String {
+        guard let user = authService.currentUser else { return "Your account" }
+        if !user.fullName.isEmpty { return user.fullName }
+        return user.username.isEmpty ? "Your account" : user.username
     }
 }
 
-// MARK: - Settings Row View
-struct SettingsRowView: View {
+// MARK: - Grouped Card Components (shared by the Settings screens)
+
+/// A titled group of rows on a single card, with an optional footnote underneath.
+struct SettingsGroupCard<Content: View>: View {
+    var title: String? = nil
+    var footer: String? = nil
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            if let title {
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, DS.Spacing.xs)
+                    .accessibilityAddTraits(.isHeader)
+            }
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+            .cardStyle(padding: 0)
+
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, DS.Spacing.xs)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// The visual content of a settings row: icon well, title, optional subtitle/value and an accessory.
+struct SettingsRowLabel: View {
+    enum Accessory {
+        case chevron, external, share, none
+    }
+
     let icon: String
     let title: String
-    let color: Color
+    var subtitle: String? = nil
+    var value: String? = nil
+    var tint: Color = .goldText
+    var titleColor: Color = .primary
+    var accessory: Accessory = .chevron
+
+    var body: some View {
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: icon, tint: tint, size: 34)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(titleColor)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .multilineTextAlignment(.leading)
+
+            Spacer(minLength: DS.Spacing.s)
+
+            if let value {
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            accessoryView
+        }
+        .padding(.horizontal, DS.Spacing.l)
+        .padding(.vertical, DS.Spacing.m)
+        .frame(minHeight: 58)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var accessoryView: some View {
+        switch accessory {
+        case .chevron:
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        case .external:
+            Image(systemName: "arrow.up.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        case .share:
+            Image(systemName: "square.and.arrow.up")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.goldText)
+        case .none:
+            EmptyView()
+        }
+    }
+}
+
+/// A tappable settings row.
+struct SettingsListRow: View {
+    let icon: String
+    let title: String
+    var subtitle: String? = nil
+    var value: String? = nil
+    var tint: Color = .goldText
+    var titleColor: Color = .primary
+    var accessory: SettingsRowLabel.Accessory = .chevron
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 24, height: 24)
-
-                Text(title)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.textPrimary)
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.textTertiary)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-            }
-            .padding(.vertical, 4)
+            SettingsRowLabel(
+                icon: icon,
+                title: title,
+                subtitle: subtitle,
+                value: value,
+                tint: tint,
+                titleColor: titleColor,
+                accessory: accessory
+            )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(SettingsRowButtonStyle())
     }
+}
+
+/// Row press feedback: a soft fill behind the row.
+struct SettingsRowButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color.surfaceRaised : Color.clear)
+            .opacity(isEnabled ? 1 : 0.4)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// Hairline between rows, inset to line up with the row titles.
+struct SettingsRowDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.hairline)
+            .frame(height: 1)
+            .padding(.leading, DS.Spacing.l + 34 + DS.Spacing.m)
+    }
+}
+
+#Preview {
+    SettingsView()
+        .environmentObject(FirebaseAuthService.shared)
 }

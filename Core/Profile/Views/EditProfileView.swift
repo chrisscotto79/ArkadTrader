@@ -1,12 +1,12 @@
 // File: Core/Profile/Views/EditProfileView.swift
-// Updated with Profile Image Upload Support
+// Edit profile: photo, full name, username and bio.
 
 import SwiftUI
 
 struct EditProfileView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
-    
+
     @State private var fullName = ""
     @State private var bio = ""
     @State private var username = ""
@@ -16,208 +16,63 @@ struct EditProfileView: View {
     @State private var validationMessage = ""
     @State private var isLoading = false
     @State private var imageChanged = false
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
-                    // Profile Picture Section
-                    VStack(spacing: 16) {
-                        // Profile Picture Button
-                        Button(action: { showImagePicker = true }) {
-                            ZStack {
-                                // Profile image or placeholder
-                                Group {
-                                    if let selectedImage = selectedImage {
-                                        Image(uiImage: selectedImage)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                    } else if let imageUrl = authService.currentUser?.profileImageUrl,
-                                              !imageUrl.isEmpty {
-                                        AsyncImage(url: URL(string: imageUrl)) { image in
-                                            image
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                        } placeholder: {
-                                            Circle()
-                                                .fill(Color.arkadGold.opacity(0.2))
-                                                .overlay(
-                                                    ProgressView()
-                                                        .tint(.arkadGold)
-                                                )
-                                        }
-                                    } else {
-                                        Circle()
-                                            .fill(
-                                                LinearGradient(
-                                                    gradient: Gradient(colors: [
-                                                        Color.arkadGold.opacity(0.8),
-                                                        Color.arkadGold.opacity(0.6)
-                                                    ]),
-                                                    startPoint: .topLeading,
-                                                    endPoint: .bottomTrailing
-                                                )
-                                            )
-                                            .overlay(
-                                                Text(getInitials())
-                                                    .font(.system(size: 36, weight: .bold))
-                                                    .foregroundColor(.white)
-                                            )
-                                    }
-                                }
-                                .frame(width: 120, height: 120)
-                                .clipShape(Circle())
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.arkadGold, lineWidth: 4)
-                                )
-                                .shadow(color: Color.arkadGold.opacity(0.3), radius: 10, x: 0, y: 5)
-                                
-                                // Edit overlay
-                                Circle()
-                                    .fill(Color.black.opacity(0.4))
-                                    .frame(width: 120, height: 120)
-                                
-                                VStack(spacing: 4) {
-                                    Image(systemName: "camera.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.white)
-                                    
-                                    Text("Edit")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        }
-                        .disabled(isLoading)
-                        
-                        if imageChanged {
-                            Text("Tap Save to upload your new profile picture")
-                                .font(.caption)
-                                .foregroundColor(.arkadGold)
-                                .multilineTextAlignment(.center)
-                        }
-                    }
-                    
-                    // Form Fields
-                    VStack(spacing: 20) {
-                        // Full Name
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Full Name")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.textPrimary)
-                            
-                            TextField("Enter your full name", text: $fullName)
-                                .textFieldStyle(CustomTextFieldStyle())
-                        }
-                        
-                        // Username
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Username")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.textPrimary)
-                            
-                            TextField("Enter username", text: $username)
-                                .textFieldStyle(CustomTextFieldStyle())
-                                .autocapitalization(.none)
-                                .autocorrectionDisabled()
-                        }
-                        
-                        // Bio
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Bio")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.textPrimary)
-                                
-                                Spacer()
-                                
-                                Text("\(bio.count)/150")
-                                    .font(.caption)
-                                    .foregroundColor(bio.count > 150 ? .red : .gray)
-                            }
-                            
-                            TextField("Tell us about yourself...", text: $bio, axis: .vertical)
-                                .textFieldStyle(CustomTextFieldStyle())
-                                .lineLimit(3...6)
-                        }
-                    }
-                    
-                    // Validation Feedback
+                VStack(spacing: DS.Spacing.xl) {
+                    photoSection
+                    formSection
+
                     if !getValidationMessage().isEmpty {
-                        Text(getValidationMessage())
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .padding(.horizontal)
-                            .multilineTextAlignment(.center)
+                        Label(getValidationMessage(), systemImage: "exclamationmark.circle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(Color.marketRed)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .transition(.opacity)
                     }
-                    
-                    // Save Button
-                    Button(action: {
-                        Task {
-                            await saveProfile()
-                        }
-                    }) {
-                        HStack(spacing: 10) {
-                            if isLoading {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .foregroundColor(.white)
-                                Text("Saving...")
-                            } else {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.subheadline)
-                                Text("Save Changes")
-                            }
-                        }
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(canSaveProfile && !isLoading ? Color.arkadGold : Color.gray)
-                        .cornerRadius(12)
-                    }
-                    .disabled(!canSaveProfile || isLoading)
-                    
-                    Spacer(minLength: 100)
+
+                    saveButton
                 }
-                .padding()
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.l)
+                .padding(.bottom, DS.Spacing.xxl)
+                .animation(.snappy(duration: 0.2), value: getValidationMessage())
             }
+            .scrollDismissesKeyboard(.interactively)
+            .screenBackground()
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
+                    .foregroundStyle(Color.goldText)
+                    .disabled(isLoading)
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
+
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         Task {
                             await saveProfile()
                         }
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                     .disabled(!canSaveProfile || isLoading)
                 }
             }
             .onAppear {
                 setupInitialValues()
             }
-            .alert("Validation Error", isPresented: $showValidationError) {
+            .alert("Couldn't Save Profile", isPresented: $showValidationError) {
                 Button("OK") { }
             } message: {
                 Text(validationMessage)
             }
         }
+        .interactiveDismissDisabled(isLoading)
         .sheet(isPresented: $showImagePicker) {
             ProfileImagePicker(selectedImage: $selectedImage)
                 .onDisappear {
@@ -227,9 +82,119 @@ struct EditProfileView: View {
                 }
         }
     }
-    
+
+    // MARK: - Photo
+
+    private var photoSection: some View {
+        VStack(spacing: DS.Spacing.m) {
+            Button(action: { showImagePicker = true }) {
+                ZStack(alignment: .bottomTrailing) {
+                    avatar
+                        .frame(width: 112, height: 112)
+                        .clipShape(Circle())
+
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.onGold)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.arkadGold))
+                        .overlay(Circle().strokeBorder(Color.appBackground, lineWidth: 3))
+                        .offset(x: 2, y: 2)
+                }
+            }
+            .buttonStyle(PressableStyle())
+            .disabled(isLoading)
+            .accessibilityLabel("Change profile photo")
+
+            Button("Change photo") { showImagePicker = true }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.goldText)
+                .disabled(isLoading)
+
+            if imageChanged {
+                Text("Tap Save to upload your new profile photo")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.snappy(duration: 0.2), value: imageChanged)
+    }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if let selectedImage {
+            Image(uiImage: selectedImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            ProfileImageView(user: authService.currentUser, size: 112)
+        }
+    }
+
+    // MARK: - Form
+
+    private var formSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            CustomTextField(
+                title: "Full name",
+                text: $fullName,
+                placeholder: "Your name",
+                autocapitalization: .words,
+                textContentType: .name,
+                submitLabel: .next
+            )
+
+            CustomTextField(
+                title: "Username",
+                text: $username,
+                placeholder: "username",
+                autocapitalization: .never,
+                icon: "at",
+                textContentType: .username,
+                submitLabel: .next,
+                autocorrectionDisabled: true
+            )
+
+            VStack(alignment: .trailing, spacing: 6) {
+                CustomTextField(
+                    title: "Bio",
+                    text: $bio,
+                    placeholder: "Tell other traders about yourself, your style and the markets you follow",
+                    multiline: true
+                )
+
+                Text("\(bio.count)/150")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(bio.count > 150 ? Color.marketRed : Color.secondary)
+            }
+        }
+        .cardStyle()
+    }
+
+    private var saveButton: some View {
+        Button {
+            Task {
+                await saveProfile()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView().tint(Color.onGold)
+                    Text("Saving…")
+                } else {
+                    Text("Save changes")
+                }
+            }
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(!canSaveProfile || isLoading)
+    }
+
     // MARK: - Helper Methods
-    
+
     private func setupInitialValues() {
         if let user = authService.currentUser {
             fullName = user.fullName
@@ -237,15 +202,7 @@ struct EditProfileView: View {
             bio = user.bio ?? ""
         }
     }
-    
-    private func getInitials() -> String {
-        guard let user = authService.currentUser else { return "U" }
-        let names = user.fullName.split(separator: " ")
-        let first = names.first?.first ?? Character("U")
-        let last = names.count > 1 ? names.last?.first : nil
-        return String(first) + (last != nil ? String(last!) : "")
-    }
-    
+
     @MainActor
     private func saveProfile() async {
         guard canSaveProfile else {
@@ -253,9 +210,9 @@ struct EditProfileView: View {
             showValidationError = true
             return
         }
-        
+
         isLoading = true
-        
+
         do {
             try await authService.updateProfile(
                 fullName: fullName.isEmpty ? nil : fullName,
@@ -263,39 +220,39 @@ struct EditProfileView: View {
                 username: username.isEmpty ? nil : username,
                 profileImage: selectedImage // Pass the selected image
             )
-            
+
             // Reset image changed flag
             imageChanged = false
             selectedImage = nil
-            
+
             dismiss()
         } catch {
             validationMessage = "Failed to update profile: \(error.localizedDescription)"
             showValidationError = true
         }
-        
+
         isLoading = false
     }
-    
+
     // MARK: - Validation
-    
+
     private var isValidFullName: Bool {
         return fullName.count >= 2 && fullName.count <= 50
     }
-    
+
     private var isValidBio: Bool {
         return bio.count <= 150
     }
-    
+
     private var isValidUsername: Bool {
         let usernameRegex = "^[a-zA-Z0-9_]{3,20}$"
         return NSPredicate(format: "SELF MATCHES %@", usernameRegex).evaluate(with: username)
     }
-    
+
     private var canSaveProfile: Bool {
         return isValidFullName && isValidBio && isValidUsername
     }
-    
+
     private func getValidationMessage() -> String {
         if !isValidFullName {
             return "Name must be between 2 and 50 characters"
@@ -312,17 +269,15 @@ struct EditProfileView: View {
 
 // MARK: - Custom Text Field Style
 
+/// Rounded `surfaceRaised` text field background for plain `TextField`s.
 struct CustomTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration
-            .padding()
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.arkadGold.opacity(0.3), lineWidth: 1)
-                    )
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .fill(Color.surfaceRaised)
             )
     }
 }

@@ -17,7 +17,13 @@ class SearchViewModel: ObservableObject {
     @Published var trendingTopics: [TrendingTopic] = []
     @Published var currentQuery = ""
     @Published var searchPerformance: SearchPerformance?
-    
+
+    // Discover suggestions shown before the user types
+    @Published var suggestedCommunities: [Community] = []
+    @Published var suggestedTraders: [User] = []
+    @Published var isLoadingSuggestions = false
+    @Published var hasLoadedSuggestions = false
+
     // MARK: - Private Properties
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
@@ -413,7 +419,14 @@ class SearchViewModel: ObservableObject {
     // MARK: - Search History Management
     
     private func addToSearchHistory(_ query: String) {
-        searchHistory.removeAll { $0.lowercased() == query.lowercased() }
+        let lowered = query.lowercased()
+        // Search runs as you type, so collapse "Ch", "Chr", "Chri" into the final "Chris":
+        // drop older entries that are a prefix of this query...
+        searchHistory.removeAll { lowered.hasPrefix($0.lowercased()) }
+        // ...and skip this one if it's a prefix of the newest entry (e.g. while deleting characters).
+        if let newest = searchHistory.first, newest.lowercased().hasPrefix(lowered) {
+            return
+        }
         searchHistory.insert(query, at: 0)
         
         if searchHistory.count > 20 {
@@ -441,8 +454,38 @@ class SearchViewModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "arkad_search_history")
     }
     
+    // MARK: - Discover Suggestions
+
+    /// Popular public communities and the most-followed traders, for Discover's empty state.
+    /// Each list fails quietly: if it can't load, its section just isn't shown.
+    func loadDiscoverSuggestions() async {
+        guard !isLoadingSuggestions else { return }
+        isLoadingSuggestions = true
+
+        async let communitiesRequest = FirebaseServices.shared.getCommunities(limit: 20)
+        async let tradersRequest = authService.getPopularUsers(limit: 11)
+
+        let loadedCommunities = (try? await communitiesRequest) ?? []
+        let loadedTraders = (try? await tradersRequest) ?? []
+        let currentUserId = authService.currentUser?.id
+
+        suggestedCommunities = Array(
+            loadedCommunities
+                .sorted { $0.discoveryScore > $1.discoveryScore }
+                .prefix(8)
+        )
+        suggestedTraders = Array(
+            loadedTraders
+                .filter { $0.id != currentUserId }
+                .prefix(10)
+        )
+
+        isLoadingSuggestions = false
+        hasLoadedSuggestions = true
+    }
+
     // MARK: - Search Suggestions and Trending Topics
-    
+
     private func setupSearchSuggestions() {
         suggestions = []
     }

@@ -1,6 +1,6 @@
 // File: Core/Communities/Views/Main/CommunitiesView.swift
-// The Communities tab: header with a section switcher (My Communities / Discover / Leaderboard).
-// Each section's content is in a CommunitiesView+*.swift file.
+// The Communities tab: large header with a create button and a section switcher
+// (Joined / Discover / Leaderboard). Each section's content is in a CommunitiesView+*.swift file.
 
 import SwiftUI
 
@@ -10,30 +10,30 @@ struct CommunitiesView: View {
     @State var showCreateCommunity = false
     @State var selectedTab: CommunityMainTab = .myCommunities
     @State var hasChosenTab = false
-    
+
     @State var selectedCommunityForPreview: Community?
     @State var showCommunityPreview = false
     @State var showFilterSheet = false
-    
+
     // Navigation state
     @State var selectedCommunity: Community?
     @State var navigateToCommunity = false
-    
+
     @State var selectedLeaderboardCommunity: Community?
     @State var navigateToLeaderboard = false
-    
-    // Enhanced leaderboard state
+
+    // Leaderboard state
     @State var selectedLeaderboardMode: LeaderboardMode = .communities
     @StateObject var globalLeaderboardViewModel = GlobalLeaderboardViewModel()
     @State var globalProfileUser: User?
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 header
                 contentSection
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $navigateToLeaderboard) {
                 if let community = selectedLeaderboardCommunity {
@@ -46,7 +46,9 @@ struct CommunitiesView: View {
                     CommunityDetailView(community: community)
                 }
             }
-            .sheet(isPresented: $showCreateCommunity) {
+            .sheet(isPresented: $showCreateCommunity, onDismiss: {
+                Task { await viewModel.loadUserCommunities() }
+            }) {
                 CreateCommunityView()
             }
             .sheet(isPresented: $showCommunityPreview) {
@@ -87,42 +89,36 @@ struct CommunitiesView: View {
 
     // MARK: - Header
 
-    /// Title, create button, and the always-visible section switcher
+    /// Large title, create button, and the always-visible section switcher
     var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Communities")
-                    .font(.largeTitle.weight(.bold))
-                Spacer()
-                Button {
+        VStack(spacing: 0) {
+            ScreenHeader(title: "Communities") {
+                IconButton(
+                    systemName: "plus",
+                    accessibilityLabel: "Create a community",
+                    filled: true
+                ) {
                     HapticManager.shared.impact(style: .light)
                     showCreateCommunity = true
-                } label: {
-                    Label("Create", systemImage: "plus")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(Color.arkadGold))
                 }
-                .accessibilityLabel("Create a community")
             }
 
-            Picker("Section", selection: Binding(
-                get: { selectedTab },
-                set: { selectedTab = $0; hasChosenTab = true }
-            )) {
-                ForEach(CommunityMainTab.allCases, id: \.self) { tab in
-                    Text(tab.shortName).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
+            SegmentedPicker(
+                options: CommunityMainTab.allCases,
+                selection: tabSelection,
+                title: { $0.shortName }
+            )
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.bottom, DS.Spacing.s)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
-        .background(Color(.systemBackground))
-        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    /// Picking a section by hand stops the automatic "new users land on Discover" switch
+    private var tabSelection: Binding<CommunityMainTab> {
+        Binding(
+            get: { selectedTab },
+            set: { selectedTab = $0; hasChosenTab = true }
+        )
     }
 
     // MARK: - Navigation Helpers
@@ -131,11 +127,21 @@ struct CommunitiesView: View {
         selectedCommunity = community
         navigateToCommunity = true
     }
-    
+
     func navigateToLeaderboard(_ community: Community) {
         HapticManager.shared.impact(style: .light)
         selectedLeaderboardCommunity = community
         navigateToLeaderboard = true
+    }
+
+    func showCreate() {
+        HapticManager.shared.impact(style: .light)
+        showCreateCommunity = true
+    }
+
+    func goToDiscover() {
+        hasChosenTab = true
+        withAnimation(.snappy(duration: 0.25)) { selectedTab = .discover }
     }
 }
 
@@ -143,46 +149,41 @@ struct CommunitiesView: View {
 extension CommunitiesView {
     var contentSection: some View {
         ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: DS.Spacing.xl) {
                 switch selectedTab {
                 case .discover:
                     discoverContent
                 case .myCommunities:
                     myCommunitiesContent
                 case .leaderboard:
-                    if viewModel.userCommunities.isEmpty {
+                    if viewModel.userCommunities.isEmpty && selectedLeaderboardMode == .communities {
+                        leaderboardModePicker
                         emptyLeaderboardState
                     } else {
                         leaderboardContent
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 32)
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.top, DS.Spacing.m)
+            .padding(.bottom, DS.Spacing.xxl)
+            .animation(.snappy(duration: 0.25), value: selectedTab)
         }
+        .scrollDismissesKeyboard(.immediately)
         .refreshable {
             viewModel.refreshData()
         }
     }
 }
 
-
 // MARK: - Helper Methods
 extension CommunitiesView {
     func getCommunityColor(for type: CommunityType) -> Color {
         type.tint
     }
-    
+
     func getCommunityInitials(from name: String) -> String {
-        let words = name.components(separatedBy: " ")
-        if words.count >= 2 {
-            let first = String(words[0].prefix(1))
-            let second = String(words[1].prefix(1))
-            return (first + second).uppercased()
-        } else {
-            return String(name.prefix(2)).uppercased()
-        }
+        CommunityPalette.initials(for: name)
     }
 }
 

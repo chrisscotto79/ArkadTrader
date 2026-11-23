@@ -285,10 +285,10 @@ enum CommunityRole: String, CaseIterable, Codable {
     
     var color: Color {
         switch self {
-        case .owner: return .purple
-        case .admin: return .orange
-        case .moderator: return .blue
-        case .member: return .green
+        case .owner: return .goldText
+        case .admin: return .warning
+        case .moderator: return .stockColor
+        case .member: return .secondary
         }
     }
     

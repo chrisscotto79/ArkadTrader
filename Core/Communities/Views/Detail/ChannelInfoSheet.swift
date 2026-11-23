@@ -2,79 +2,81 @@
 // Sheet showing a channel's details.
 
 import SwiftUI
-import UIKit
-import UniformTypeIdentifiers
-import FirebaseStorage
-import Photos
-import MobileCoreServices
 
-// MARK: - Channel Info Sheet (Simplified)
 struct ChannelInfoSheet: View {
     let community: Community
     let channel: Channel
     @Environment(\.dismiss) private var dismiss
-    
+
+    private var isCallouts: Bool { channel.type == .callouts }
+
     var body: some View {
-        NavigationView {
-            List {
-                Section {
-                    HStack {
-                        ZStack {
-                            Circle()
-                                .fill(channelColor.opacity(0.15))
-                                .frame(width: 50, height: 50)
-                            
-                            Image(systemName: channelIcon)
-                                .font(.title2)
-                                .foregroundColor(channelColor)
-                        }
-                        
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                    HStack(spacing: DS.Spacing.m) {
+                        IconWell(
+                            systemName: isCallouts ? "megaphone.fill" : "number",
+                            tint: isCallouts ? .goldText : .secondary,
+                            size: 52
+                        )
                         VStack(alignment: .leading, spacing: 4) {
                             Text("#\(channel.name)")
-                                .font(.headline)
-                                .fontWeight(.bold)
-                            
-                            Text(channel.type.displayName)
+                                .font(.title3.weight(.bold))
+                            Text("\(channel.type.displayName) channel in \(community.name)")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
-                        
-                        Spacer()
+                        Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 8)
-                }
-                
-                Section("About") {
+
+                    VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                        infoRow(icon: channel.adminOnly ? "lock.fill" : "bubble.left.and.bubble.right.fill",
+                                title: "Who can post",
+                                value: channel.adminOnly ? "Owners and admins" : "Every member")
+                        Rectangle().fill(Color.hairline).frame(height: 1)
+                        infoRow(icon: "calendar",
+                                title: "Created",
+                                value: channel.createdAt.formatted(date: .abbreviated, time: .omitted))
+                    }
+                    .cardStyle(padding: DS.Spacing.l)
+
                     Text(channelDescription)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, DS.Spacing.xs)
                 }
+                .padding(DS.pageMargin)
             }
+            .screenBackground()
             .navigationTitle("Channel Info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .fontWeight(.semibold)
+                        .tint(Color.goldText)
                 }
             }
         }
     }
-    
-    private var channelColor: Color {
-        switch channel.type {
-        case .text, .voice: return .blue
-        case .callouts: return .orange
+
+    private func infoRow(icon: String, title: String, value: String) -> some View {
+        HStack(spacing: DS.Spacing.m) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.semibold))
         }
     }
-    
-    private var channelIcon: String {
-        switch channel.type {
-        case .text, .voice: return "number"
-        case .callouts: return "megaphone.fill"
-        }
-    }
-    
+
     private var channelDescription: String {
         let posting = channel.adminOnly
             ? "Only admins can post here; everyone can read and react."
@@ -83,7 +85,7 @@ struct ChannelInfoSheet: View {
         case .text, .voice:
             return "A text channel for conversation in \(community.name). \(posting)"
         case .callouts:
-            return "A channel for structured trade callouts in \(community.name). \(posting)"
+            return "A channel for structured trade callouts in \(community.name). Tap \"Track in Portfolio\" on a callout to add it to your trades. \(posting)"
         }
     }
 }

@@ -241,9 +241,8 @@ struct Community: Identifiable, Codable, Hashable {
         community.avatarURL = data["avatarURL"] as? String
         community.bannerURL = data["bannerURL"] as? String
         
-        if let lastActivityTimestamp = data["lastActivityDate"] as? Timestamp {
-            community.lastActivityDate = lastActivityTimestamp.dateValue()
-        }
+        // Fall back to the creation date; the initializer's Date() would read as "Active now"
+        community.lastActivityDate = (data["lastActivityDate"] as? Timestamp)?.dateValue() ?? community.createdAt
         
         if let activityLevelString = data["activityLevel"] as? String {
             community.activityLevel = ActivityLevel(rawValue: activityLevelString)

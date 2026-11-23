@@ -49,19 +49,17 @@ struct UserProfileSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                     header
                     performanceSection
 
                     if let bio = user.bio, !bio.isEmpty {
-                        card {
-                            VStack(alignment: .leading, spacing: 8) {
-                                sectionTitle("About")
-                                Text(bio)
-                                    .font(.body)
-                                    .foregroundColor(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                        section("About") {
+                            Text(bio)
+                                .font(.body)
+                                .foregroundStyle(Color.primary.opacity(0.85))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .cardStyle(padding: DS.Spacing.l)
                         }
                     }
 
@@ -73,18 +71,19 @@ struct UserProfileSheet: View {
                         actionsSection
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.vertical, DS.Spacing.l)
             }
-            .background(Color(.systemGroupedBackground))
+            .screenBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                        .tint(Color.goldText)
                 }
 
                 if !isCurrentUser {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                    ToolbarItem(placement: .primaryAction) {
                         Menu {
                             Button(action: { showingReportReasons = true }) {
                                 Label("Report User", systemImage: "flag")
@@ -97,9 +96,11 @@ struct UserProfileSheet: View {
                                 ProgressView()
                             } else {
                                 Image(systemName: "ellipsis.circle")
+                                    .foregroundStyle(Color.primary)
                             }
                         }
                         .disabled(isWorking)
+                        .accessibilityLabel("More options")
                     }
                 }
             }
@@ -122,6 +123,7 @@ struct UserProfileSheet: View {
                     .environmentObject(authService)
             }
         }
+        .presentationDragIndicator(.visible)
         .alert(
             feedback?.title ?? "",
             isPresented: Binding(get: { feedback != nil }, set: { if !$0 { feedback = nil } }),
@@ -141,85 +143,64 @@ struct UserProfileSheet: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(spacing: 12) {
-            avatar
+        VStack(spacing: DS.Spacing.m) {
+            UserAvatar(username: user.username.isEmpty ? displayName : user.username,
+                       imageURL: user.profileImageUrl,
+                       size: 88)
 
             VStack(spacing: 4) {
                 HStack(spacing: 6) {
                     Text(user.fullName.isEmpty ? "Unknown member" : user.fullName)
-                        .font(.title2)
-                        .fontWeight(.bold)
+                        .font(.title2.weight(.bold))
                         .multilineTextAlignment(.center)
 
                     if user.isVerified {
                         Image(systemName: "checkmark.seal.fill")
-                            .foregroundColor(.arkadGold)
+                            .foregroundStyle(Color.goldText)
+                            .accessibilityLabel("Verified")
                     }
                 }
 
                 if !user.username.isEmpty {
                     Text("@\(user.username)")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
+            }
+
+            if let community, community.createdBy == user.id {
+                Tag(text: "Owner of \(community.name)", systemImage: "crown.fill")
             }
 
             HStack(spacing: 0) {
-                headerStat(value: "\(user.followersCount)", label: "Followers")
-                headerStat(value: "\(user.followingCount)", label: "Following")
+                headerStat(value: user.followersCount.formatted(), label: "Followers")
+                headerDivider
+                headerStat(value: user.followingCount.formatted(), label: "Following")
+                headerDivider
                 headerStat(value: user.createdAt.formatted(.dateTime.month(.abbreviated).year()), label: "Joined")
             }
-            .padding(.top, 4)
+            .padding(.top, DS.Spacing.xs)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
-        )
+        .cardStyle(padding: DS.Spacing.xl)
     }
 
-    private var avatar: some View {
-        ZStack {
-            Circle().fill(Color.arkadGold.opacity(0.15))
-
-            if let urlString = user.profileImageUrl, !urlString.isEmpty, let url = URL(string: urlString) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    ProgressView()
-                }
-            } else {
-                Text(initials)
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundColor(.arkadGoldDark)
-            }
-        }
-        .frame(width: 96, height: 96)
-        .clipShape(Circle())
-        .overlay(Circle().stroke(Color.arkadGold, lineWidth: 3))
-    }
-
-    private var initials: String {
-        let parts = user.fullName.split(separator: " ")
-        let letters = parts.prefix(2).compactMap { $0.first }
-        if !letters.isEmpty { return String(letters).uppercased() }
-        return String(user.username.prefix(1)).uppercased()
+    private var headerDivider: some View {
+        Rectangle().fill(Color.hairline).frame(width: 1, height: 28)
     }
 
     private func headerStat(value: String, label: String) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.headline)
-                .fontWeight(.bold)
+                .arkadNumber(17)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(label)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Trading Performance
@@ -233,132 +214,91 @@ struct UserProfileSheet: View {
         user.winRate >= 70 && (closedTradeCount ?? 0) >= CommunityLeaderboardService.minimumTradesForRatios
     }
 
+    private var pnlColor: Color {
+        user.totalProfitLoss > 0 ? .marketGreen : (user.totalProfitLoss < 0 ? .marketRed : .primary)
+    }
+
     private var performanceSection: some View {
-        card {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    sectionTitle("Trading Performance")
-                    Spacer()
-                    if isTopPerformer {
-                        Label("Top Performer", systemImage: "star.fill")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.arkadGoldDark)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.arkadGold.opacity(0.15)))
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack {
+                SectionHeader(title: "Performance")
+                if isTopPerformer {
+                    Tag(text: "Top performer", systemImage: "star.fill")
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.flexible(), spacing: DS.Spacing.m), GridItem(.flexible(), spacing: DS.Spacing.m)],
+                spacing: DS.Spacing.m
+            ) {
+                StatTile(
+                    title: "Win rate",
+                    value: hasClosedTrades ? "\(Int(user.winRate.rounded()))%" : "–",
+                    valueColor: hasClosedTrades ? (user.winRate >= 50 ? .marketGreen : .marketRed) : .primary
+                )
+                StatTile(
+                    title: "Total P&L",
+                    value: user.totalProfitLoss.asCurrency,
+                    valueColor: pnlColor
+                )
+                StatTile(
+                    title: "Closed trades",
+                    value: closedTradeCount.map { "\($0)" } ?? "–"
+                )
+                StatTile(
+                    title: "Communities",
+                    value: "\(user.communityIds.count)"
+                )
+            }
+
+            if user.startingCapital > 0 {
+                let returnPct = user.totalProfitLoss / user.startingCapital * 100
+                VStack(spacing: 0) {
+                    detailRow("Starting capital") {
+                        Text(user.startingCapital.asCurrency)
+                            .arkadNumber(15, weight: .semibold)
+                    }
+                    Rectangle().fill(Color.hairline).frame(height: 1).padding(.leading, DS.Spacing.l)
+                    detailRow("Return on capital") {
+                        ChangePill(text: String(format: "%+.1f%%", returnPct), isPositive: returnPct >= 0)
                     }
                 }
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    statTile(
-                        title: "Win Rate",
-                        value: hasClosedTrades ? "\(Int(user.winRate.rounded()))%" : "–",
-                        color: hasClosedTrades ? (user.winRate >= 50 ? .marketGreen : .marketRed) : .primary
-                    )
-                    statTile(
-                        title: "Total P&L",
-                        value: user.totalProfitLoss.asCurrency,
-                        color: user.totalProfitLoss > 0 ? .marketGreen : (user.totalProfitLoss < 0 ? .marketRed : .primary)
-                    )
-                    statTile(
-                        title: "Closed Trades",
-                        value: closedTradeCount.map { "\($0)" } ?? "–",
-                        color: .primary
-                    )
-                    statTile(
-                        title: "Communities",
-                        value: "\(user.communityIds.count)",
-                        color: .primary
-                    )
-                }
-
-                if user.startingCapital > 0 {
-                    Divider()
-                    detailRow("Starting capital", user.startingCapital.asCurrency)
-                    detailRow("Return on capital", String(format: "%.1f%%", user.totalProfitLoss / user.startingCapital * 100))
-                }
+                .cardStyle(padding: 0)
             }
         }
     }
 
-    private func statTile(title: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(value)
-                .font(.title3)
-                .fontWeight(.bold)
-                .foregroundColor(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
-    }
-
-    private func detailRow(_ title: String, _ value: String) -> some View {
+    private func detailRow<Value: View>(_ title: String, @ViewBuilder value: () -> Value) -> some View {
         HStack {
             Text(title)
                 .font(.subheadline)
-                .foregroundColor(.secondary)
-            Spacer()
-            Text(value)
-                .font(.subheadline)
-                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: DS.Spacing.s)
+            value()
         }
+        .padding(.horizontal, DS.Spacing.l)
+        .frame(minHeight: 48)
     }
 
     // MARK: - Communities
 
     private var communitiesSection: some View {
-        card {
-            VStack(alignment: .leading, spacing: 12) {
-                sectionTitle("Communities")
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Communities", count: visibleCommunities.count)
 
-                ForEach(visibleCommunities.prefix(5)) { community in
-                    HStack(spacing: 12) {
-                        Circle()
-                            .fill(community.type.tint.opacity(0.15))
-                            .frame(width: 36, height: 36)
-                            .overlay(
-                                Text(community.initials)
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(community.type.tint)
-                            )
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(community.name)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .lineLimit(1)
-                            Text("\(community.memberCount) member\(community.memberCount == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Spacer()
-
-                        if community.createdBy == user.id {
-                            Text("Owner")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.arkadGoldDark)
-                        }
+            CommunityCardList(items: Array(visibleCommunities.prefix(5)), dividerInset: 68) { item in
+                CommunityRowContent(community: item, avatarSize: 40) {
+                    if item.createdBy == user.id {
+                        Tag(text: "Owner", systemImage: "crown.fill")
                     }
                 }
+            }
 
-                if visibleCommunities.count > 5 {
-                    Text("+ \(visibleCommunities.count - 5) more")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+            if visibleCommunities.count > 5 {
+                Text("+ \(visibleCommunities.count - 5) more")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, DS.Spacing.xs)
             }
         }
     }
@@ -366,41 +306,21 @@ struct UserProfileSheet: View {
     // MARK: - Actions
 
     private var actionsSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DS.Spacing.m) {
             SimpleFollowButton(targetUserId: user.id, targetUsername: user.username)
 
-            Button(action: { showingFullProfile = true }) {
-                Text("View Full Profile")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.arkadGoldDark)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(Color.arkadGold, lineWidth: 1.5)
-                    )
-            }
+            Button("View full profile") { showingFullProfile = true }
+                .buttonStyle(SecondaryButtonStyle())
         }
     }
 
     // MARK: - Building Blocks
 
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.headline)
-            .fontWeight(.bold)
-    }
-
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
-            )
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: title)
+            content()
+        }
     }
 
     // MARK: - Data

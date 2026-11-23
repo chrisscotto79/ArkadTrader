@@ -27,62 +27,27 @@ struct MentionSuggestionRow: View {
     
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
-                // Profile image or initial
-                Group {
-                    if let profileImageUrl = user.profileImageUrl, !profileImageUrl.isEmpty {
-                        AsyncImage(url: URL(string: profileImageUrl)) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } placeholder: {
-                            Circle()
-                                .fill(Color.accentColor.opacity(0.2))
-                                .overlay(
-                                    Text(user.fullName.prefix(1))
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.accentColor)
-                                )
-                        }
-                        .frame(width: 40, height: 40)
-                        .clipShape(Circle())
-                    } else {
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.2))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                Text(user.fullName.prefix(1))
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.accentColor)
-                            )
-                    }
-                }
+            HStack(spacing: DS.Spacing.m) {
+                UserAvatar(username: user.username, imageURL: user.profileImageUrl, size: 36)
                 
-                // User info
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(user.fullName)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-                    
+                    Text(user.fullName.isEmpty ? user.username : user.fullName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
                     Text("@\(user.username)")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, DS.Spacing.l)
+            .padding(.vertical, DS.Spacing.s)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
-        .background(
-            Rectangle()
-                .fill(Color.clear)
-                .contentShape(Rectangle())
-        )
+        .buttonStyle(PressableStyle())
     }
 }
 

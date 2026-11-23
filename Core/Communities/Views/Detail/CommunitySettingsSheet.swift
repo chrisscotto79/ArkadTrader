@@ -9,520 +9,44 @@ struct EnhancedCommunitySettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CommunitySettingsViewModel
     @State private var showingDeleteAlert = false
-    
+
     init(community: Community) {
         self.community = community
         self._viewModel = StateObject(wrappedValue: CommunitySettingsViewModel(community: community))
     }
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
-                // Community Info Section
-                Section {
-                    HStack {
-                        Circle()
-                            .fill(getCommunityColor())
-                            .frame(width: 50, height: 50)
-                            .overlay(
-                                Text(getCommunityInitials())
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                            )
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(community.name)
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                            Text(community.type.displayName)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if viewModel.isOwner {
-                            Image(systemName: "crown.fill")
-                                .foregroundColor(.yellow)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                }
-                
-                // Community Rules Section
-                Section("Community Rules & Guidelines") {
-                    if viewModel.isLoadingRules {
-                        HStack {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                            Text("Loading rules...")
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 8)
-                    } else if viewModel.communityRules.isEmpty {
-                        VStack(spacing: 8) {
-                            Text("No community rules set")
-                                .foregroundColor(.secondary)
-                            
-                            if viewModel.isOwner {
-                                Button("Create Default Trading Rules") {
-                                    Task {
-                                        await viewModel.loadCommunityRules()
-                                    }
-                                }
-                                .font(.subheadline)
-                                .foregroundColor(.accentColor)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    } else {
-                        ForEach(viewModel.communityRules) { rule in
-                            CommunityRuleRow(
-                                rule: rule,
-                                isOwner: viewModel.isOwner,
-                                onDelete: {
-                                    Task {
-                                        await viewModel.deleteRule(rule)
-                                    }
-                                }
-                            )
-                        }
-                        
-                        if viewModel.isOwner {
-                            Button("Add Custom Rule") {
-                                viewModel.showingAddRule = true
-                            }
-                            .font(.subheadline)
-                            .foregroundColor(.accentColor)
-                        }
-                    }
-                }
-                
-                // Basic Settings (Only for owners)
+                headerSection
+                rulesSection
+
                 if viewModel.isOwner {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Community Name")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            TextField("Enter community name", text: $viewModel.settings.name)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Description")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            TextField("Enter community description", text: $viewModel.settings.description, axis: .vertical)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .lineLimit(3...6)
-                        }
-                        
-                        Toggle("Private Community", isOn: $viewModel.settings.isPrivate)
-                    } header: {
-                        Text("Community Settings")
-                    } footer: {
-                        Text("Private communities are hidden from Discover and search for anyone who isn't a member.")
-                    }
-                    
-                    // Community Images Section
-                    Section("Community Images") {
-                        // Avatar/Profile Image
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Community Avatar")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            
-                            HStack(spacing: 16) {
-                                // Current avatar display
-                                ZStack {
-                                    Circle()
-                                        .fill(getCommunityColor().opacity(0.1))
-                                        .frame(width: 80, height: 80)
-                                        .overlay(
-                                            Circle()
-                                                .strokeBorder(getCommunityColor().opacity(0.3), lineWidth: 2)
-                                        )
-                                    
-                                    // Display current avatar or initials
-                                    if let avatarURL = viewModel.settings.avatarURL {
-                                        AsyncImage(url: URL(string: avatarURL)) { image in
-                                            image
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: 76, height: 76)
-                                                .clipShape(Circle())
-                                        } placeholder: {
-                                            // Show initials while loading
-                                            Text(getCommunityInitials())
-                                                .font(.title2)
-                                                .fontWeight(.bold)
-                                                .foregroundColor(getCommunityColor())
-                                        }
-                                    } else if let avatarImage = viewModel.avatarImage {
-                                        Image(uiImage: avatarImage)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(width: 76, height: 76)
-                                            .clipShape(Circle())
-                                    } else {
-                                        Text(getCommunityInitials())
-                                            .font(.title2)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(getCommunityColor())
-                                    }
-                                    
-                                    // Upload progress overlay
-                                    if viewModel.isUploadingAvatar {
-                                        Circle()
-                                            .fill(Color.black.opacity(0.6))
-                                            .frame(width: 80, height: 80)
-                                            .overlay(
-                                                ProgressView(value: viewModel.avatarUploadProgress)
-                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                    .scaleEffect(1.2)
-                                            )
-                                    }
-                                }
-                                
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Choose a square image for your community avatar. Recommended size: 512x512px")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    
-                                    HStack(spacing: 8) {
-                                        // Photo picker for avatar
-                                        PhotosPicker(
-                                            selection: $viewModel.selectedAvatarItem,
-                                            matching: .images,
-                                            photoLibrary: .shared()
-                                        ) {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: "photo")
-                                                    .font(.caption)
-                                                Text("Choose Image")
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                            }
-                                            .foregroundColor(.accentColor)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(
-                                                Capsule()
-                                                    .fill(Color.accentColor.opacity(0.1))
-                                            )
-                                        }
-                                        .disabled(viewModel.isUploadingAvatar)
-                                        
-                                        // Remove avatar button
-                                        if viewModel.hasAvatarImage {
-                                            Button(action: {
-                                                Task {
-                                                    await viewModel.removeAvatar()
-                                                }
-                                            }) {
-                                                HStack(spacing: 6) {
-                                                    Image(systemName: "trash")
-                                                        .font(.caption)
-                                                    Text("Remove")
-                                                        .font(.caption)
-                                                        .fontWeight(.medium)
-                                                }
-                                                .foregroundColor(.red)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 6)
-                                                .background(
-                                                    Capsule()
-                                                        .fill(Color.red.opacity(0.1))
-                                                )
-                                            }
-                                            .disabled(viewModel.isLoading)
-                                        }
-                                    }
-                                }
-                                
-                                Spacer()
-                            }
-                        }
-                        
-                        // Divider
-                        Divider()
-                            .padding(.vertical, 8)
-                        
-                        // Banner Image
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Community Banner")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            
-                            VStack(spacing: 12) {
-                                // Current banner display
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(getCommunityColor().opacity(0.1))
-                                        .frame(height: 120)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .strokeBorder(getCommunityColor().opacity(0.3), lineWidth: 1)
-                                        )
-                                    
-                                    // Display current banner or gradient
-                                    if let bannerURL = viewModel.settings.bannerURL {
-                                        AsyncImage(url: URL(string: bannerURL)) { image in
-                                            image
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(height: 120)
-                                                .clipped()
-                                                .cornerRadius(12)
-                                        } placeholder: {
-                                            // Show gradient while loading
-                                            LinearGradient(
-                                                colors: [getCommunityColor(), getCommunityColor().opacity(0.7)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                            .frame(height: 120)
-                                            .cornerRadius(12)
-                                        }
-                                    } else if let bannerImage = viewModel.bannerImage {
-                                        Image(uiImage: bannerImage)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(height: 120)
-                                            .clipped()
-                                            .cornerRadius(12)
-                                    } else {
-                                        LinearGradient(
-                                            colors: [getCommunityColor(), getCommunityColor().opacity(0.7)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                        .frame(height: 120)
-                                        .cornerRadius(12)
-                                        .overlay(
-                                            VStack(spacing: 4) {
-                                                Image(systemName: "photo.badge.plus")
-                                                    .font(.title2)
-                                                    .foregroundColor(.white.opacity(0.8))
-                                                
-                                                Text("Add Banner")
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                                    .foregroundColor(.white.opacity(0.8))
-                                            }
-                                        )
-                                    }
-                                    
-                                    // Upload progress overlay
-                                    if viewModel.isUploadingBanner {
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(Color.black.opacity(0.6))
-                                            .frame(height: 120)
-                                            .overlay(
-                                                VStack(spacing: 8) {
-                                                    ProgressView(value: viewModel.bannerUploadProgress)
-                                                        .progressViewStyle(LinearProgressViewStyle(tint: .white))
-                                                        .frame(width: 100)
-                                                    
-                                                    Text("\(Int(viewModel.bannerUploadProgress * 100))%")
-                                                        .font(.caption)
-                                                        .fontWeight(.medium)
-                                                        .foregroundColor(.white)
-                                                }
-                                            )
-                                    }
-                                }
-                                
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Choose a wide image for your community banner. Recommended size: 1200x400px (3:1 ratio)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    
-                                    HStack(spacing: 8) {
-                                        // Photo picker for banner
-                                        PhotosPicker(
-                                            selection: $viewModel.selectedBannerItem,
-                                            matching: .images,
-                                            photoLibrary: .shared()
-                                        ) {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: "photo.on.rectangle")
-                                                    .font(.caption)
-                                                Text("Choose Banner")
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                            }
-                                            .foregroundColor(.accentColor)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(
-                                                Capsule()
-                                                    .fill(Color.accentColor.opacity(0.1))
-                                            )
-                                        }
-                                        .disabled(viewModel.isUploadingBanner)
-                                        
-                                        // Remove banner button
-                                        if viewModel.hasBannerImage {
-                                            Button(action: {
-                                                Task {
-                                                    await viewModel.removeBanner()
-                                                }
-                                            }) {
-                                                HStack(spacing: 6) {
-                                                    Image(systemName: "trash")
-                                                        .font(.caption)
-                                                    Text("Remove")
-                                                        .font(.caption)
-                                                        .fontWeight(.medium)
-                                                }
-                                                .foregroundColor(.red)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 6)
-                                                .background(
-                                                    Capsule()
-                                                        .fill(Color.red.opacity(0.1))
-                                                )
-                                            }
-                                            .disabled(viewModel.isLoading)
-                                        }
-                                        
-                                        Spacer()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Save Button
-                    Section {
-                        Button(action: {
-                            Task {
-                                await viewModel.updateCommunity()
-                                if viewModel.errorMessage.isEmpty {
-                                    dismiss()
-                                }
-                            }
-                        }) {
-                            HStack {
-                                if viewModel.isLoading {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Text("Save Changes")
-                                        .fontWeight(.semibold)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .foregroundColor(viewModel.canSave ? .black : .gray)
-                        }
-                        .disabled(!viewModel.canSave || viewModel.isLoading)
-                        .listRowBackground(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(viewModel.canSave ? Color.arkadGold : Color.gray.opacity(0.3))
-                        )
-                    }
-                    
-                    // Danger Zone
-                    Section("Danger Zone") {
-                        Button(role: .destructive, action: {
-                            showingDeleteAlert = true
-                        }) {
-                            Label("Delete Community", systemImage: "trash")
-                        }
-                        .disabled(viewModel.isLoading)
-                    }
-                }
-                
-                // Member Management Section (For owners)
-                if viewModel.isOwner {
-                    Section("Members (\(viewModel.members.count))") {
-                        if viewModel.isLoadingMembers {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Loading members...")
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.vertical, 8)
-                        } else if viewModel.members.isEmpty {
-                            VStack(spacing: 8) {
-                                Text("No members found")
-                                    .foregroundColor(.secondary)
-                                    .padding(.vertical, 8)
-                                
-                                Button("Reload Members") {
-                                    Task {
-                                        await viewModel.loadMembers()
-                                    }
-                                }
-                                .font(.subheadline)
-                                .foregroundColor(.accentColor)
-                            }
-                        } else {
-                            ForEach(viewModel.members) { member in
-                                MemberRow(
-                                    member: member,
-                                    isOwner: viewModel.isOwner,
-                                    onRoleChange: { newRole in
-                                        Task {
-                                            await viewModel.updateMemberRole(member, to: newRole)
-                                        }
-                                    },
-                                    onRemove: {
-                                        viewModel.selectedMemberForRemoval = member
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    detailsSection
+                    imagesSection
+                    saveSection
+                    membersSection
+                    dangerSection
                 } else {
-                    // Non-owner view
-                    Section("Community Info") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("You can view community information but only the owner can modify settings.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Description")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                Text(community.description)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            HStack {
-                                Text("Privacy")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                Spacer()
-                                Text(community.isPrivate ? "Private" : "Public")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
+                    infoSection
                 }
-                
-                // Error Display
+
                 if !viewModel.errorMessage.isEmpty {
                     Section {
-                        Text(viewModel.errorMessage)
-                            .foregroundColor(.red)
+                        Label(viewModel.errorMessage, systemImage: "exclamationmark.triangle.fill")
                             .font(.subheadline)
+                            .foregroundStyle(Color.marketRed)
                     }
+                    .listRowBackground(Color.surface)
                 }
             }
-            .navigationTitle("Community Settings")
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .tint(Color.goldText)
+            .navigationTitle(viewModel.isOwner ? "Manage Community" : "Rules & Info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         if viewModel.hasChanges {
                             viewModel.resetSettings()
@@ -530,8 +54,8 @@ struct EnhancedCommunitySettingsSheet: View {
                         dismiss()
                     }
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
+
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .fontWeight(.semibold)
                         .disabled(viewModel.isLoading)
@@ -551,7 +75,10 @@ struct EnhancedCommunitySettingsSheet: View {
                 Text("Are you sure you want to delete \"\(community.name)\"? This action cannot be undone and will remove all channels and messages.")
             }
             .alert("Remove Member",
-                   isPresented: .constant(viewModel.selectedMemberForRemoval != nil),
+                   isPresented: Binding(
+                    get: { viewModel.selectedMemberForRemoval != nil },
+                    set: { if !$0 { viewModel.selectedMemberForRemoval = nil } }
+                   ),
                    presenting: viewModel.selectedMemberForRemoval) { member in
                 Button("Cancel", role: .cancel) {
                     viewModel.selectedMemberForRemoval = nil
@@ -563,18 +90,17 @@ struct EnhancedCommunitySettingsSheet: View {
                     }
                 }
             } message: { member in
-                Text("Are you sure you want to remove \(member.fullName) from the community?")
+                Text("Are you sure you want to remove \(member.displayName) from the community?")
             }
         }
         .onAppear {
-            // Automatically load members when the settings view appears
+            // Load members (owners) and rules when the sheet appears
             if viewModel.isOwner && viewModel.members.isEmpty {
                 Task {
                     await viewModel.loadMembers()
                 }
             }
-            
-            // Also load community rules
+
             if viewModel.communityRules.isEmpty {
                 Task {
                     await viewModel.loadCommunityRules()
@@ -589,21 +115,400 @@ struct EnhancedCommunitySettingsSheet: View {
             }
         }
     }
-    
-    // MARK: - Helper Methods
-    private func getCommunityColor() -> Color {
-        community.type.tint
-    }
-    
-    private func getCommunityInitials() -> String {
-        let words = community.name.components(separatedBy: " ")
-        if words.count >= 2 {
-            let first = String(words[0].prefix(1))
-            let second = String(words[1].prefix(1))
-            return (first + second).uppercased()
-        } else {
-            return String(community.name.prefix(2)).uppercased()
+
+    // MARK: - Header
+
+    private var headerSection: some View {
+        Section {
+            HStack(spacing: DS.Spacing.m) {
+                CommunityAvatar(name: community.name, imageURL: viewModel.settings.avatarURL, size: 52)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(community.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(CommunityFormat.summary(community))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: DS.Spacing.s)
+
+                if viewModel.isOwner {
+                    Tag(text: "Owner", systemImage: "crown.fill")
+                }
+            }
+            .padding(.vertical, DS.Spacing.xs)
         }
+        .listRowBackground(Color.surface)
+    }
+
+    // MARK: - Rules
+
+    private var rulesSection: some View {
+        Section {
+            if viewModel.isLoadingRules {
+                HStack(spacing: DS.Spacing.m) {
+                    ProgressView()
+                    Text("Loading rules…")
+                        .foregroundStyle(.secondary)
+                }
+            } else if viewModel.communityRules.isEmpty {
+                VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                    Text("No community rules set")
+                        .foregroundStyle(.secondary)
+
+                    if viewModel.isOwner {
+                        Button("Create default trading rules") {
+                            Task {
+                                await viewModel.loadCommunityRules()
+                            }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                }
+                .padding(.vertical, DS.Spacing.xs)
+            } else {
+                ForEach(viewModel.communityRules) { rule in
+                    CommunityRuleRow(
+                        rule: rule,
+                        isOwner: viewModel.isOwner,
+                        onDelete: {
+                            Task {
+                                await viewModel.deleteRule(rule)
+                            }
+                        }
+                    )
+                }
+
+                if viewModel.isOwner {
+                    Button {
+                        viewModel.showingAddRule = true
+                    } label: {
+                        Label("Add custom rule", systemImage: "plus")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+        } header: {
+            Text("Rules & Guidelines")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    // MARK: - Details (owner)
+
+    private var detailsSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                fieldLabel("Name")
+                TextField("Community name", text: $viewModel.settings.name)
+                    .padding(.horizontal, DS.Spacing.m)
+                    .frame(height: 44)
+                    .background(fieldBackground)
+            }
+            .padding(.vertical, DS.Spacing.xs)
+
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                fieldLabel("Description")
+                TextField("What is this community about?", text: $viewModel.settings.description, axis: .vertical)
+                    .lineLimit(3...6)
+                    .padding(DS.Spacing.m)
+                    .background(fieldBackground)
+            }
+            .padding(.vertical, DS.Spacing.xs)
+
+            Toggle("Private community", isOn: $viewModel.settings.isPrivate)
+                .tint(Color.arkadGold)
+        } header: {
+            Text("Details")
+        } footer: {
+            Text("Private communities are hidden from Discover and search for anyone who isn't a member.")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    // MARK: - Images (owner)
+
+    private var imagesSection: some View {
+        Section {
+            avatarEditor
+            bannerEditor
+        } header: {
+            Text("Images")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    private var avatarEditor: some View {
+        HStack(spacing: DS.Spacing.l) {
+            ZStack {
+                if let avatarImage = viewModel.avatarImage, viewModel.settings.avatarURL == nil {
+                    Image(uiImage: avatarImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 76, height: 76)
+                        .clipShape(RoundedRectangle(cornerRadius: 76 * 0.28, style: .continuous))
+                } else {
+                    CommunityAvatar(name: community.name, imageURL: viewModel.settings.avatarURL, size: 76)
+                }
+
+                if viewModel.isUploadingAvatar {
+                    RoundedRectangle(cornerRadius: 76 * 0.28, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 76, height: 76)
+                    ProgressView(value: viewModel.avatarUploadProgress)
+                        .progressViewStyle(.circular)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                Text("Avatar")
+                    .font(.subheadline.weight(.semibold))
+                Text("Square image, 512×512 recommended")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: DS.Spacing.s) {
+                    PhotosPicker(
+                        selection: $viewModel.selectedAvatarItem,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        Text(viewModel.hasAvatarImage ? "Change" : "Choose")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .neutral))
+                    .disabled(viewModel.isUploadingAvatar)
+
+                    if viewModel.hasAvatarImage {
+                        Button("Remove", role: .destructive) {
+                            Task {
+                                await viewModel.removeAvatar()
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.marketRed)
+                        .disabled(viewModel.isLoading)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, DS.Spacing.xs)
+    }
+
+    private var bannerEditor: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            ZStack {
+                bannerPreview
+                    .frame(height: 110)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                            .strokeBorder(Color.hairline, lineWidth: 1)
+                    )
+
+                if viewModel.isUploadingBanner {
+                    RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .frame(height: 110)
+                    VStack(spacing: DS.Spacing.s) {
+                        ProgressView(value: viewModel.bannerUploadProgress)
+                            .frame(width: 100)
+                        Text("\(Int(viewModel.bannerUploadProgress * 100))%")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                    }
+                }
+            }
+
+            HStack(spacing: DS.Spacing.s) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Banner")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Wide image, 1200×400 (3:1) recommended")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: DS.Spacing.s)
+
+                if viewModel.hasBannerImage {
+                    Button("Remove", role: .destructive) {
+                        Task {
+                            await viewModel.removeBanner()
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.marketRed)
+                    .disabled(viewModel.isLoading)
+                }
+
+                PhotosPicker(
+                    selection: $viewModel.selectedBannerItem,
+                    matching: .images,
+                    photoLibrary: .shared()
+                ) {
+                    Text(viewModel.hasBannerImage ? "Change" : "Choose")
+                }
+                .buttonStyle(PillButtonStyle(kind: .neutral))
+                .disabled(viewModel.isUploadingBanner)
+            }
+        }
+        .padding(.vertical, DS.Spacing.xs)
+    }
+
+    @ViewBuilder
+    private var bannerPreview: some View {
+        let tint = CommunityPalette.color(for: community.name).opacity(0.18)
+        if let bannerURL = viewModel.settings.bannerURL, let url = URL(string: bannerURL) {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    tint
+                }
+            }
+        } else if let bannerImage = viewModel.bannerImage {
+            Image(uiImage: bannerImage)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                tint
+                Label("Add a banner", systemImage: "photo.badge.plus")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Save (owner)
+
+    private var saveSection: some View {
+        Section {
+            Button {
+                Task {
+                    await viewModel.updateCommunity()
+                    if viewModel.errorMessage.isEmpty {
+                        dismiss()
+                    }
+                }
+            } label: {
+                HStack {
+                    if viewModel.isLoading {
+                        ProgressView().tint(Color.onGold)
+                    } else {
+                        Text("Save changes")
+                            .fontWeight(.semibold)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .foregroundStyle(viewModel.canSave ? Color.onGold : Color.secondary)
+            }
+            .disabled(!viewModel.canSave || viewModel.isLoading)
+            .listRowBackground(viewModel.canSave ? Color.arkadGold : Color.surfaceRaised)
+        }
+    }
+
+    // MARK: - Members (owner)
+
+    private var membersSection: some View {
+        Section {
+            if viewModel.isLoadingMembers {
+                HStack(spacing: DS.Spacing.m) {
+                    ProgressView()
+                    Text("Loading members…")
+                        .foregroundStyle(.secondary)
+                }
+            } else if viewModel.members.isEmpty {
+                VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                    Text("No members found")
+                        .foregroundStyle(.secondary)
+                    Button("Reload members") {
+                        Task {
+                            await viewModel.loadMembers()
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+                .padding(.vertical, DS.Spacing.xs)
+            } else {
+                ForEach(viewModel.members) { member in
+                    MemberRow(
+                        member: member,
+                        isOwner: viewModel.isOwner,
+                        onRoleChange: { newRole in
+                            Task {
+                                await viewModel.updateMemberRole(member, to: newRole)
+                            }
+                        },
+                        onRemove: {
+                            viewModel.selectedMemberForRemoval = member
+                        }
+                    )
+                }
+            }
+        } header: {
+            Text("Members · \(viewModel.members.count)")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    // MARK: - Danger zone (owner)
+
+    private var dangerSection: some View {
+        Section {
+            Button(role: .destructive) {
+                showingDeleteAlert = true
+            } label: {
+                Label("Delete community", systemImage: "trash")
+                    .foregroundStyle(Color.marketRed)
+            }
+            .disabled(viewModel.isLoading)
+        } header: {
+            Text("Danger zone")
+        } footer: {
+            Text("Deleting removes every channel and message for all members.")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    // MARK: - Info (non-owner)
+
+    private var infoSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                fieldLabel("About")
+                Text(community.description)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.primary.opacity(0.85))
+            }
+            .padding(.vertical, DS.Spacing.xs)
+
+            LabeledContent("Privacy", value: community.isPrivate ? "Private" : "Public")
+            LabeledContent("Members", value: community.memberCount.formatted())
+        } header: {
+            Text("Community info")
+        } footer: {
+            Text("Only the owner can change these settings.")
+        }
+        .listRowBackground(Color.surface)
+    }
+
+    // MARK: - Building blocks
+
+    private func fieldLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.caption.weight(.semibold))
+            .tracking(0.5)
+            .foregroundStyle(.secondary)
+    }
+
+    private var fieldBackground: some View {
+        RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous).fill(Color.surfaceRaised)
     }
 }
 
@@ -612,40 +517,42 @@ struct CommunityRuleRow: View {
     let rule: CommunityRule
     let isOwner: Bool
     let onDelete: () -> Void
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(rule.title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                
-                Spacer()
-                
-                if rule.isRequired {
-                    Text("REQUIRED")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.red)
-                        .cornerRadius(6)
-                }
-                
-                if !rule.isDefault && isOwner {
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red)
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            Image(systemName: rule.categoryIcon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.goldText)
+                .frame(width: 22)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                HStack(spacing: 6) {
+                    Text(rule.title)
+                        .font(.subheadline.weight(.semibold))
+                    if rule.isRequired {
+                        Tag(text: "Required", tint: .marketRed)
                     }
                 }
+                Text(rule.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            
-            Text(rule.description)
-                .font(.caption)
-                .foregroundColor(.secondary)
+
+            Spacer(minLength: 0)
+
+            if !rule.isDefault && isOwner {
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.marketRed)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Delete rule")
+            }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DS.Spacing.xs)
     }
 }
 
@@ -655,34 +562,47 @@ struct AddCustomRuleSheet: View {
     @State private var title = ""
     @State private var description = ""
     @State private var isRequired = true
-    
+
     let onSave: (String, String, Bool) -> Void
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
-                Section("Rule Details") {
-                    TextField("Rule Title", text: $title)
-                    TextField("Rule Description", text: $description, axis: .vertical)
+                Section {
+                    TextField("Rule title", text: $title)
+                    TextField("What members should know", text: $description, axis: .vertical)
                         .lineLimit(3...6)
-                    Toggle("Required for all members", isOn: $isRequired)
+                } header: {
+                    Text("Rule")
                 }
+                .listRowBackground(Color.surface)
+
+                Section {
+                    Toggle("Required for all members", isOn: $isRequired)
+                        .tint(Color.arkadGold)
+                }
+                .listRowBackground(Color.surface)
             }
-            .navigationTitle("Add Custom Rule")
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .tint(Color.goldText)
+            .navigationTitle("New Rule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
+
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         onSave(title, description, isRequired)
                         dismiss()
                     }
+                    .fontWeight(.semibold)
                     .disabled(title.isEmpty || description.isEmpty)
                 }
             }
         }
+        .presentationDetents([.medium, .large])
     }
 }

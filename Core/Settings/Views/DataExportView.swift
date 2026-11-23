@@ -19,33 +19,32 @@ struct DataExportView: View {
     @State private var postsError: String?
 
     var body: some View {
-        NavigationView {
-            List {
-                overviewSection
-                if !hasLoaded {
-                    Section {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Loading your data...")
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.vertical, 8)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    overviewSection
+                    summaryTiles
+                    if hasLoaded {
+                        filesSection
+                    } else {
+                        loadingCard
                     }
-                } else {
-                    filesSection
                 }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
-            .listStyle(InsetGroupedListStyle())
+            .screenBackground()
             .refreshable { await loadData() }
             .navigationTitle("Export Data")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                 }
             }
         }
@@ -57,37 +56,49 @@ struct DataExportView: View {
     // MARK: - Overview
 
     private var overviewSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "square.and.arrow.up")
-                        .foregroundColor(.arkadGold)
-                        .font(.title2)
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            IconWell(systemName: "square.and.arrow.up", size: 44)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Export Your Data")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        Text("Create CSV files of your trades and posts. They open in Numbers, Excel or Google Sheets.")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
-
-                HStack(spacing: 12) {
-                    DataSummaryCard(icon: "chart.line.uptrend.xyaxis", title: "Trades", count: countText(trades.count, error: tradesError), color: .marketGreen)
-                    DataSummaryCard(icon: "lock.open", title: "Open", count: countText(trades.filter { $0.isOpen }.count, error: tradesError), color: .arkadGoldDark)
-                    DataSummaryCard(icon: "bubble.left.and.bubble.right", title: "Posts", count: countText(posts.count, error: postsError), color: .blue)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Export your data")
+                    .font(.headline)
+                Text("Create CSV files of your trades and posts. They open in Numbers, Excel or Google Sheets.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, 8)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    private var summaryTiles: some View {
+        HStack(spacing: DS.Spacing.m) {
+            StatTile(title: "Trades", value: countText(trades.count, error: tradesError))
+            StatTile(title: "Open", value: countText(trades.filter { $0.isOpen }.count, error: tradesError))
+            StatTile(title: "Posts", value: countText(posts.count, error: postsError))
+        }
+    }
+
+    private var loadingCard: some View {
+        HStack(spacing: DS.Spacing.m) {
+            ProgressView()
+                .tint(Color.goldText)
+            Text("Loading your data…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .cardStyle()
     }
 
     // MARK: - Files
 
     private var filesSection: some View {
-        Section {
+        SettingsGroupCard(
+            title: "Files",
+            footer: "Files are created on this device and shared with the app you choose, such as Files, Mail or AirDrop. Nothing is sent anywhere until you share it."
+        ) {
             exportRow(
                 title: "Trades CSV",
                 icon: "chart.line.uptrend.xyaxis",
@@ -97,6 +108,7 @@ struct DataExportView: View {
                     ? "You haven't logged any trades yet."
                     : "\(trades.count) trade\(trades.count == 1 ? "" : "s"), open and closed"
             )
+            SettingsRowDivider()
             exportRow(
                 title: "Posts CSV",
                 icon: "bubble.left.and.bubble.right",
@@ -106,52 +118,26 @@ struct DataExportView: View {
                     ? "You haven't posted yet."
                     : "\(posts.count) post\(posts.count == 1 ? "" : "s")"
             )
-        } header: {
-            Text("Files")
-        } footer: {
-            Text("Files are created on this device and shared with the app you choose, such as Files, Mail or AirDrop. Nothing is sent anywhere until you share it.")
         }
     }
 
-    /// A share row when a file is ready, otherwise a greyed-out row explaining why not.
+    /// A share row when a file is ready, otherwise a dimmed row explaining why not.
     @ViewBuilder
     private func exportRow(title: String, icon: String, file: URL?, error: String?, summary: String) -> some View {
         if let file, error == nil {
             ShareLink(item: file) {
-                HStack(spacing: 12) {
-                    Image(systemName: icon)
-                        .foregroundColor(.arkadGold)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .fontWeight(.medium)
-                            .foregroundColor(.textPrimary)
-                        Text(summary)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                    Image(systemName: "square.and.arrow.up")
-                        .foregroundColor(.arkadGoldDark)
-                }
-                .padding(.vertical, 4)
+                SettingsRowLabel(icon: icon, title: title, subtitle: summary, accessory: .share)
             }
+            .buttonStyle(SettingsRowButtonStyle())
         } else {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .foregroundColor(.gray)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .fontWeight(.medium)
-                        .foregroundColor(.gray)
-                    Text(error ?? summary)
-                        .font(.caption)
-                        .foregroundColor(error == nil ? .gray : .marketRed)
-                }
-                Spacer()
-            }
-            .padding(.vertical, 4)
+            SettingsRowLabel(
+                icon: icon,
+                title: title,
+                subtitle: error ?? summary,
+                tint: error == nil ? .secondary : .marketRed,
+                titleColor: .secondary,
+                accessory: .none
+            )
         }
     }
 
@@ -179,7 +165,7 @@ struct DataExportView: View {
             let loaded = try await authService.getUserTrades(userId: userId)
             trades = loaded
             tradesError = nil
-            tradesFile = try loaded.isEmpty ? nil : CSVExport.write(CSVExport.tradesCSV(loaded), named: "ArkadTrader-Trades")
+            tradesFile = try loaded.isEmpty ? nil : CSVExport.write(CSVExport.tradesCSV(loaded), named: "Arkad-Trades")
         } catch {
             tradesError = "Couldn't load your trades. Pull down to try again."
             tradesFile = nil
@@ -195,13 +181,15 @@ struct DataExportView: View {
                 .sorted { $0.createdAt > $1.createdAt }
             posts = loaded
             postsError = nil
-            postsFile = try loaded.isEmpty ? nil : CSVExport.write(CSVExport.postsCSV(loaded), named: "ArkadTrader-Posts")
+            postsFile = try loaded.isEmpty ? nil : CSVExport.write(CSVExport.postsCSV(loaded), named: "Arkad-Posts")
         } catch {
             postsError = "Couldn't load your posts. Pull down to try again."
             postsFile = nil
         }
 
-        hasLoaded = true
+        withAnimation(.snappy(duration: 0.25)) {
+            hasLoaded = true
+        }
     }
 }
 
@@ -315,37 +303,6 @@ enum CSVExport {
 
     private static func date(_ value: Date) -> String {
         dateFormatter.string(from: value)
-    }
-}
-
-// MARK: - Supporting Views
-
-struct DataSummaryCard: View {
-    let icon: String
-    let title: String
-    let count: String
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .foregroundColor(color)
-                .font(.title3)
-
-            Text(count)
-                .font(.headline)
-                .fontWeight(.bold)
-
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(color.opacity(0.1))
-        )
     }
 }
 

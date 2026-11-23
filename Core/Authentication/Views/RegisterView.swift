@@ -1,5 +1,6 @@
 // File: Core/Authentication/Views/RegisterView.swift
-// Enhanced Register View with better UX, validation, and design
+// Two-step sign-up: name + username, then email + password and agreement to the
+// Terms of Service and Privacy Policy.
 
 import SwiftUI
 
@@ -15,11 +16,9 @@ struct RegisterView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var agreeToTerms = false
-    @State private var isPasswordVisible = false
-    @State private var isConfirmPasswordVisible = false
     @State private var currentStep = 1
     @State private var legalDocument: LegalDocumentType?
-    
+
     @FocusState private var fullNameFieldFocused: Bool
     @FocusState private var usernameFieldFocused: Bool
     @FocusState private var emailFieldFocused: Bool
@@ -27,54 +26,33 @@ struct RegisterView: View {
     @FocusState private var confirmPasswordFieldFocused: Bool
 
     var body: some View {
-        NavigationView {
-            GeometryReader { geometry in
-                ZStack {
-                    // Background gradient
-                    LinearGradient(
-                        gradient: Gradient(colors: [Color.arkadGold.opacity(0.1), Color.white]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
-                    
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            // Header Section
-                            headerSection
-                                .padding(.top, max(20, geometry.safeAreaInsets.top))
-                            
-                            // Progress Indicator
-                            progressIndicator
-                                .padding(.top, 30)
-                            
-                            // Registration Form
-                            registrationFormSection
-                                .padding(.top, 30)
-                            
-                            // Terms and Register Button
-                            bottomSection
-                                .padding(.top, 30)
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, max(50, geometry.safeAreaInsets.bottom + 20))
-                    }
+        VStack(spacing: 0) {
+            topBar
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    headerSection
+                        .padding(.top, DS.Spacing.l)
+
+                    stepContent
+                        .padding(.top, DS.Spacing.xxl)
+
+                    signInPrompt
+                        .padding(.top, DS.Spacing.xl)
                 }
+                .padding(.horizontal, DS.Spacing.xl)
+                .padding(.bottom, DS.Spacing.xxl)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(.arkadGold)
-                }
-            }
-            .onTapGesture {
-                hideKeyboard()
-            }
+            .scrollDismissesKeyboard(.interactively)
         }
-        .alert("Registration Error", isPresented: $showError) {
+        .background(
+            Color.appBackground
+                .ignoresSafeArea()
+                .onTapGesture { hideKeyboard() }
+        )
+        .alert("Couldn't Create Account", isPresented: $showError) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(errorMessage)
@@ -83,452 +61,323 @@ struct RegisterView: View {
             LegalDocumentView(documentType: document)
         }
     }
-    
-    // MARK: - Header Section
-    private var headerSection: some View {
-        VStack(spacing: 16) {
-            Text("Create Account")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-            
-            Text("Join the trading community and start your journey")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
-        }
-    }
-    
-    // MARK: - Progress Indicator
-    private var progressIndicator: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
-                ForEach(1...2, id: \.self) { step in
-                    Circle()
-                        .fill(step <= currentStep ? Color.arkadGold : Color.gray.opacity(0.3))
-                        .frame(width: 12, height: 12)
-                        .scaleEffect(step == currentStep ? 1.2 : 1.0)
-                        .animation(.easeInOut(duration: 0.3), value: currentStep)
-                    
-                    if step < 2 {
-                        Rectangle()
-                            .fill(step < currentStep ? Color.arkadGold : Color.gray.opacity(0.3))
-                            .frame(height: 2)
-                            .animation(.easeInOut(duration: 0.3), value: currentStep)
-                    }
+
+    // MARK: - Top Bar
+
+    private var topBar: some View {
+        HStack(spacing: DS.Spacing.m) {
+            if currentStep == 2 {
+                IconButton(systemName: "chevron.left", accessibilityLabel: "Back", size: 36) {
+                    previousStep()
                 }
+                .transition(.opacity)
+            } else {
+                IconButton(systemName: "xmark", accessibilityLabel: "Cancel", size: 36) {
+                    dismiss()
+                }
+                .transition(.opacity)
             }
-            .frame(width: 100)
-            
+
+            Spacer()
+
+            progressIndicator
+        }
+        .padding(.horizontal, DS.pageMargin)
+        .padding(.top, DS.Spacing.l)
+    }
+
+    private var progressIndicator: some View {
+        HStack(spacing: 6) {
+            ForEach(1...2, id: \.self) { step in
+                Capsule()
+                    .fill(step <= currentStep ? Color.arkadGold : Color.surfaceRaised)
+                    .frame(width: step == currentStep ? 28 : 16, height: 6)
+            }
             Text("Step \(currentStep) of 2")
-                .font(.caption)
-                .foregroundColor(.gray)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+        }
+        .animation(.snappy(duration: 0.25), value: currentStep)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(currentStep) of 2")
+    }
+
+    // MARK: - Header
+
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+            ArkadLogo(height: 36)
+
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                Text(currentStep == 1 ? "Create your account" : "Secure your account")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(Color.primary)
+                    .accessibilityAddTraits(.isHeader)
+                    .contentTransition(.opacity)
+
+                Text(currentStep == 1
+                     ? "Join traders who journal their trades and learn together in communities."
+                     : "Add the email and password you'll use to sign in.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+            }
         }
     }
-    
-    // MARK: - Registration Form Section
-    private var registrationFormSection: some View {
-        VStack(spacing: 24) {
+
+    // MARK: - Steps
+
+    @ViewBuilder
+    private var stepContent: some View {
+        Group {
             if currentStep == 1 {
                 personalInfoStep
                     .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        insertion: .move(edge: .leading).combined(with: .opacity),
                         removal: .move(edge: .leading).combined(with: .opacity)
                     ))
             } else {
                 accountInfoStep
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
+                        removal: .move(edge: .trailing).combined(with: .opacity)
                     ))
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: currentStep)
+        .animation(.snappy(duration: 0.35), value: currentStep)
     }
-    
-    // MARK: - Step 1: Personal Information
+
+    // MARK: Step 1: Personal information
+
     private var personalInfoStep: some View {
-        VStack(spacing: 20) {
-            Text("Personal Information")
-                .font(.title2)
-                .fontWeight(.semibold)
-                .foregroundColor(.primary)
-            
-            // Full Name Field
-            enhancedTextField(
-                title: "Full Name",
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            CustomTextField(
+                title: "Full name",
                 text: $fullName,
-                placeholder: "Enter your full name",
+                placeholder: "Your name",
+                autocapitalization: .words,
                 icon: "person",
-                focused: $fullNameFieldFocused,
-                validation: { !fullName.isEmpty && fullName.count >= 2 },
+                isValid: fullName.count >= 2,
                 errorMessage: "Full name must be at least 2 characters",
-                keyboardType: .default,
                 textContentType: .name,
-                submitLabel: .next
+                submitLabel: .next,
+                focus: $fullNameFieldFocused
             ) {
                 usernameFieldFocused = true
             }
-            
-            // Username Field
-            enhancedTextField(
+
+            CustomTextField(
                 title: "Username",
                 text: $username,
                 placeholder: "Choose a username",
+                autocapitalization: .never,
                 icon: "at",
-                focused: $usernameFieldFocused,
-                validation: { isValidUsername },
+                isValid: isValidUsername,
                 errorMessage: "Username must be 3-20 characters, letters, numbers, and underscores only",
-                keyboardType: .default,
                 textContentType: .username,
                 submitLabel: .next,
-
+                autocorrectionDisabled: true,
+                focus: $usernameFieldFocused
             ) {
                 nextStep()
             }
-            
-            // Navigation Buttons
-            HStack {
-                Spacer()
-                
-                Button(action: nextStep) {
-                    HStack {
-                        Text("Next")
-                            .fontWeight(.semibold)
-                        Image(systemName: "arrow.right")
-                    }
-                    .foregroundColor(.arkadBlack)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(isStep1Valid ? Color.arkadGold : Color.gray.opacity(0.3))
-                    .cornerRadius(8)
+
+            Button(action: nextStep) {
+                HStack(spacing: 8) {
+                    Text("Continue")
+                    Image(systemName: "arrow.right")
+                        .font(.body.weight(.semibold))
                 }
-                .disabled(!isStep1Valid)
             }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(!isStep1Valid)
+            .padding(.top, DS.Spacing.xs)
         }
     }
-    
-    // MARK: - Step 2: Account Information
+
+    // MARK: Step 2: Account information
+
     private var accountInfoStep: some View {
-        VStack(spacing: 20) {
-            Text("Account Information")
-                .font(.title2)
-                .fontWeight(.semibold)
-                .foregroundColor(.primary)
-            
-            // Email Field
-            enhancedTextField(
-                title: "Email Address",
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            CustomTextField(
+                title: "Email",
                 text: $email,
-                placeholder: "Enter your email",
-                icon: "envelope",
-                focused: $emailFieldFocused,
-                validation: { isValidEmail },
-                errorMessage: "Please enter a valid email address",
+                placeholder: "you@example.com",
                 keyboardType: .emailAddress,
+                autocapitalization: .never,
+                icon: "envelope",
+                isValid: isValidEmail,
+                errorMessage: "Please enter a valid email address",
                 textContentType: .emailAddress,
                 submitLabel: .next,
+                autocorrectionDisabled: true,
+                focus: $emailFieldFocused
             ) {
                 passwordFieldFocused = true
             }
-            
-            // Password Field
-            enhancedSecureField(
+
+            CustomTextField(
                 title: "Password",
                 text: $password,
                 placeholder: "Create a password",
+                isSecure: true,
                 icon: "lock",
-                focused: $passwordFieldFocused,
-                isVisible: $isPasswordVisible,
-                validation: { isValidPassword },
+                isValid: isValidPassword,
                 errorMessage: "Password must be at least 6 characters with uppercase, lowercase, and number",
-                submitLabel: .next
+                textContentType: .newPassword,
+                submitLabel: .next,
+                focus: $passwordFieldFocused
             ) {
                 confirmPasswordFieldFocused = true
             }
-            
-            // Confirm Password Field
-            enhancedSecureField(
-                title: "Confirm Password",
+
+            CustomTextField(
+                title: "Confirm password",
                 text: $confirmPassword,
-                placeholder: "Confirm your password",
+                placeholder: "Type it again",
+                isSecure: true,
                 icon: "lock.shield",
-                focused: $confirmPasswordFieldFocused,
-                isVisible: $isConfirmPasswordVisible,
-                validation: { password == confirmPassword && !password.isEmpty },
+                isValid: password == confirmPassword && !password.isEmpty,
                 errorMessage: "Passwords don't match",
-                submitLabel: .done
+                textContentType: .newPassword,
+                submitLabel: .done,
+                focus: $confirmPasswordFieldFocused
             ) {
-                if isFormValid && agreeToTerms {
-                    register()
+                if canRegister { register() }
+            }
+
+            termsAgreement
+                .padding(.top, DS.Spacing.xs)
+
+            Button(action: register) {
+                if authService.isLoading {
+                    ProgressView().tint(Color.onGold)
+                } else {
+                    Text("Create account")
                 }
             }
-            
-            // Navigation Buttons
-            HStack {
-                Button(action: previousStep) {
-                    HStack {
-                        Image(systemName: "arrow.left")
-                        Text("Back")
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.arkadGold)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(Color.arkadGold.opacity(0.1))
-                    .cornerRadius(8)
-                }
-                
-                Spacer()
-            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(!canRegister)
         }
     }
-    
-    // MARK: - Bottom Section
-    private var bottomSection: some View {
-        VStack(spacing: 20) {
-            if currentStep == 2 {
-                // Terms and Conditions
-                HStack(alignment: .top, spacing: 12) {
-                    Button(action: { agreeToTerms.toggle() }) {
-                        Image(systemName: agreeToTerms ? "checkmark.square.fill" : "square")
-                            .foregroundColor(agreeToTerms ? .arkadGold : .gray)
-                            .font(.title3)
-                    }
-                    .accessibilityLabel("Agree to the Terms of Service and Privacy Policy")
-                    .accessibilityValue(agreeToTerms ? "Checked" : "Unchecked")
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        // The links open the in-app documents (see LegalDocumentView in AboutView.swift)
-                        Text("I agree to the [Terms of Service](arkad-legal://terms) and [Privacy Policy](arkad-legal://privacy)")
-                            .font(.subheadline)
-                            .tint(.arkadGoldDark)
-                            .multilineTextAlignment(.leading)
-                            .environment(\.openURL, OpenURLAction { url in
-                                switch url.host {
-                                case "terms": legalDocument = .terms
-                                case "privacy": legalDocument = .privacy
-                                default: break
-                                }
-                                return .handled
-                            })
+    private var termsAgreement: some View {
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { agreeToTerms.toggle() }
+            } label: {
+                Image(systemName: agreeToTerms ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(agreeToTerms ? Color.goldText : Color.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Agree to the Terms of Service and Privacy Policy")
+            .accessibilityValue(agreeToTerms ? "Checked" : "Unchecked")
 
-                        Text("By creating an account, you agree to these terms.")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-
-                    Spacer()
-                }
-                
-                // Register Button
-                Button(action: register) {
-                    HStack {
-                        if authService.isLoading {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .arkadBlack))
-                                .scaleEffect(0.9)
-                        } else {
-                            Image(systemName: "person.badge.plus")
-                                .font(.title3)
-                            Text("Create Account")
-                                .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 4) {
+                // The links open the in-app documents (LegalDocumentView in LegalDocuments.swift)
+                Text("I agree to the [Terms of Service](arkad-legal://terms) and [Privacy Policy](arkad-legal://privacy)")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.primary)
+                    .tint(Color.goldText)
+                    .multilineTextAlignment(.leading)
+                    .environment(\.openURL, OpenURLAction { url in
+                        switch url.host {
+                        case "terms": legalDocument = .terms
+                        case "privacy": legalDocument = .privacy
+                        default: break
                         }
-                    }
-                    .foregroundColor(.arkadBlack)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: canRegister ?
-                                             [Color.arkadGold, Color.arkadGold.opacity(0.8)] :
-                                             [Color.gray.opacity(0.3), Color.gray.opacity(0.2)]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(12)
-                    .shadow(color: canRegister ? Color.arkadGold.opacity(0.3) : Color.clear, radius: 8, x: 0, y: 4)
-                    .scaleEffect(canRegister ? 1.0 : 0.98)
-                    .animation(.easeInOut(duration: 0.2), value: canRegister)
-                }
-                .disabled(!canRegister)
-            }
-        }
-    }
-    
-    // MARK: - Enhanced Text Field
-    private func enhancedTextField(
-        title: String,
-        text: Binding<String>,
-        placeholder: String,
-        icon: String,
-        focused: FocusState<Bool>.Binding,
-        validation: @escaping () -> Bool,
-        errorMessage: String,
-        keyboardType: UIKeyboardType = .default,
-        textContentType: UITextContentType? = nil,
-        submitLabel: SubmitLabel = .done,
-        autocapitalization: TextInputAutocapitalization = .sentences,
-        onSubmit: @escaping () -> Void = {}
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.primary)
-            
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(focused.wrappedValue ? .arkadGold : .gray)
-                    .font(.title3)
-                
-                TextField(placeholder, text: text)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .keyboardType(keyboardType)
-                    .textContentType(textContentType)
-                    .textInputAutocapitalization(autocapitalization)
-                    .focused(focused)
-                    .submitLabel(submitLabel)
-                    .onSubmit(onSubmit)
-                
-                if !text.wrappedValue.isEmpty {
-                    Image(systemName: validation() ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundColor(validation() ? .green : .red)
-                        .font(.title3)
-                }
-            }
-            .padding()
-            .background(Color.white)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(focused.wrappedValue ? Color.arkadGold : Color.gray.opacity(0.3), lineWidth: focused.wrappedValue ? 2 : 1)
-            )
-            .shadow(color: .gray.opacity(0.1), radius: 4, x: 0, y: 2)
-            
-            if !text.wrappedValue.isEmpty && !validation() {
-                Text(errorMessage)
+                        return .handled
+                    })
+
+                Text("By creating an account, you agree to these terms.")
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundStyle(.secondary)
             }
+            .padding(.top, 3)
+
+            Spacer(minLength: 0)
         }
+        .padding(DS.Spacing.m)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                .fill(Color.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                .strokeBorder(Color.hairline, lineWidth: 1)
+        )
     }
-    
-    // MARK: - Enhanced Secure Field
-    private func enhancedSecureField(
-        title: String,
-        text: Binding<String>,
-        placeholder: String,
-        icon: String,
-        focused: FocusState<Bool>.Binding,
-        isVisible: Binding<Bool>,
-        validation: @escaping () -> Bool,
-        errorMessage: String,
-        submitLabel: SubmitLabel = .done,
-        onSubmit: @escaping () -> Void = {}
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.primary)
-            
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(focused.wrappedValue ? .arkadGold : .gray)
-                    .font(.title3)
-                
-                Group {
-                    if isVisible.wrappedValue {
-                        TextField(placeholder, text: text)
-                    } else {
-                        SecureField(placeholder, text: text)
-                    }
-                }
-                .textFieldStyle(PlainTextFieldStyle())
-                .focused(focused)
-                .submitLabel(submitLabel)
-                .onSubmit(onSubmit)
-                
-                Button(action: { isVisible.wrappedValue.toggle() }) {
-                    Image(systemName: isVisible.wrappedValue ? "eye.slash" : "eye")
-                        .foregroundColor(.gray)
-                        .font(.title3)
-                }
-                
-                if !text.wrappedValue.isEmpty {
-                    Image(systemName: validation() ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundColor(validation() ? .green : .red)
-                        .font(.title3)
-                }
-            }
-            .padding()
-            .background(Color.white)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(focused.wrappedValue ? Color.arkadGold : Color.gray.opacity(0.3), lineWidth: focused.wrappedValue ? 2 : 1)
-            )
-            .shadow(color: .gray.opacity(0.1), radius: 4, x: 0, y: 2)
-            
-            if !text.wrappedValue.isEmpty && !validation() {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
+
+    // MARK: - Sign In
+
+    private var signInPrompt: some View {
+        HStack(spacing: 4) {
+            Text("Already have an account?")
+                .foregroundStyle(.secondary)
+            Button("Sign in") { dismiss() }
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.goldText)
         }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity)
     }
-    
-    // MARK: - Computed Properties
+
+    // MARK: - Validation
+
     private var isValidEmail: Bool {
         let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
         return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: email)
     }
-    
+
     private var isValidUsername: Bool {
         let usernameRegex = "^[a-zA-Z0-9_]{3,20}$"
         return NSPredicate(format: "SELF MATCHES %@", usernameRegex).evaluate(with: username)
     }
-    
+
     private var isValidPassword: Bool {
         // At least 6 characters, one uppercase, one lowercase, one number
         let passwordRegex = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)[a-zA-Z\\d@$!%*?&]{6,}$"
         return NSPredicate(format: "SELF MATCHES %@", passwordRegex).evaluate(with: password)
     }
-    
+
     private var isStep1Valid: Bool {
         !fullName.isEmpty && fullName.count >= 2 && isValidUsername
     }
-    
+
     private var isFormValid: Bool {
         isStep1Valid && isValidEmail && isValidPassword && password == confirmPassword
     }
-    
+
     private var canRegister: Bool {
         isFormValid && agreeToTerms && !authService.isLoading
     }
-    
+
     // MARK: - Actions
+
     private func nextStep() {
         if isStep1Valid {
-            withAnimation(.easeInOut(duration: 0.4)) {
+            withAnimation(.snappy(duration: 0.35)) {
                 currentStep = 2
             }
             emailFieldFocused = true
         }
     }
-    
+
     private func previousStep() {
-        withAnimation(.easeInOut(duration: 0.4)) {
+        withAnimation(.snappy(duration: 0.35)) {
             currentStep = 1
         }
         fullNameFieldFocused = true
     }
-    
+
     private func register() {
         hideKeyboard()
-        
+
         Task {
             do {
                 try await authService.register(
@@ -544,7 +393,7 @@ struct RegisterView: View {
             }
         }
     }
-    
+
     private func hideKeyboard() {
         fullNameFieldFocused = false
         usernameFieldFocused = false

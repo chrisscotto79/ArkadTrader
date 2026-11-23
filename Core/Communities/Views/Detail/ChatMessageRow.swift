@@ -1,19 +1,16 @@
 // File: Core/Communities/Views/Detail/ChatMessageRow.swift
-// A single chat message: bubble, author avatar, replies and reactions.
+// A single chat message: grouped bubble (yours in gold on the right, others' on the left),
+// author line, media, callout card and reactions. Long-press for reply / react / copy / edit / delete.
 
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
-import FirebaseStorage
-import Photos
-import MobileCoreServices
 
-// MARK: - Enhanced Message Row with Clickable Profile Images
 struct EnhancedMessageRowWithReactions: View {
     let message: CommunityMessage
     let author: User?
     let authorRole: CommunityRole
     let community: Community
+    /// First message of a group: shows the avatar and author line
     let showUsername: Bool
     let isUserMessage: Bool
     let canEdit: Bool
@@ -31,457 +28,393 @@ struct EnhancedMessageRowWithReactions: View {
     var canManageCallout: Bool = false
     var onTrackCallout: () -> Void = {}
     var onUpdateCalloutStatus: (TradeCallout.Status) -> Void = { _ in }
-    
-    @State private var showingActions = false
-    
+    /// Last message of a group: shows the time and the rounded tail corner
+    var isLastInGroup: Bool = true
+
+    @Environment(\.openURL) private var openURL
+
+    private var avatarSize: CGFloat { 32 }
+    private var bigRadius: CGFloat { 18 }
+    private var smallRadius: CGFloat { 6 }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            // ENHANCED: Clickable Profile Image/Avatar
-            if showUsername {
-                profileImageView
+        HStack(alignment: .top, spacing: DS.Spacing.s) {
+            if isUserMessage {
+                Spacer(minLength: 56)
             } else {
-                Text(formatTime(message.createdAt))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .opacity(showingActions ? 1.0 : 0.0)
-                    .frame(width: 40, alignment: .center)
-                    .animation(.easeInOut(duration: 0.2), value: showingActions)
+                avatarColumn
             }
-            
-            // Message Content
-            VStack(alignment: .leading, spacing: 6) {
-                // Username and timestamp
-                if showUsername {
-                    usernameAndTimestamp
+
+            VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 4) {
+                if showUsername && !isUserMessage {
+                    authorLine
                 }
-                
-                // Enhanced Message Content with integrated reactions
+
                 messageContent
-                
-                // Message actions (simplified)
-                if showingActions {
-                    messageActionsView
+                    .contextMenu { contextActions }
+
+                if !reactions.isEmpty {
+                    reactionsRow
+                }
+
+                if isLastInGroup && isUserMessage {
+                    Text(formatTime(message.createdAt))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
                 }
             }
-            
-            Spacer(minLength: 50)
-        }
-        .padding(.vertical, showUsername ? 8 : 2)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showingActions.toggle()
+
+            if !isUserMessage {
+                Spacer(minLength: 40)
             }
+        }
+        .padding(.top, showUsername ? DS.Spacing.s : 0)
+        .frame(maxWidth: .infinity, alignment: isUserMessage ? .trailing : .leading)
+    }
+
+    // MARK: - Avatar & author
+
+    @ViewBuilder
+    private var avatarColumn: some View {
+        if showUsername {
+            Button {
+                if let author { onProfileTap(author) }
+            } label: {
+                UserAvatar(username: message.authorUsername, imageURL: author?.profileImageUrl, size: avatarSize)
+            }
+            .buttonStyle(PressableStyle())
+            .accessibilityLabel("View \(message.authorUsername)'s profile")
+        } else {
+            Color.clear.frame(width: avatarSize, height: 1)
         }
     }
-    
-    // MARK: - ENHANCED: Clickable Profile Image Component
-    private var profileImageView: some View {
-        Button(action: {
-            if let author = author {
-                onProfileTap(author)
-            }
-        }) {
-            Group {
-                if let author = author,
-                   let profileImageUrl = author.profileImageUrl,
-                   !profileImageUrl.isEmpty {
-                    
-                    AsyncImage(url: URL(string: profileImageUrl)) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        // Loading state with user color background
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [userColor.opacity(0.8), userColor.opacity(0.6)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .overlay(
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.6)
-                            )
-                    }
-                } else {
-                    // Fallback to initials circle
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [userColor.opacity(0.8), userColor.opacity(0.6)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay(
-                            Text(userInitials)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
-                        )
-                }
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(Circle())
-            .overlay(
-                Circle()
-                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 1)
-        }
-        .buttonStyle(ProfileImageButtonStyle())
-    }
-    
-    private var usernameAndTimestamp: some View {
-        HStack(spacing: 8) {
-            // Username with role badges
-            HStack(spacing: 6) {
+
+    private var authorLine: some View {
+        HStack(spacing: 5) {
+            Button {
+                if let author { onProfileTap(author) }
+            } label: {
                 Text(message.authorUsername)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(userColor)
-                
-                // MOD/ADMIN Badge - ENHANCED with simplified role system!
-                Group {
-                    if authorRole == .owner {
-                        Image(systemName: "crown.fill")
-                            .font(.caption2)
-                            .foregroundColor(.purple)
-                            .background(
-                                Circle()
-                                    .fill(.purple.opacity(0.15))
-                                    .frame(width: 16, height: 16)
-                            )
-                    } else if authorRole == .admin {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                            .background(
-                                Circle()
-                                    .fill(.orange.opacity(0.15))
-                                    .frame(width: 16, height: 16)
-                            )
-                    } else if authorRole == .moderator {
-                        Image(systemName: "shield.fill")
-                            .font(.caption2)
-                            .foregroundColor(.accentColor)
-                            .background(
-                                Circle()
-                                    .fill(.blue.opacity(0.15))
-                                    .frame(width: 16, height: 16)
-                            )
-                    }
-                }
-                
-                // Verified badge
-                if let author = author, author.isVerified {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.caption)
-                        .foregroundColor(.accentColor)
-                }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
             }
-            
+            .buttonStyle(.plain)
+
+            roleBadge
+
+            if let author, author.isVerified {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Color.goldText)
+                    .accessibilityLabel("Verified")
+            }
+
             Text(formatTimestamp(message.createdAt))
                 .font(.caption2)
-                .foregroundColor(.secondary)
-            
-            Spacer()
+                .foregroundStyle(.secondary)
+        }
+        .padding(.leading, 4)
+    }
+
+    @ViewBuilder
+    private var roleBadge: some View {
+        switch authorRole {
+        case .owner:
+            Image(systemName: "crown.fill")
+                .font(.caption2)
+                .foregroundStyle(Color.goldText)
+                .accessibilityLabel("Owner")
+        case .admin:
+            Image(systemName: "star.fill")
+                .font(.caption2)
+                .foregroundStyle(CommunityRole.admin.color)
+                .accessibilityLabel("Admin")
+        case .moderator:
+            Image(systemName: "shield.fill")
+                .font(.caption2)
+                .foregroundStyle(CommunityRole.moderator.color)
+                .accessibilityLabel("Moderator")
+        case .member:
+            EmptyView()
         }
     }
-    
+
+    // MARK: - Content
+
+    @ViewBuilder
     private var messageContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Handle different message types
-            if let callout = message.callout {
-                CalloutCardView(
-                    callout: callout,
-                    authorUsername: message.authorUsername,
-                    canManage: canManageCallout,
-                    onTrack: onTrackCallout,
-                    onUpdateStatus: onUpdateCalloutStatus
-                )
-            } else if let mediaContent = getMediaContent(from: message) {
-                mediaMessageView(mediaContent)
-            } else {
-                // Regular text message bubble with mention highlighting
-                HStack {
-                    Text(attributedMessageContent)
-                        .font(.body)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18)
-                                .fill(messageBackgroundColor)
-                        )
-                    
-                    Spacer()
-                }
-            }
-            
-            // Reactions positioned below and to the left
-            if !reactions.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(reactions) { reactionGroup in
-                        Button(action: {
-                            onReact(reactionGroup.emoji)
-                        }) {
-                            HStack(spacing: 4) {
-                                Text(reactionGroup.emoji)
-                                    .font(.caption)
-                                
-                                if reactionGroup.count > 1 {
-                                    Text("\(reactionGroup.count)")
-                                        .font(.caption2)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.primary)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(reactionGroup.hasUserReacted ?
-                                          Color.yellow.opacity(0.3) :
-                                          Color(.systemGray5)
-                                    )
-                            )
-                            .scaleEffect(reactionGroup.hasUserReacted ? 1.05 : 1.0)
-                            .animation(.spring(response: 0.3), value: reactionGroup.hasUserReacted)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                    
-                    // Add reaction button
-                    Button(action: onShowEmojiPicker) {
-                        Image(systemName: "plus")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .frame(width: 20, height: 20)
-                            .background(
-                                Circle()
-                                    .fill(Color(.systemGray5))
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    Spacer()
-                }
-            }
+        if let callout = message.callout {
+            CalloutCardView(
+                callout: callout,
+                authorUsername: message.authorUsername,
+                canManage: canManageCallout,
+                onTrack: onTrackCallout,
+                onUpdateStatus: onUpdateCalloutStatus
+            )
+            .frame(maxWidth: 360)
+        } else if let media = getMediaContent(from: message) {
+            mediaMessageView(media)
+        } else {
+            textBubble
         }
     }
-    
-    // MARK: - Media Message View
-    @ViewBuilder
-    private func mediaMessageView(_ mediaContent: MediaContent) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            switch mediaContent.type {
-            case .image:
-                AsyncImage(url: URL(string: mediaContent.url)) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 250, maxHeight: 300)
-                        .cornerRadius(12)
-                        .clipped()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemGray5))
-                        .frame(width: 250, height: 200)
-                        .overlay(
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                        )
-                }
-                
-            case .document:
-                documentPreviewView(mediaContent)
-                
-            case .video:
-                videoPreviewView(mediaContent)
-            }
-            
-            // Caption text if present (but not for pure media messages)
-            if !message.content.isEmpty && !message.content.hasPrefix("[MEDIA:") {
-                HStack {
-                    Text(message.content)
-                        .font(.subheadline)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.systemGray6))
-                        )
-                    
-                    Spacer()
-                }
-            }
-        }
+
+    private var textBubble: some View {
+        Text(attributedMessageContent)
+            .font(.body)
+            .foregroundStyle(isUserMessage ? Color.onGold : Color.primary)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(bubbleShape.fill(bubbleFill))
+            .overlay(
+                bubbleShape.stroke(mentionsMe && !isUserMessage ? Color.goldText.opacity(0.35) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(bubbleShape)
     }
-    
-    @ViewBuilder
-    private func documentPreviewView(_ mediaContent: MediaContent) -> some View {
-        HStack(spacing: 12) {
-            // Document icon
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.accentColor.opacity(0.1))
-                    .frame(width: 40, height: 40)
-                
-                Image(systemName: documentIcon(for: mediaContent.fileName))
-                    .font(.title2)
-                    .foregroundColor(.accentColor)
-            }
-            
-            // Document info
-            VStack(alignment: .leading, spacing: 2) {
-                Text(mediaContent.fileName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                
-                if let fileSize = mediaContent.fileSize {
-                    Text(formatFileSize(fileSize))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            Spacer()
-            
-            // Opens the file (Safari / Quick Look handles download and sharing)
-            if let url = URL(string: mediaContent.url) {
-                Link(destination: url) {
-                    Image(systemName: "arrow.up.right.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.accentColor)
-                }
-                .accessibilityLabel("Open \(mediaContent.fileName)")
-            }
+
+    private var bubbleShape: UnevenRoundedRectangle {
+        if isUserMessage {
+            return UnevenRoundedRectangle(
+                topLeadingRadius: bigRadius,
+                bottomLeadingRadius: bigRadius,
+                bottomTrailingRadius: isLastInGroup ? bigRadius : smallRadius,
+                topTrailingRadius: showUsername ? bigRadius : smallRadius,
+                style: .continuous
+            )
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
+        return UnevenRoundedRectangle(
+            topLeadingRadius: showUsername ? bigRadius : smallRadius,
+            bottomLeadingRadius: isLastInGroup ? bigRadius : smallRadius,
+            bottomTrailingRadius: bigRadius,
+            topTrailingRadius: bigRadius,
+            style: .continuous
         )
-        .frame(maxWidth: 280)
     }
-    
+
+    private var bubbleFill: Color {
+        if isUserMessage { return .arkadGold }
+        return mentionsMe ? .goldTint : .surfaceRaised
+    }
+
+    // MARK: - Media
+
     @ViewBuilder
-    private func videoPreviewView(_ mediaContent: MediaContent) -> some View {
-        if let url = URL(string: mediaContent.url) {
+    private func mediaMessageView(_ media: MediaContent) -> some View {
+        switch media.type {
+        case .image:
+            imageView(media)
+        case .document:
+            documentView(media)
+        case .video:
+            videoView(media)
+        }
+    }
+
+    private func imageView(_ media: MediaContent) -> some View {
+        AsyncImage(url: URL(string: media.url)) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 240, maxHeight: 320)
+            case .failure:
+                mediaPlaceholder(icon: "photo", text: "Photo unavailable")
+            default:
+                mediaPlaceholder(icon: nil, text: nil)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                .strokeBorder(Color.hairline, lineWidth: 1)
+        )
+        .accessibilityLabel("Photo from \(message.authorUsername)")
+    }
+
+    private func mediaPlaceholder(icon: String?, text: String?) -> some View {
+        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+            .fill(Color.surfaceRaised)
+            .frame(width: 240, height: 180)
+            .overlay {
+                if let icon, let text {
+                    VStack(spacing: 6) {
+                        Image(systemName: icon).font(.title2)
+                        Text(text).font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func documentView(_ media: MediaContent) -> some View {
+        if let url = URL(string: media.url) {
+            Link(destination: url) { documentCard(media) }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Open \(media.fileName)")
+        } else {
+            documentCard(media)
+        }
+    }
+
+    private func documentCard(_ media: MediaContent) -> some View {
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: documentIcon(for: media.fileName), size: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(media.fileName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                Text(media.fileSize.map(formatFileSize) ?? fileKind(for: media.fileName))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: DS.Spacing.s)
+
+            Image(systemName: "arrow.up.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(DS.Spacing.m)
+        .frame(width: 260)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).fill(Color.surfaceRaised)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                .strokeBorder(Color.hairline, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func videoView(_ media: MediaContent) -> some View {
+        if let url = URL(string: media.url) {
             Link(destination: url) { videoThumbnail }
+                .buttonStyle(PressableStyle())
                 .accessibilityLabel("Play video")
         } else {
             videoThumbnail
         }
     }
-    
+
     private var videoThumbnail: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray5))
-                .frame(width: 250, height: 140)
-            
-            VStack(spacing: 8) {
-                Image(systemName: "play.circle.fill")
-                    .font(.largeTitle)
-                    .foregroundColor(.white)
-                
-                Text("Play video")
-                    .font(.caption)
-                    .foregroundColor(.white)
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(.systemGray4), lineWidth: 1)
-        )
-    }
-    
-    private var messageActionsView: some View {
-        HStack(spacing: 16) {
-            Button("Reply", action: onReply)
-                .font(.caption)
-                .foregroundColor(.accentColor)
-            
-            if canEdit {
-                Button("Edit", action: onEdit)
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
-            
-            if canDelete {
-                Button("Delete", action: onDelete)
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
-            
-            Button(action: onShowEmojiPicker) {
-                HStack(spacing: 4) {
-                    Image(systemName: "face.smiling")
-                        .font(.caption)
-                    Text("React")
-                        .font(.caption)
+        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+            .fill(Color.surfaceRaised)
+            .frame(width: 240, height: 140)
+            .overlay {
+                VStack(spacing: 6) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 40))
+                    Text("Play video")
+                        .font(.caption.weight(.medium))
                 }
-                .foregroundColor(.accentColor)
+                .foregroundStyle(.secondary)
             }
-            
-            Spacer()
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .strokeBorder(Color.hairline, lineWidth: 1)
+            )
+    }
+
+    // MARK: - Reactions
+
+    private var reactionsRow: some View {
+        HStack(spacing: 6) {
+            ForEach(reactions) { group in
+                Button {
+                    onReact(group.emoji)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(group.emoji)
+                            .font(.footnote)
+                        if group.count > 1 {
+                            Text("\(group.count)")
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(group.hasUserReacted ? Color.goldText : Color.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 26)
+                    .background(
+                        Capsule().fill(group.hasUserReacted ? Color.goldTint : Color.surfaceRaised)
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(group.hasUserReacted ? Color.goldText.opacity(0.4) : Color.hairline, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("\(group.emoji) \(group.count), \(group.displayText)")
+            }
+
+            Button(action: onShowEmojiPicker) {
+                Image(systemName: "face.smiling")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 26)
+                    .background(Capsule().fill(Color.surfaceRaised))
+            }
+            .buttonStyle(PressableStyle())
+            .accessibilityLabel("Add reaction")
         }
-        .padding(.top, 4)
-        .padding(.leading, 52)
-        .transition(.opacity.combined(with: .move(edge: .top)))
     }
-    
-    // MARK: - Helper Properties and Methods
-    private var userColor: Color {
-        let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .indigo, .teal]
-        let hash = message.authorId.hashValue
-        return colors[abs(hash) % colors.count]
-    }
-    
-    private var userInitials: String {
-        if let author = author {
-            let names = author.fullName.components(separatedBy: " ")
-            if names.count >= 2 {
-                return String(names[0].prefix(1)) + String(names[1].prefix(1))
-            } else if let firstChar = names.first?.first {
-                return String(firstChar)
+
+    // MARK: - Long-press actions
+
+    @ViewBuilder
+    private var contextActions: some View {
+        Button(action: onReply) {
+            Label("Reply", systemImage: "arrowshape.turn.up.left")
+        }
+        Button(action: onShowEmojiPicker) {
+            Label("React", systemImage: "face.smiling")
+        }
+        if message.callout == nil, getMediaContent(from: message) == nil {
+            Button {
+                UIPasteboard.general.string = message.content
+            } label: {
+                Label("Copy Text", systemImage: "doc.on.doc")
             }
         }
-        return String(message.authorUsername.prefix(2)).uppercased()
+        if let media = getMediaContent(from: message), let url = URL(string: media.url) {
+            Button {
+                openURL(url)
+            } label: {
+                Label("Open", systemImage: "arrow.up.right.square")
+            }
+        }
+        if canEdit && message.callout == nil && getMediaContent(from: message) == nil {
+            Button(action: onEdit) {
+                Label("Edit", systemImage: "pencil")
+            }
+        }
+        if canDelete {
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
-    
+
+    // MARK: - Helpers
+
+    /// Time only: the chat shows a day separator above each day's messages
     private func formatTimestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        
-        if Calendar.current.isDateInToday(date) {
-            formatter.timeStyle = .short
-            return formatter.string(from: date)
-        } else if Calendar.current.isDateInYesterday(date) {
-            return "Yesterday"
-        } else {
-            formatter.dateStyle = .short
-            return formatter.string(from: date)
-        }
+        formatTime(date)
     }
-    
+
     private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        date.formatted(date: .omitted, time: .shortened)
     }
-    
+
     private func getMediaContent(from message: CommunityMessage) -> MediaContent? {
         let content = message.content
-        
+
         if content.hasPrefix("[MEDIA:IMAGE]") {
             let url = String(content.dropFirst(13))
             return MediaContent(type: .image, url: url, fileName: "image.jpg", fileSize: nil)
@@ -494,85 +427,63 @@ struct EnhancedMessageRowWithReactions: View {
             let url = String(content.dropFirst(13))
             return MediaContent(type: .video, url: url, fileName: "video.mp4", fileSize: nil)
         }
-        
+
         return nil
     }
-    
+
     private func documentIcon(for fileName: String) -> String {
-        let fileExtension = (fileName as NSString).pathExtension.lowercased()
-        
-        switch fileExtension {
-        case "pdf":
-            return "doc.richtext"
-        case "doc", "docx":
-            return "doc.text"
-        case "xls", "xlsx":
-            return "tablecells"
-        case "ppt", "pptx":
-            return "rectangle.on.rectangle"
-        case "txt":
-            return "doc.plaintext"
-        case "zip", "rar":
-            return "archivebox"
-        default:
-            return "doc"
+        switch (fileName as NSString).pathExtension.lowercased() {
+        case "pdf": return "doc.richtext"
+        case "doc", "docx": return "doc.text"
+        case "xls", "xlsx", "csv": return "tablecells"
+        case "ppt", "pptx": return "rectangle.on.rectangle"
+        case "txt", "rtf": return "doc.plaintext"
+        case "zip", "rar", "gz": return "archivebox"
+        default: return "doc"
         }
     }
-    
+
+    /// "PDF document", "File"
+    private func fileKind(for fileName: String) -> String {
+        let ext = (fileName as NSString).pathExtension.uppercased()
+        return ext.isEmpty ? "File" : "\(ext) file"
+    }
+
     private func formatFileSize(_ bytes: Int) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes))
     }
-    
-    // MARK: - Mention Highlighting
+
+    // MARK: - Mentions
+
+    private static let mentionRegex = try? NSRegularExpression(pattern: #"@(\w+)"#)
+
+    private var mentionRanges: [Range<String.Index>] {
+        let content = message.content
+        let nsRange = NSRange(location: 0, length: (content as NSString).length)
+        let matches = Self.mentionRegex?.matches(in: content, range: nsRange) ?? []
+        return matches.compactMap { Range($0.range, in: content) }
+    }
+
+    /// Whether this message @mentions the current user
+    private var mentionsMe: Bool {
+        guard !currentUsername.isEmpty else { return false }
+        let target = "@\(currentUsername.lowercased())"
+        return mentionRanges.contains { String(message.content[$0]).lowercased() == target }
+    }
+
     private var attributedMessageContent: AttributedString {
-        var attributedString = AttributedString(message.content)
-        
-        // Detect @mentions and apply styling
-        let mentionPattern = #"@(\w+)"#
-        let regex = try? NSRegularExpression(pattern: mentionPattern)
-        let nsString = message.content as NSString
-        let matches = regex?.matches(in: message.content, range: NSRange(location: 0, length: nsString.length)) ?? []
-        
-        for match in matches.reversed() { // Reverse to maintain indices
-            if let range = Range(match.range, in: message.content) {
-                if let attributedRange = Range(range, in: attributedString) {
-                    attributedString[attributedRange].foregroundColor = .blue
-                    attributedString[attributedRange].font = .body.weight(.semibold)
-                    
-                    // Check if this mention is for current user
-                    let mentionText = String(message.content[range])
-                    if isMentionOfCurrentUser(mentionText) {
-                        attributedString[attributedRange].backgroundColor = .yellow.opacity(0.3)
-                    }
-                }
+        var attributed = AttributedString(message.content)
+        for range in mentionRanges {
+            guard let attributedRange = Range(range, in: attributed) else { continue }
+            attributed[attributedRange].font = .body.weight(.semibold)
+            if !isUserMessage {
+                attributed[attributedRange].foregroundColor = .goldText
             }
         }
-        
-        return attributedString
-    }
-    
-    private func isMentionOfCurrentUser(_ mention: String) -> Bool {
-        !currentUsername.isEmpty && mention.lowercased() == "@\(currentUsername.lowercased())"
-    }
-    
-    private var messageBackgroundColor: Color {
-        // Highlight message background if current user is mentioned
-        let mentionPattern = #"@(\w+)"#
-        let regex = try? NSRegularExpression(pattern: mentionPattern)
-        let matches = regex?.matches(in: message.content, range: NSRange(location: 0, length: message.content.count)) ?? []
-        
-        let currentUserMentioned = matches.contains { match in
-            if let range = Range(match.range, in: message.content) {
-                let mentionText = String(message.content[range])
-                return isMentionOfCurrentUser(mentionText)
-            }
-            return false
-        }
-        
-        return currentUserMentioned ? Color.accentColor.opacity(0.1) : Color(.systemGray6)
+        return attributed
     }
 }
 
@@ -581,6 +492,6 @@ struct ProfileImageButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.spring(response: 0.3), value: configuration.isPressed)
+            .animation(.snappy(duration: 0.18), value: configuration.isPressed)
     }
 }

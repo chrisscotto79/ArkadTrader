@@ -24,13 +24,18 @@ struct CommunityLeaderboardView: View {
 
     var body: some View {
         ScrollView {
-            if searchText.isEmpty {
-                leaderboard
-            } else {
-                memberResults
+            Group {
+                if searchText.isEmpty {
+                    leaderboard
+                } else {
+                    memberResults
+                }
             }
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.top, DS.Spacing.s)
+            .padding(.bottom, DS.Spacing.xxl)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .screenBackground()
         .navigationTitle("Leaderboard")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -51,49 +56,60 @@ struct CommunityLeaderboardView: View {
     // MARK: - Leaderboard
 
     private var leaderboard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            HStack(spacing: DS.Spacing.m) {
+                CommunityAvatar(community: community, size: 36)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(community.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(CommunityFormat.members(community.memberCount))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // The filter bar's chips bleed to the screen edges; it expects a page-margin container.
             LeaderboardFilterBar(category: $viewModel.category, timeframe: $viewModel.timeframe)
-                .padding(.top, 8)
 
             if let mine = viewModel.entry(for: currentUserId), mine.rank > 3 {
                 yourRank(mine)
             }
 
-            Group {
-                if viewModel.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 60)
-                } else if !viewModel.errorMessage.isEmpty {
-                    message(
-                        icon: "exclamationmark.triangle",
-                        title: "Couldn't load rankings",
-                        detail: viewModel.errorMessage,
-                        action: ("Try Again", { Task { await viewModel.load(communityId: community.id, forceRefresh: true) } })
-                    )
-                } else if viewModel.entries.isEmpty {
-                    message(
-                        icon: "trophy",
-                        title: "No rankings yet",
-                        detail: emptyDetail,
-                        action: nil
-                    )
-                } else {
-                    LazyVStack(spacing: 8) {
-                        ForEach(viewModel.entries) { entry in
-                            Button {
-                                openProfile(userId: entry.userId)
-                            } label: {
-                                LeaderboardRow(entry: entry, category: viewModel.category, isCurrentUser: entry.userId == currentUserId)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
+            rankings
         }
-        .padding(.bottom, 32)
+    }
+
+    @ViewBuilder
+    private var rankings: some View {
+        if viewModel.isLoading {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+        } else if !viewModel.errorMessage.isEmpty {
+            EmptyStateView(
+                systemImage: "exclamationmark.triangle",
+                title: "Couldn't load rankings",
+                message: viewModel.errorMessage,
+                actionTitle: "Try again",
+                action: { Task { await viewModel.load(communityId: community.id, forceRefresh: true) } }
+            )
+            .cardStyle(padding: 0)
+        } else if viewModel.entries.isEmpty {
+            EmptyStateView(
+                systemImage: "trophy",
+                title: "No rankings yet",
+                message: emptyDetail
+            )
+            .cardStyle(padding: 0)
+        } else {
+            LeaderboardRankingList(
+                entries: viewModel.entries,
+                category: viewModel.category,
+                currentUserId: currentUserId,
+                onSelect: { openProfile(userId: $0.userId) }
+            )
+        }
     }
 
     private var emptyDetail: String {
@@ -107,75 +123,72 @@ struct CommunityLeaderboardView: View {
     }
 
     private func yourRank(_ entry: CommunityLeaderboardEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
             Text("YOUR POSITION")
-                .font(.caption2.weight(.bold))
-                .foregroundColor(.secondary)
+                .font(.caption.weight(.semibold))
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+                .padding(.leading, DS.Spacing.xs)
             LeaderboardRow(entry: entry, category: viewModel.category, isCurrentUser: true)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+                .cardStyle(padding: 0)
         }
-        .padding(.horizontal, 16)
     }
 
     // MARK: - Member search
 
+    @ViewBuilder
     private var memberResults: some View {
-        LazyVStack(spacing: 8) {
-            if filteredMembers.isEmpty {
-                message(icon: "person.2", title: "No members found", detail: "No one in \(community.name) matches \"\(searchText)\".", action: nil)
-            }
-            ForEach(filteredMembers) { user in
-                Button {
-                    if user.id != currentUserId { profileUser = user }
-                } label: {
-                    HStack(spacing: 12) {
-                        UserAvatar(username: user.username, imageURL: user.profileImageUrl, size: 40)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(user.fullName.isEmpty ? user.username : user.fullName)
-                                .font(.subheadline.weight(.semibold))
-                            Text("@\(user.username)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if let entry = viewModel.entry(for: user.id) {
-                            Text("#\(entry.rank)")
-                                .font(.subheadline.weight(.bold).monospacedDigit())
-                                .foregroundColor(.arkadGold)
-                        }
-                    }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(.secondarySystemGroupedBackground)))
-                }
-                .buttonStyle(.plain)
+        if filteredMembers.isEmpty {
+            EmptyStateView(
+                systemImage: "person.2",
+                title: "No members found",
+                message: "No one in \(community.name) matches \"\(searchText)\"."
+            )
+            .cardStyle(padding: 0)
+        } else {
+            CommunityCardList(items: filteredMembers, dividerInset: 68) { user in
+                memberRow(user)
             }
         }
-        .padding(16)
+    }
+
+    private func memberRow(_ user: User) -> some View {
+        Button {
+            if user.id != currentUserId { profileUser = user }
+        } label: {
+            HStack(spacing: DS.Spacing.m) {
+                UserAvatar(username: user.username, imageURL: user.profileImageUrl, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(user.fullName.isEmpty ? user.username : user.fullName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    Text("@\(user.username)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: DS.Spacing.s)
+                if let entry = viewModel.entry(for: user.id) {
+                    Text("#\(entry.rank)")
+                        .arkadNumber(15)
+                        .foregroundStyle(Color.goldText)
+                }
+                if user.id != currentUserId {
+                    CommunityChevron()
+                } else {
+                    Tag(text: "You")
+                }
+            }
+            .padding(.horizontal, DS.Spacing.l)
+            .padding(.vertical, DS.Spacing.m)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
     }
 
     // MARK: - Helpers
-
-    private func message(icon: String, title: String, detail: String, action: (String, () -> Void)?) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 36))
-                .foregroundColor(.arkadGold)
-            Text(title).font(.headline)
-            Text(detail)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            if let action {
-                Button(action.0, action: action.1)
-                    .buttonStyle(.borderedProminent)
-                    .tint(.arkadGold)
-                    .foregroundColor(.black)
-                    .padding(.top, 4)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
-        .padding(.horizontal, 24)
-    }
 
     private func openProfile(userId: String) {
         guard userId != currentUserId else { return }

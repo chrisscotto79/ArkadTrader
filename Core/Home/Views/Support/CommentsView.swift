@@ -1,9 +1,5 @@
-//
-//  CommentsView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/16/25.
-//
+// File: Core/Home/Views/Support/CommentsView.swift
+// Comments sheet for a post: threaded comments, likes, replies and a composer pinned to the bottom.
 
 import SwiftUI
 
@@ -13,253 +9,42 @@ struct CommentsView: View {
     @State private var comments: [Comment] = []
     @State private var newCommentText = ""
     @State private var isLoading = false
+    @State private var hasLoaded = false
     @State private var likedComments: Set<String> = []
-    
-    // ✅ Reply functionality
+
+    // Replies
     @State private var replyingToComment: Comment? = nil
     @State private var replyText = ""
     @State private var showReplyInput = false
-    
+    @FocusState private var isInputFocused: Bool
+
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
-    
-    // ✅ Computed properties for organizing comments
+
     private var topLevelComments: [Comment] {
-        return comments.filter { $0.parentCommentId == nil }
+        comments.filter { $0.parentCommentId == nil }
             .sorted { $0.createdAt < $1.createdAt }
     }
-    
+
     private func getReplies(for commentId: String) -> [Comment] {
-        // ✅ Get direct replies to this comment (now all replies are flattened to root level)
-        return comments.filter { $0.parentCommentId == commentId }
+        // Replies are flattened onto their root comment
+        comments.filter { $0.parentCommentId == commentId }
             .sorted { $0.createdAt < $1.createdAt }
     }
-    
+
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // ✅ Enhanced header with better styling
-                VStack(spacing: 0) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Comments")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
-                            
-                            Text("\(topLevelComments.count) comment\(topLevelComments.count == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Button("Done") {
-                            dismiss()
-                        }
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.arkadGold)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.arkadGold.opacity(0.1))
-                        .cornerRadius(20)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    
-                    Divider()
-                        .background(Color.gray.opacity(0.3))
-                }
-                .background(
-                    LinearGradient(
-                        gradient: Gradient(colors: [Color.white, Color.gray.opacity(0.05)]),
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                
-                // ✅ Comments list with threaded replies
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if isLoading && comments.isEmpty {
-                            // Loading state
-                            VStack(spacing: 16) {
-                                ProgressView()
-                                    .scaleEffect(1.2)
-                                Text("Loading comments...")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                        } else if comments.isEmpty {
-                            // Empty state
-                            VStack(spacing: 16) {
-                                Image(systemName: "bubble.left")
-                                    .font(.system(size: 40))
-                                    .foregroundColor(.gray.opacity(0.5))
-                                
-                                Text("No comments yet")
-                                    .font(.headline)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("Be the first to share your thoughts!")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                        } else {
-                            // Comments with replies
-                            ForEach(topLevelComments) { comment in
-                                VStack(spacing: 0) {
-                                    // Parent comment
-                                    CommentRowView(
-                                        comment: comment,
-                                        isInitiallyLiked: likedComments.contains(comment.id),
-                                        isReply: false,
-                                        onReply: {
-                                            startReply(to: comment)
-                                        }
-                                    ) {
-                                        Task {
-                                            await deleteComment(comment)
-                                        }
-                                    }
-                                    
-                                    // Replies to this comment
-                                    let replies = getReplies(for: comment.id)
-                                    if !replies.isEmpty {
-                                        VStack(spacing: 0) {
-                                            ForEach(replies) { reply in
-                                                HStack(spacing: 0) {
-                                                    // Reply thread line
-                                                    VStack {
-                                                        Rectangle()
-                                                            .fill(Color.arkadGold.opacity(0.3))
-                                                            .frame(width: 2)
-                                                        
-                                                        Circle()
-                                                            .fill(Color.arkadGold.opacity(0.5))
-                                                            .frame(width: 6, height: 6)
-                                                    }
-                                                    .frame(width: 20)
-                                                    .padding(.leading, 32)
-                                                    
-                                                    // Reply content
-                                                    CommentRowView(
-                                                        comment: reply,
-                                                        isInitiallyLiked: likedComments.contains(reply.id),
-                                                        isReply: true,
-                                                        onReply: {
-                                                            startReply(to: reply)
-                                                        }
-                                                    ) {
-                                                        Task {
-                                                            await deleteComment(reply)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Divider between comment threads
-                                    if comment.id != topLevelComments.last?.id {
-                                        Divider()
-                                            .padding(.horizontal)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 8)
-                }
-                
-                // ✅ Enhanced comment input area
-                VStack(spacing: 0) {
-                    // Reply indicator
-                    if let replyingTo = replyingToComment {
-                        HStack {
-                            Image(systemName: "arrowshape.turn.up.left.fill")
-                                .font(.caption)
-                                .foregroundColor(.arkadGold)
-                            
-                            Text("Replying to @\(replyingTo.authorUsername)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fontWeight(.medium)
-                            
-                            Spacer()
-                            
-                            Button("Cancel") {
-                                cancelReply()
-                            }
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.arkadGold)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 4)
-                            .background(Color.arkadGold.opacity(0.1))
-                            .cornerRadius(12)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.arkadGold.opacity(0.05), Color.arkadGold.opacity(0.1)]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                    }
-                    
-                    Divider()
-                    
-                    // Input field
-                    HStack(spacing: 12) {
-                        // User avatar
-                        Circle()
-                            .fill(Color.arkadGold.opacity(0.2))
-                            .frame(width: 32, height: 32)
-                            .overlay(
-                                Text(String(authService.currentUser?.username.prefix(1) ?? "U").uppercased())
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.arkadGold)
-                            )
-                        
-                        // Text input
-                        TextField(
-                            replyingToComment != nil ? "Write a reply..." : "Write a comment...",
-                            text: replyingToComment != nil ? $replyText : $newCommentText
-                        )
-                        .textFieldStyle(PlainTextFieldStyle())
-                        .padding(.vertical, 8)
-                        
-                        // Send button
-                        Button(action: {
-                            Task {
-                                if replyingToComment != nil {
-                                    await addReply()
-                                } else {
-                                    await addComment()
-                                }
-                            }
-                        }) {
-                            Image(systemName: "paperplane.fill")
-                                .foregroundColor(canSendMessage ? .arkadGold : .gray)
-                                .font(.title2)
-                        }
-                        .disabled(!canSendMessage || isLoading)
-                    }
-                    .padding()
-                    .background(Color(.systemBackground))
-                }
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(Color.hairline)
+
+            ScrollView {
+                commentsList
+                    .padding(.vertical, DS.Spacing.s)
             }
-            .navigationBarHidden(true)
+            .scrollDismissesKeyboard(.interactively)
         }
+        .background(Color.surface.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .onAppear {
             Task {
                 await loadComments()
@@ -267,8 +52,152 @@ struct CommentsView: View {
             }
         }
     }
-    
-    // ✅ Computed property for send button state
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Comments")
+                    .font(.title3.weight(.bold))
+                    .accessibilityAddTraits(.isHeader)
+                Text("\(topLevelComments.count) comment\(topLevelComments.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
+
+            Spacer()
+
+            IconButton(systemName: "xmark", accessibilityLabel: "Close", size: 32) {
+                dismiss()
+            }
+        }
+        .padding(.horizontal, DS.pageMargin)
+        .padding(.top, DS.Spacing.l)
+        .padding(.bottom, DS.Spacing.m)
+    }
+
+    // MARK: - List
+
+    @ViewBuilder
+    private var commentsList: some View {
+        if isLoading && !hasLoaded && comments.isEmpty {
+            HomeFeedLoadingView(message: "Loading comments…")
+        } else if comments.isEmpty {
+            EmptyStateView(
+                systemImage: "bubble.left.and.bubble.right.fill",
+                title: "No comments yet",
+                message: "Start the conversation."
+            )
+        } else {
+            LazyVStack(spacing: 0) {
+                ForEach(topLevelComments) { comment in
+                    thread(for: comment)
+                    if comment.id != topLevelComments.last?.id {
+                        Divider()
+                            .overlay(Color.hairline)
+                            .padding(.leading, DS.pageMargin + 44)
+                    }
+                }
+            }
+        }
+    }
+
+    private func thread(for comment: Comment) -> some View {
+        VStack(spacing: 0) {
+            CommentRowView(
+                comment: comment,
+                isInitiallyLiked: likedComments.contains(comment.id),
+                isReply: false,
+                onReply: { startReply(to: comment) }
+            ) {
+                Task { await deleteComment(comment) }
+            }
+
+            ForEach(getReplies(for: comment.id)) { reply in
+                CommentRowView(
+                    comment: reply,
+                    isInitiallyLiked: likedComments.contains(reply.id),
+                    isReply: true,
+                    onReply: { startReply(to: reply) }
+                ) {
+                    Task { await deleteComment(reply) }
+                }
+                .padding(.leading, 44)
+                .overlay(alignment: .leading) {
+                    // Thread line from the parent's avatar
+                    Rectangle()
+                        .fill(Color.hairline)
+                        .frame(width: 2)
+                        .padding(.leading, DS.pageMargin + 15)
+                }
+            }
+        }
+    }
+
+    // MARK: - Composer
+
+    private var composer: some View {
+        VStack(spacing: 0) {
+            if let replyingTo = replyingToComment {
+                HStack(spacing: DS.Spacing.s) {
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.goldText)
+                    Text("Replying to @\(replyingTo.authorUsername)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") { cancelReply() }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.goldText)
+                }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.vertical, DS.Spacing.s)
+                .background(Color.goldTint)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            Divider().overlay(Color.hairline)
+
+            HStack(spacing: DS.Spacing.s) {
+                UserAvatar(
+                    username: authService.currentUser?.username ?? "",
+                    imageURL: authService.currentUser?.profileImageUrl,
+                    size: 32
+                )
+
+                TextField(
+                    replyingToComment != nil ? "Write a reply…" : "Add a comment…",
+                    text: replyingToComment != nil ? $replyText : $newCommentText,
+                    axis: .vertical
+                )
+                .lineLimit(1...4)
+                .focused($isInputFocused)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(Color.surfaceRaised))
+
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(canSendMessage ? Color.onGold : Color.secondary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(canSendMessage ? Color.arkadGold : Color.surfaceRaised))
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(!canSendMessage || isLoading)
+                .accessibilityLabel(replyingToComment != nil ? "Send reply" : "Send comment")
+            }
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.vertical, DS.Spacing.s)
+        }
+        .background(Color.surface)
+        .animation(.snappy(duration: 0.25), value: replyingToComment?.id)
+        .animation(.snappy(duration: 0.2), value: canSendMessage)
+    }
+
     private var canSendMessage: Bool {
         if replyingToComment != nil {
             return !replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -276,182 +205,148 @@ struct CommentsView: View {
             return !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
-    
-    // MARK: - Reply Functions
-    
+
+    private func send() {
+        Task {
+            if replyingToComment != nil {
+                await addReply()
+            } else {
+                await addComment()
+            }
+        }
+    }
+
+    // MARK: - Replies
+
     private func startReply(to comment: Comment) {
-        // ✅ Find the root parent for this comment thread
+        // Replies go on the root comment of the thread
         let rootParent = comment.parentCommentId != nil ?
             topLevelComments.first { $0.id == comment.parentCommentId } ?? comment : comment
-        
+
         replyingToComment = rootParent
         replyText = "@\(comment.authorUsername) "
         showReplyInput = true
-        
-        print("🔄 Started reply to: \(comment.authorUsername) (will be added to thread: \(rootParent.authorUsername))")
+        isInputFocused = true
     }
-    
+
     private func cancelReply() {
         replyingToComment = nil
         replyText = ""
         showReplyInput = false
-        print("❌ Cancelled reply")
     }
-    
+
     private func addReply() async {
         guard let replyingTo = replyingToComment,
               let currentUser = authService.currentUser,
               !replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("❌ Cannot add reply - missing data")
             return
         }
-        
-        print("🔵 === ADDING REPLY ===")
-        print("📝 Reply text: '\(replyText)'")
-        print("🆔 Parent comment ID: '\(replyingTo.id)'")
-        print("👤 Current user: \(currentUser.username)")
-        
+
         isLoading = true
-        
+
         do {
-            // ✅ Always reply to the root parent (Twitter style)
+            // Always reply to the root parent
             let rootParentId = replyingTo.parentCommentId ?? replyingTo.id
-            
+
             try await authService.addComment(
                 postId: postId,
                 content: replyText,
                 authorId: currentUser.id,
                 authorUsername: currentUser.username,
-                parentCommentId: rootParentId  // ✅ Always use root parent
+                parentCommentId: rootParentId
             )
-            
-            print("✅ Reply added successfully to root parent: \(rootParentId)")
-            
-            // Clear reply state
+
             cancelReply()
-            
-            // Reload comments to show the new reply
             await loadComments()
-            
         } catch {
             print("❌ ERROR adding reply: \(error)")
         }
-        
+
         isLoading = false
     }
-    
-    // MARK: - Existing Functions (Enhanced)
-    
+
+    // MARK: - Loading, adding, deleting
+
     private func loadLikedComments() async {
         guard let userId = authService.currentUser?.id else { return }
-        
+
         do {
             likedComments = try await authService.getUserLikedComments(userId: userId)
-            print("✅ Loaded \(likedComments.count) liked comments")
-            
         } catch {
             print("❌ Error loading liked comments: \(error)")
         }
     }
-    
+
     private func loadComments() async {
-        print("🔍 === LOADING COMMENTS ===")
-        print("🆔 Post ID: '\(postId)'")
-        
         isLoading = true
         do {
-            print("🔄 Fetching comments from authService...")
-            comments = try await authService.getCommentsForPost(postId: postId)
-            print("✅ Loaded \(comments.count) total comments (including replies)")
-            
-            // Debug: Show comment structure
-            let topLevel = topLevelComments.count
-            let replies = comments.count - topLevel
-            print("📊 Comment breakdown: \(topLevel) top-level, \(replies) replies")
-            
-            // ✅ Debug: Show all comments with their parent relationships
-            for comment in comments {
-                if let parentId = comment.parentCommentId {
-                    print("📝 Reply: '\(comment.content)' by @\(comment.authorUsername) -> parent: \(parentId)")
-                } else {
-                    print("📝 Top-level: '\(comment.content)' by @\(comment.authorUsername)")
-                }
+            let loaded = try await authService.getCommentsForPost(postId: postId)
+            withAnimation(.snappy(duration: 0.25)) {
+                comments = loaded
             }
-            
         } catch {
             print("❌ ERROR loading comments: \(error)")
         }
         isLoading = false
+        hasLoaded = true
     }
-    
+
     private func deleteComment(_ comment: Comment) async {
-        print("🗑️ Deleting comment: \(comment.content)")
-        
         do {
             try await authService.deleteComment(commentId: comment.id, postId: postId)
-            print("✅ Comment deleted successfully")
-            
             await loadComments()
-            
+
             // Update comment count (only count top-level comments)
             onCommentCountChanged(topLevelComments.count)
-            
         } catch {
             print("❌ Error deleting comment: \(error)")
         }
     }
-    
+
     private func addComment() async {
-        print("🔵 === ADDING COMMENT ===")
-        print("📝 Comment text: '\(newCommentText)'")
-        print("🆔 Post ID: '\(postId)'")
-        print("👤 Current user: \(authService.currentUser?.username ?? "nil")")
-        
         guard !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let currentUser = authService.currentUser else {
-            print("❌ Guard failed - empty text or no user")
             return
         }
-        
+
         isLoading = true
-        
+
         do {
             try await authService.addComment(
                 postId: postId,
                 content: newCommentText,
                 authorId: currentUser.id,
                 authorUsername: currentUser.username,
-                parentCommentId: nil  // ✅ This makes it a top-level comment
+                parentCommentId: nil  // top-level comment
             )
-            
-            print("✅ Comment added successfully!")
+
             newCommentText = ""
             await loadComments()
-            
-            // Update the comment count in main feed (only top-level comments)
+
+            // Update the comment count in the feed (only top-level comments)
             onCommentCountChanged(topLevelComments.count)
-            
         } catch {
             print("❌ ERROR adding comment: \(error)")
         }
-        
+
         isLoading = false
     }
 }
 
-// MARK: - Enhanced CommentRowView
+// MARK: - Comment Row
 
-struct CommentRowView: View {
+private struct CommentRowView: View {
     let comment: Comment
     let isInitiallyLiked: Bool
     let isReply: Bool
     @EnvironmentObject var authService: FirebaseAuthService
     @State private var isLiked = false
     @State private var likesCount: Int
-    
+    @State private var showDeleteConfirmation = false
+
     let onReply: () -> Void
     let onDelete: () -> Void
-    
+
     init(comment: Comment, isInitiallyLiked: Bool, isReply: Bool = false, onReply: @escaping () -> Void, onDelete: @escaping () -> Void) {
         self.comment = comment
         self.isInitiallyLiked = isInitiallyLiked
@@ -460,124 +355,122 @@ struct CommentRowView: View {
         self.onDelete = onDelete
         self._likesCount = State(initialValue: comment.likesCount)
         self._isLiked = State(initialValue: isInitiallyLiked)
-        
-        print("💡 CommentRowView init - Comment: '\(comment.content)' (ID: \(comment.id)) - isInitiallyLiked: \(isInitiallyLiked)")
     }
-    
+
+    private var isOwnComment: Bool {
+        comment.authorId == authService.currentUser?.id
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                // User avatar
-                UserAvatar(username: comment.authorUsername, size: isReply ? 28 : 32)
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    // Header with username and time
-                    HStack {
-                        Text("@\(comment.authorUsername)")
-                            .font(isReply ? .caption : .subheadline)
-                            .fontWeight(.semibold)
-                        
-                        Text("·")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                        
-                        Text(comment.createdAt.formatted(.relative(presentation: .named)))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        // Delete button for own comments
-                        if comment.authorId == authService.currentUser?.id {
-                            Button(action: onDelete) {
-                                Image(systemName: "trash")
-                                    .font(.caption)
-                                    .foregroundColor(.red.opacity(0.7))
-                                    .padding(4)
-                            }
-                        }
-                    }
-                    
-                    // Comment content
-                    Text(comment.content)
-                        .font(isReply ? .subheadline : .body)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    // Action buttons
-                    HStack(spacing: 20) {
-                        // Like button
-                        Button(action: {
-                            Task {
-                                await toggleLike()
-                            }
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: isLiked ? "heart.fill" : "heart")
-                                    .font(.caption)
-                                    .foregroundColor(isLiked ? .red : .gray)
-                                
-                                if likesCount > 0 {
-                                    Text("\(likesCount)")
-                                        .font(.caption)
-                                        .foregroundColor(isLiked ? .red : .gray)
-                                }
-                            }
-                        }
-                        
-                        // Reply button
-                        Button(action: onReply) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrowshape.turn.up.left")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                                
-                                Text("Reply")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        
-                        Spacer()
-                    }
-                    .padding(.top, 4)
-                }
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            UserAvatar(username: comment.authorUsername, size: isReply ? 26 : 32)
+
+            VStack(alignment: .leading, spacing: 4) {
+                headerLine
+
+                Text(comment.content)
+                    .font(isReply ? .subheadline : .body)
+                    .foregroundStyle(Color.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                actions
+                    .padding(.top, 2)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 12)
-        .background(Color(.systemBackground))
+        .padding(.horizontal, DS.pageMargin)
+        .padding(.vertical, DS.Spacing.m)
         .onChange(of: isInitiallyLiked) {
             isLiked = isInitiallyLiked
-            print("🔄 CommentRowView: Updated isLiked to \(isInitiallyLiked) for comment: \(comment.content)")
+        }
+        .confirmationDialog("Delete this comment?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive, action: onDelete)
+            Button("Cancel", role: .cancel) { }
         }
     }
-    
-    private func toggleLike() async {
-        guard let userId = authService.currentUser?.id else {
-            print("❌ No user ID for comment like")
-            return
+
+    private var headerLine: some View {
+        HStack(spacing: 4) {
+            Text("@\(comment.authorUsername)")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+            Text("· \(comment.createdAt.feedRelativeText)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+
+            if isOwnComment {
+                Menu {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label("Delete comment", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Comment options")
+            }
         }
-        
-        print("❤️ Toggling like for comment: \(comment.content)")
-        
+    }
+
+    private var actions: some View {
+        HStack(spacing: DS.Spacing.l) {
+            Button {
+                Task { await toggleLike() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isLiked ? "heart.fill" : "heart")
+                        .contentTransition(.symbolEffect(.replace))
+                    if likesCount > 0 {
+                        Text("\(likesCount)")
+                            .monospacedDigit()
+                            .contentTransition(.numericText(value: Double(likesCount)))
+                    }
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(isLiked ? Color.red : Color.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isLiked ? "Unlike" : "Like")
+
+            Button(action: onReply) {
+                Text("Reply")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func toggleLike() async {
+        guard let userId = authService.currentUser?.id else { return }
+
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
         // Update UI immediately
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(.snappy(duration: 0.25)) {
             isLiked.toggle()
             likesCount += isLiked ? 1 : -1
         }
-        
-        // Save to Firebase
+
         do {
             if isLiked {
                 try await authService.likeComment(commentId: comment.id, userId: userId)
-                print("✅ Comment liked successfully")
             } else {
                 try await authService.unlikeComment(commentId: comment.id, userId: userId)
-                print("✅ Comment unliked successfully")
             }
         } catch {
-            // Revert UI on error
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            // Revert on error
+            withAnimation(.snappy(duration: 0.25)) {
                 isLiked.toggle()
                 likesCount += isLiked ? 1 : -1
             }

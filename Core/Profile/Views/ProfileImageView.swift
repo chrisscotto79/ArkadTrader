@@ -1,13 +1,5 @@
-//
-//  ProfileImageView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 8/2/25.
-//
-
-
 // File: Core/Profile/Views/ProfileImageView.swift
-// Reusable Profile Image Component with Smart Fallbacks
+// A user's profile photo in a circle, with a gold initials fallback (from the full name).
 
 import SwiftUI
 
@@ -17,17 +9,17 @@ struct ProfileImageView: View {
     let showBorder: Bool
     let borderColor: Color
     let borderWidth: CGFloat
-    
-    // Additional customization options
+
+    // Kept for source compatibility; the Arkad style doesn't use avatar shadows.
     let shadowRadius: CGFloat
     let shadowOpacity: Double
     let shadowOffset: CGSize
-    
+
     init(
         user: User?,
         size: CGFloat = 40,
         showBorder: Bool = false,
-        borderColor: Color = .arkadGold,
+        borderColor: Color = .surface,
         borderWidth: CGFloat = 2,
         shadowRadius: CGFloat = 0,
         shadowOpacity: Double = 0,
@@ -42,21 +34,19 @@ struct ProfileImageView: View {
         self.shadowOpacity = shadowOpacity
         self.shadowOffset = shadowOffset
     }
-    
+
     var body: some View {
         Group {
-            if let imageUrl = user?.profileImageUrl, !imageUrl.isEmpty {
-                AsyncImage(url: URL(string: imageUrl)) { phase in
+            if let imageUrl = user?.profileImageUrl, !imageUrl.isEmpty, let url = URL(string: imageUrl) {
+                AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                    case .failure(_):
-                        fallbackImageView
                     case .empty:
                         loadingImageView
-                    @unknown default:
+                    default:
                         fallbackImageView
                     }
                 }
@@ -66,149 +56,86 @@ struct ProfileImageView: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .overlay(
-            showBorder ? Circle().stroke(borderColor, lineWidth: borderWidth) : nil
-        )
+        .overlay {
+            if showBorder {
+                Circle().strokeBorder(borderColor, lineWidth: borderWidth)
+            } else {
+                Circle().strokeBorder(Color.hairline, lineWidth: 1)
+            }
+        }
         .shadow(
             color: Color.black.opacity(shadowOpacity),
             radius: shadowRadius,
             x: shadowOffset.width,
             y: shadowOffset.height
         )
+        .accessibilityHidden(true)
     }
-    
+
     // MARK: - Private Views
-    
+
     private var fallbackImageView: some View {
         Circle()
-            .fill(
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color.arkadGold.opacity(0.8),
-                        Color.arkadGold.opacity(0.6)
-                    ]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+            .fill(Color.arkadGold)
             .overlay(
-                Text(getInitials())
-                    .font(.system(size: fontSize, weight: .bold))
-                    .foregroundColor(.white)
+                Text(initials)
+                    .font(.system(size: size * 0.38, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.onGold)
+                    .minimumScaleFactor(0.5)
             )
     }
-    
+
     private var loadingImageView: some View {
         Circle()
-            .fill(Color.arkadGold.opacity(0.2))
+            .fill(Color.surfaceRaised)
             .overlay(
                 ProgressView()
-                    .scaleEffect(0.8)
-                    .tint(.arkadGold)
+                    .tint(Color.goldText)
+                    .scaleEffect(size < 40 ? 0.6 : 0.9)
             )
     }
-    
-    // MARK: - Helper Properties
-    
-    private var fontSize: CGFloat {
-        // Scale font size based on circle size
-        switch size {
-        case 0..<30:
-            return size * 0.3
-        case 30..<60:
-            return size * 0.35
-        case 60..<100:
-            return size * 0.4
-        default:
-            return size * 0.45
-        }
-    }
-    
-    private func getInitials() -> String {
-        guard let user = user else { return "U" }
+
+    // MARK: - Helpers
+
+    private var initials: String {
+        guard let user else { return "?" }
         let names = user.fullName.split(separator: " ")
-        let firstInitial = names.first?.first ?? Character("U")
-        let lastInitial = names.count > 1 ? names.last?.first : nil
-        
-        if let lastInitial = lastInitial {
-            return String(firstInitial) + String(lastInitial)
-        } else {
-            return String(firstInitial)
+        if let first = names.first?.first {
+            let last = names.count > 1 ? names.last?.first.map(String.init) ?? "" : ""
+            return (String(first) + last).uppercased()
         }
+        let fromUsername = String(user.username.prefix(2)).uppercased()
+        return fromUsername.isEmpty ? "?" : fromUsername
     }
 }
 
-// MARK: - Convenience Initializers and Presets
+// MARK: - Presets
 
 extension ProfileImageView {
-    // Small profile image (for lists, comments, etc.)
+    /// Lists, comments
     static func small(user: User?) -> ProfileImageView {
-        ProfileImageView(
-            user: user,
-            size: 32,
-            showBorder: false
-        )
+        ProfileImageView(user: user, size: 32)
     }
-    
-    // Medium profile image (for posts, cards, etc.)
+
+    /// Posts, cards
     static func medium(user: User?) -> ProfileImageView {
-        ProfileImageView(
-            user: user,
-            size: 48,
-            showBorder: true,
-            borderWidth: 2,
-            shadowRadius: 4,
-            shadowOpacity: 0.2,
-            shadowOffset: CGSize(width: 0, height: 2)
-        )
+        ProfileImageView(user: user, size: 48)
     }
-    
-    // Large profile image (for profile views, headers, etc.)
+
+    /// Headers
     static func large(user: User?) -> ProfileImageView {
-        ProfileImageView(
-            user: user,
-            size: 80,
-            showBorder: true,
-            borderWidth: 3,
-            shadowRadius: 8,
-            shadowOpacity: 0.3,
-            shadowOffset: CGSize(width: 0, height: 4)
-        )
+        ProfileImageView(user: user, size: 80)
     }
-    
-    // Extra large profile image (for main profile display)
+
+    /// Main profile display
     static func extraLarge(user: User?) -> ProfileImageView {
-        ProfileImageView(
-            user: user,
-            size: 120,
-            showBorder: true,
-            borderWidth: 4,
-            shadowRadius: 12,
-            shadowOpacity: 0.4,
-            shadowOffset: CGSize(width: 0, height: 6)
-        )
+        ProfileImageView(user: user, size: 112)
     }
-    
-    // Custom size with smart defaults
+
     static func custom(user: User?, size: CGFloat) -> ProfileImageView {
-        let shouldShowBorder = size >= 40
-        let borderWidth: CGFloat = size >= 80 ? 3 : 2
-        let shadowRadius: CGFloat = size >= 60 ? 6 : (size >= 40 ? 4 : 0)
-        let shadowOpacity: Double = size >= 40 ? 0.2 : 0
-        
-        return ProfileImageView(
-            user: user,
-            size: size,
-            showBorder: shouldShowBorder,
-            borderWidth: borderWidth,
-            shadowRadius: shadowRadius,
-            shadowOpacity: shadowOpacity,
-            shadowOffset: CGSize(width: 0, height: shadowRadius / 2)
-        )
+        ProfileImageView(user: user, size: size)
     }
 }
-
-// MARK: - Clickable Profile Image Variant
 
 // MARK: - Preview Helpers
 
@@ -220,7 +147,7 @@ extension User {
         username: "johndoe",
         fullName: "John Doe"
     )
-    
+
     static let previewUserWithImage: User = {
         var user = User.previewUser
         user.profileImageUrl = "https://example.com/profile.jpg"
@@ -228,3 +155,14 @@ extension User {
     }()
 }
 #endif
+
+#Preview {
+    let user = User(id: "preview", email: "john@example.com", username: "johndoe", fullName: "John Doe")
+    HStack(spacing: 16) {
+        ProfileImageView.small(user: user)
+        ProfileImageView.medium(user: user)
+        ProfileImageView.large(user: user)
+    }
+    .padding()
+    .screenBackground()
+}

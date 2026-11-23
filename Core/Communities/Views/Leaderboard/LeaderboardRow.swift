@@ -1,5 +1,6 @@
 // File: Core/Communities/Views/Leaderboard/LeaderboardRow.swift
-// Shared pieces for community and global leaderboards: the row, the category chips and the timeframe picker.
+// Shared pieces for community and global leaderboards: the ranked list with a top-three podium,
+// the row, the rank badge and the category / timeframe filters.
 
 import SwiftUI
 
@@ -31,6 +32,18 @@ extension LeaderboardCategory {
         case .riskMasters: return "profit factor"
         }
     }
+
+    /// Colour of the headline number (P&L is green or red, everything else neutral)
+    func primaryColor(for entry: CommunityLeaderboardEntry) -> Color {
+        switch self {
+        case .profitKings:
+            if entry.totalProfitLoss > 0 { return .marketGreen }
+            if entry.totalProfitLoss < 0 { return .marketRed }
+            return .primary
+        default:
+            return .primary
+        }
+    }
 }
 
 extension Double {
@@ -41,63 +54,162 @@ extension Double {
     }
 }
 
+// MARK: - Ranked list
+
+/// Top three on a podium card, everyone else in a card list below.
+struct LeaderboardRankingList: View {
+    let entries: [CommunityLeaderboardEntry]
+    let category: LeaderboardCategory
+    let currentUserId: String?
+    let onSelect: (CommunityLeaderboardEntry) -> Void
+
+    private var showsPodium: Bool { entries.count >= 3 }
+    private var listEntries: [CommunityLeaderboardEntry] {
+        showsPodium ? Array(entries.dropFirst(3)) : entries
+    }
+
+    var body: some View {
+        VStack(spacing: DS.Spacing.m) {
+            if showsPodium {
+                LeaderboardPodium(
+                    entries: Array(entries.prefix(3)),
+                    category: category,
+                    currentUserId: currentUserId,
+                    onSelect: onSelect
+                )
+            }
+
+            if !listEntries.isEmpty {
+                CommunityCardList(items: listEntries, dividerInset: 96) { entry in
+                    Button {
+                        onSelect(entry)
+                    } label: {
+                        LeaderboardRow(entry: entry, category: category, isCurrentUser: entry.userId == currentUserId)
+                    }
+                    .buttonStyle(PressableStyle())
+                }
+            }
+        }
+    }
+}
+
+/// The top three traders side by side, first place in the middle.
+struct LeaderboardPodium: View {
+    let entries: [CommunityLeaderboardEntry]
+    let category: LeaderboardCategory
+    let currentUserId: String?
+    let onSelect: (CommunityLeaderboardEntry) -> Void
+
+    /// Display order: 2nd, 1st, 3rd
+    private var ordered: [CommunityLeaderboardEntry] {
+        guard entries.count == 3 else { return entries }
+        return [entries[1], entries[0], entries[2]]
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: DS.Spacing.s) {
+            ForEach(ordered) { entry in
+                Button {
+                    onSelect(entry)
+                } label: {
+                    column(entry)
+                }
+                .buttonStyle(PressableStyle())
+            }
+        }
+        .cardStyle(padding: DS.Spacing.l)
+    }
+
+    private func column(_ entry: CommunityLeaderboardEntry) -> some View {
+        let isFirst = entry.rank == 1
+        let isMe = entry.userId == currentUserId
+        return VStack(spacing: DS.Spacing.s) {
+            UserAvatar(username: entry.username, imageURL: entry.profileImageUrl, size: isFirst ? 64 : 50)
+                .overlay(alignment: .bottom) {
+                    RankBadge(rank: entry.rank, size: 24)
+                        .overlay(Circle().strokeBorder(Color.surface, lineWidth: 2))
+                        .offset(y: 10)
+                }
+                .padding(.bottom, 6)
+
+            VStack(spacing: 2) {
+                Text(isMe ? "You" : entry.username)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(category.primaryValue(for: entry))
+                    .arkadNumber(isFirst ? 18 : 15)
+                    .foregroundStyle(category.primaryColor(for: entry))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text(category.primaryLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.Spacing.m)
+        .padding(.horizontal, DS.Spacing.xs)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                .fill(isFirst ? Color.goldTint : Color.clear)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Rank \(entry.rank), \(entry.username), \(category.primaryValue(for: entry)) \(category.primaryLabel)")
+    }
+}
+
+// MARK: - Row
+
 struct LeaderboardRow: View {
     let entry: CommunityLeaderboardEntry
     let category: LeaderboardCategory
     var isCurrentUser = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Spacing.m) {
             RankBadge(rank: entry.rank)
 
             UserAvatar(username: entry.username, imageURL: entry.profileImageUrl, size: 40)
 
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Text(entry.username)
                         .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.primary)
                         .lineLimit(1)
                     if entry.isVerified {
                         Image(systemName: "checkmark.seal.fill")
                             .font(.caption2)
-                            .foregroundColor(.blue)
+                            .foregroundStyle(Color.goldText)
                     }
                     if isCurrentUser {
-                        Text("You")
-                            .font(.caption2.weight(.bold))
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.arkadGold))
+                        Tag(text: "You")
                     }
                 }
                 Text(secondaryLine)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Spacing.s)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(category.primaryValue(for: entry))
-                    .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundColor(primaryColor)
+                    .arkadNumber(16)
+                    .foregroundStyle(category.primaryColor(for: entry))
+                    .lineLimit(1)
                 Text(category.primaryLabel)
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isCurrentUser ? Color.arkadGold.opacity(0.1) : Color(.secondarySystemGroupedBackground))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(isCurrentUser ? Color.arkadGold.opacity(0.5) : .clear, lineWidth: 1)
-        )
+        .padding(.vertical, DS.Spacing.m)
+        .padding(.horizontal, DS.Spacing.l)
+        .background(isCurrentUser ? Color.goldTint : Color.clear)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Rank \(entry.rank), \(entry.username), \(category.primaryValue(for: entry)) \(category.primaryLabel)")
     }
@@ -114,85 +226,78 @@ struct LeaderboardRow: View {
         case .riskMasters: return "\(trades) · \(pnl)"
         }
     }
-
-    private var primaryColor: Color {
-        switch category {
-        case .profitKings: return entry.totalProfitLoss >= 0 ? .marketGreen : .marketRed
-        default: return .primary
-        }
-    }
 }
+
+// MARK: - Rank badge
 
 struct RankBadge: View {
     let rank: Int
+    var size: CGFloat = 28
 
     var body: some View {
         Group {
-            if let color = medalColor {
+            if let medal {
                 Circle()
-                    .fill(color.gradient)
+                    .fill(medal.fill)
                     .overlay(
                         Text("\(rank)")
-                            .font(.subheadline.weight(.heavy))
-                            .foregroundColor(.white)
+                            .arkadNumber(size * 0.48, weight: .heavy)
+                            .foregroundStyle(medal.text)
                     )
             } else {
                 Text("\(rank)")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundColor(.secondary)
+                    .arkadNumber(15, weight: .semibold)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
             }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 
-    private var medalColor: Color? {
+    private var medal: (fill: Color, text: Color)? {
         switch rank {
-        case 1: return .arkadGold
-        case 2: return Color(white: 0.65)
-        case 3: return Color(red: 0.8, green: 0.5, blue: 0.25)
+        case 1: return (.arkadGold, .onGold)
+        case 2: return (Color(red: 0.78, green: 0.79, blue: 0.81), .black)
+        case 3: return (Color(red: 0.80, green: 0.52, blue: 0.30), .white)
         default: return nil
         }
     }
 }
 
+// MARK: - Filters
+
+/// Category chips, timeframe switcher and a one-line explanation of the board.
+/// Place it inside a container that already has the page margin; the chips scroll edge to edge.
 struct LeaderboardFilterBar: View {
     @Binding var category: LeaderboardCategory
     @Binding var timeframe: LeaderboardTimeframe
-    var horizontalPadding: CGFloat = 16
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: DS.Spacing.s) {
                     ForEach(LeaderboardCategory.allCases, id: \.self) { item in
-                        Button {
+                        Chip(title: item.shortName, systemImage: item.icon, isSelected: category == item) {
+                            UISelectionFeedbackGenerator().selectionChanged()
                             category = item
-                        } label: {
-                            Label(item.shortName, systemImage: item.icon)
-                                .font(.subheadline.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule().fill(category == item ? Color.arkadGold : Color(.secondarySystemGroupedBackground))
-                                )
-                                .foregroundColor(category == item ? .black : .primary)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, horizontalPadding)
+                .padding(.horizontal, DS.pageMargin)
             }
+            .padding(.horizontal, -DS.pageMargin)
 
-            Picker("Timeframe", selection: $timeframe) {
-                ForEach(LeaderboardTimeframe.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, horizontalPadding)
+            SegmentedPicker(
+                options: LeaderboardTimeframe.allCases,
+                selection: $timeframe,
+                title: { $0.displayName }
+            )
 
             Text(category.description)
                 .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, horizontalPadding)
+                .foregroundStyle(.secondary)
         }
     }
 }

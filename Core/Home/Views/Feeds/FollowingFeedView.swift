@@ -11,46 +11,36 @@ struct FollowingFeedView: View {
     @EnvironmentObject var authService: FirebaseAuthService
 
     var body: some View {
-        LazyVStack(spacing: 16) {
+        LazyVStack(spacing: DS.Spacing.m) {
             if viewModel.isLoading && !viewModel.hasLoaded {
-                ProgressView("Loading following content...")
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 50)
+                HomeFeedLoadingView(message: "Loading people you follow…")
             } else if viewModel.followingPosts.isEmpty && viewModel.followingTrades.isEmpty && viewModel.followingActivity.isEmpty {
                 EmptyFollowingView()
             } else {
-                // Mixed content feed
                 ForEach(combinedFeedItems, id: \.id) { item in
                     FeedItemView(item: item, homeViewModel: homeViewModel)
                 }
             }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, DS.pageMargin)
         .task {
             if !viewModel.hasLoaded {
                 await viewModel.loadFollowingContent()
             }
         }
-        .alert("Error", isPresented: $viewModel.showError) {
+        .alert("Couldn't load Following", isPresented: $viewModel.showError) {
             Button("OK") { viewModel.showError = false }
         } message: {
             Text(viewModel.errorMessage)
         }
     }
-    
+
+    /// Posts, trades and activity mixed together, newest first.
     private var combinedFeedItems: [FeedItem] {
         var items: [FeedItem] = []
-        
-        // Add posts
         items.append(contentsOf: viewModel.followingPosts.map { FeedItem.post($0) })
-        
-        // Add trades
         items.append(contentsOf: viewModel.followingTrades.map { FeedItem.trade($0) })
-        
-        // Add activities
         items.append(contentsOf: viewModel.followingActivity.map { FeedItem.activity($0) })
-        
-        // Sort by creation date
         return items.sorted { $0.createdAt > $1.createdAt }
     }
 }
@@ -59,7 +49,7 @@ enum FeedItem: Identifiable {
     case post(Post)
     case trade(Trade)
     case activity(ActivityItem)
-    
+
     var id: String {
         switch self {
         case .post(let post): return "post_\(post.id)"
@@ -67,7 +57,7 @@ enum FeedItem: Identifiable {
         case .activity(let activity): return "activity_\(activity.id)"
         }
     }
-    
+
     var createdAt: Date {
         switch self {
         case .post(let post): return post.createdAt
@@ -77,10 +67,11 @@ enum FeedItem: Identifiable {
     }
 }
 
+/// One item of the Following feed, drawn with the matching card.
 struct FeedItemView: View {
     let item: FeedItem
     @ObservedObject var homeViewModel: HomeViewModel
-    
+
     var body: some View {
         switch item {
         case .post(let post):
@@ -92,5 +83,3 @@ struct FeedItemView: View {
         }
     }
 }
-
-

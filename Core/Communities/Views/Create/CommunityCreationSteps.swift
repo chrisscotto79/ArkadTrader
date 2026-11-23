@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Create/CommunityCreationSteps.swift
-// Supporting Types and Extensions for Community Creation - NO VIEWMODEL
+// Supporting types and extensions for the community creation flow.
 
 import Foundation
 import SwiftUI
@@ -146,14 +146,6 @@ extension CommunityType {
         }
     }
     
-    var categoryColor: Color {
-        switch self {
-        case .dayTrading: return .red
-        case .swingTrading: return .orange
-        case .options: return .purple
-        case .crypto: return .yellow
-        case .stocks: return .green
-        case .general: return .blue
-        }
-    }
+    /// Same tint the rest of the app uses for this category.
+    var categoryColor: Color { tint }
 }

@@ -13,7 +13,7 @@ struct CommunityFilterSheet: View {
     @State private var tempMinMembers: Double = 0
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // Category Filter Section
                 Section("Community Type") {
@@ -29,6 +29,7 @@ struct CommunityFilterSheet: View {
                     }
                     .pickerStyle(MenuPickerStyle())
                 }
+                .listRowBackground(Color.surface)
                 
                 // Member Count Filter Section
                 Section("Minimum Members") {
@@ -36,16 +37,17 @@ struct CommunityFilterSheet: View {
                         HStack {
                             Text(tempMinMembers > 0 ? "At least \(Int(tempMinMembers)) members" : "Any size")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                             Spacer()
                         }
                         
                         Slider(value: $tempMinMembers, in: 0...500, step: 5) {
                             Text("Member Count")
                         }
-                        .accentColor(.arkadGold)
+                        .tint(Color.arkadGold)
                     }
                 }
+                .listRowBackground(Color.surface)
                 
                 // Sort Options Section
                 Section("Sort By") {
@@ -60,17 +62,22 @@ struct CommunityFilterSheet: View {
                     }
                     .pickerStyle(MenuPickerStyle())
                 }
+                .listRowBackground(Color.surface)
                 
                 // Reset Section
                 Section {
                     Button("Reset All Filters") {
                         resetFilters()
                     }
-                    .foregroundColor(.red)
+                    .foregroundStyle(Color.marketRed)
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
+                .listRowBackground(Color.surface)
             }
-            .navigationTitle("Filter Communities")
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .tint(Color.goldText)
+            .navigationTitle("Sort & Filter")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -88,6 +95,7 @@ struct CommunityFilterSheet: View {
                 }
             }
         }
+        .presentationDragIndicator(.visible)
         .onAppear {
             loadCurrentFilters()
         }

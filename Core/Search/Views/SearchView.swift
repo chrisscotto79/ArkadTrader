@@ -1,5 +1,6 @@
 // File: Core/Search/Views/SearchView.swift
-// Enhanced Search View with modern, professional UI/UX
+// The Discover tab: search communities, traders, posts and trades. Before you type it shows
+// recent searches, popular communities and popular traders.
 
 import SwiftUI
 
@@ -11,596 +12,377 @@ struct SearchView: View {
     @State private var searchTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
     @EnvironmentObject private var authService: FirebaseAuthService
+    @EnvironmentObject private var tabRouter: TabRouter
 
-    @State private var pressedTab: SearchType?
-    
-    // Animation states
-    @State private var searchBarScale = 1.0
-    @State private var showSearchHint = false
-    
+    /// Result scopes, communities first because they're the heart of Arkad.
+    private let scopes: [SearchType] = [.all, .groups, .users, .posts, .stocks]
+    /// How many of each kind "All" shows before "See all".
+    private let previewLimit = 4
+
     var body: some View {
-        NavigationView {
-            ZStack {
-                // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(.systemBackground),
-                        Color(.systemGray6).opacity(0.5)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                    // Enhanced Header
-                    headerSection
-                    
-                    // Main Content with transitions
-                    Group {
-                        if searchText.isEmpty {
-                            emptySearchState
-                                .transition(.asymmetric(
-                                    insertion: .opacity.combined(with: .scale(scale: 0.95)),
-                                    removal: .opacity
-                                ))
-                        } else if searchViewModel.isLoading {
-                            loadingState
-                                .transition(.opacity)
-                        } else if searchViewModel.searchResults.isEmpty {
-                            noResultsState
-                                .transition(.opacity)
-                        } else {
-                            searchResults
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                        }
-                    }
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: searchText.isEmpty)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: searchViewModel.isLoading)
+        NavigationStack {
+            VStack(spacing: 0) {
+                ScreenHeader(title: "Discover")
+
+                searchField
+                    .padding(.horizontal, DS.pageMargin)
+
+                if hasQuery {
+                    scopeChips
+                        .padding(.top, DS.Spacing.m)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+
+                content
+                    .padding(.top, DS.Spacing.s)
             }
-            .navigationBarHidden(true)
+            .screenBackground()
+            .toolbar(.hidden, for: .navigationBar)
+            .animation(.snappy(duration: 0.25), value: hasQuery)
         }
-        .alert("Search Error", isPresented: $searchViewModel.showError) {
+        .task {
+            if !searchViewModel.hasLoadedSuggestions {
+                await searchViewModel.loadDiscoverSuggestions()
+            }
+        }
+        .alert("Search error", isPresented: $searchViewModel.showError) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(searchViewModel.errorMessage)
         }
     }
-    
-    // MARK: - Header Section
-    
-    private var headerSection: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 16) {
-                // Enhanced Search Bar
-                enhancedSearchBar
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                
-                // Modern Filter Pills
-                modernFilterPills
-                    .padding(.top, 8)
-            }
-            .padding(.bottom, 16)
-            .background(
-                Rectangle()
-                    .fill(Color(.systemBackground))
-                    .shadow(
-                        color: Color.black.opacity(0.04),
-                        radius: 10,
-                        x: 0,
-                        y: 5
-                    )
-            )
-        }
+
+    // MARK: - Search field
+
+    private var hasQuery: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    
-    private var enhancedSearchBar: some View {
-        HStack(spacing: 12) {
-            // Animated search icon
-            ZStack {
+
+    private var searchField: some View {
+        HStack(spacing: DS.Spacing.m) {
+            HStack(spacing: DS.Spacing.s) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(isSearchFocused ? .arkadGold : .secondary)
-                    .font(.system(size: 17, weight: .medium))
-                    .scaleEffect(isSearchFocused ? 1.1 : 1.0)
-            }
-            .animation(.spring(response: 0.3), value: isSearchFocused)
-            
-            // Text field with placeholder animation
-            ZStack(alignment: .leading) {
-                if searchText.isEmpty && !isSearchFocused {
-                    Text("Search traders, posts, trades, groups")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 16))
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
-                
-                TextField("", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.primary)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+
+                TextField("Communities, traders, tickers", text: $searchText)
+                    .font(.body)
                     .focused($isSearchFocused)
-                    .onSubmit {
-                        performSearch()
-                    }
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .onSubmit { performSearch() }
                     .onChange(of: searchText) { _, newValue in
                         handleSearchTextChange(newValue)
                     }
-            }
-            
-            // Action buttons
-            HStack(spacing: 8) {
-                if !searchText.isEmpty {
-                    Button(action: clearSearch) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 18))
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                
+
                 if isSearching {
                     ProgressView()
-                        .scaleEffect(0.8)
-                        .tint(.arkadGold)
-                        .transition(.scale.combined(with: .opacity))
+                        .controlSize(.small)
+                        .transition(.opacity)
                 }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemGray6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: isSearchFocused ?
-                                    [Color.arkadGold.opacity(0.6), Color.arkadGold.opacity(0.3)] :
-                                    [Color.clear, Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.5
-                        )
-                )
-        )
-        .scaleEffect(searchBarScale)
-        .onTapGesture {
-            withAnimation(.spring(response: 0.3)) {
-                searchBarScale = 0.98
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation(.spring(response: 0.3)) {
-                    searchBarScale = 1.0
-                }
-            }
-        }
-    }
-    
-    private var modernFilterPills: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(SearchType.allCases, id: \.self) { type in
-                    modernFilterPill(type: type)
-                }
-            }
-            .padding(.horizontal, 20)
-        }
-    }
-    
-    private func modernFilterPill(type: SearchType) -> some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                selectedSearchType = type
+
                 if !searchText.isEmpty {
-                    performSearch()
+                    Button {
+                        clearText()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                    .transition(.opacity.combined(with: .scale))
                 }
             }
-        }) {
-            HStack(spacing: 6) {
-                Image(systemName: type.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                
-                Text(pillTitle(for: type))
-                    .font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundColor(selectedSearchType == type ? .white : .primary.opacity(0.7))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DS.Spacing.m)
+            .frame(height: 44)
             .background(
-                Capsule()
-                    .fill(selectedSearchType == type ?
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.8)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ) :
-                        LinearGradient(
-                            colors: [Color(.systemGray5), Color(.systemGray5)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(
-                        color: selectedSearchType == type ? Color.arkadGold.opacity(0.3) : .clear,
-                        radius: 8,
-                        x: 0,
-                        y: 4
-                    )
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .fill(Color.surfaceRaised)
             )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        selectedSearchType == type ? Color.clear : Color.primary.opacity(0.1),
-                        lineWidth: 1
-                    )
-            )
+
+            if isSearchFocused {
+                Button("Cancel") { cancelSearch() }
+                    .font(.body)
+                    .foregroundStyle(Color.primary)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(pressedTab == type ? 0.95 : 1.0)
-        .animation(.spring(response: 0.3), value: pressedTab == type)
-        .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { pressing in
-            pressedTab = pressing ? type : nil
-        }, perform: {})
+        .animation(.snappy(duration: 0.25), value: isSearchFocused)
+        .animation(.snappy(duration: 0.2), value: searchText.isEmpty)
+        .animation(.snappy(duration: 0.2), value: isSearching)
     }
-    
-    // MARK: - Empty Search State
-    
-    private var emptySearchState: some View {
-        ScrollView {
-            VStack(spacing: 40) {
-                // Hero Section with Animation
-                VStack(spacing: 24) {
-                    // Animated Search Icon
-                    ZStack {
-                        // Outer ring
-                        Circle()
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.arkadGold.opacity(0.3), Color.arkadGold.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 2
-                            )
-                            .frame(width: 100, height: 100)
-                            .rotationEffect(.degrees(showSearchHint ? 360 : 0))
-                            .animation(.linear(duration: 20).repeatForever(autoreverses: false), value: showSearchHint)
-                        
-                        // Inner gradient circle
-                        Circle()
-                            .fill(
-                                RadialGradient(
-                                    colors: [Color.arkadGold.opacity(0.1), Color.arkadGold.opacity(0.05)],
-                                    center: .center,
-                                    startRadius: 0,
-                                    endRadius: 50
-                                )
-                            )
-                            .frame(width: 80, height: 80)
-                        
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 36, weight: .light, design: .rounded))
-                            .foregroundColor(.arkadGold)
-                            .scaleEffect(showSearchHint ? 1.1 : 1.0)
-                            .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: showSearchHint)
-                    }
-                    .onAppear { showSearchHint = true }
-                    
-                    VStack(spacing: 12) {
-                        Text("Discover Arkad")
-                            .font(.system(size: 30, weight: .bold, design: .rounded))
-                            .foregroundColor(.primary)
-                        
-                        Text("Find traders, insights, and opportunities")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
+
+    private var scopeChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: DS.Spacing.s) {
+                ForEach(scopes, id: \.self) { type in
+                    Chip(title: scopeTitle(for: type), isSelected: selectedSearchType == type) {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(.snappy(duration: 0.25)) {
+                            selectedSearchType = type
+                        }
                     }
                 }
-                .padding(.top, 40)
-                
-                // Modern Recent Searches Section
-                modernRecentSearchesSection
-                
-                Spacer(minLength: 100)
             }
-            .padding(.horizontal, 20)
+        }
+        .contentMargins(.horizontal, DS.pageMargin, for: .scrollContent)
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        if !hasQuery {
+            discoverHome
+                .transition(.opacity)
+        } else if (isSearching || searchViewModel.isLoading) && searchViewModel.searchResults.isEmpty {
+            searchingState
+                .transition(.opacity)
+        } else if filteredResults.isEmpty {
+            noResultsState
+                .transition(.opacity)
+        } else {
+            resultsList
+                .transition(.opacity)
         }
     }
 
-    
-    private var modernRecentSearchesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Recent")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                if !searchViewModel.searchHistory.isEmpty {
-                    Button(action: {
-                        withAnimation(.spring()) {
-                            searchViewModel.clearSearchHistory()
-                        }
-                    }) {
-                        Text("Clear")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.arkadGold)
-                    }
-                }
-            }
-            
-            if searchViewModel.searchHistory.isEmpty {
-                emptyRecentSearches
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(searchViewModel.searchHistory.prefix(5), id: \.self) { search in
-                        modernRecentSearchRow(search: search)
-                    }
-                }
-            }
-        }
-    }
-    
-    private var emptyRecentSearches: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
-                    .frame(width: 44, height: 44)
-                
-                Image(systemName: "clock")
-                    .font(.system(size: 18))
-                    .foregroundColor(.secondary)
-            }
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("No recent searches")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.secondary)
-                
-                Text("Your search history will appear here")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary.opacity(0.7))
-            }
-            
-            Spacer()
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemGray6).opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-                )
-        )
-    }
-    
-    private func modernRecentSearchRow(search: String) -> some View {
-        Button(action: {
-            withAnimation(.spring()) {
-                searchText = search
-                performSearch()
-            }
-        }) {
-            HStack(spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(.systemGray6), Color(.systemGray5)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 44, height: 44)
-                    
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-                
-                Text(search)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                
-                Spacer()
-                
-                Image(systemName: "arrow.up.left")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.5))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: Color.black.opacity(0.03), radius: 5, x: 0, y: 2)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(ScaleButtonStyle())
-    }
-    
-    // MARK: - Loading State
-    
-    private var loadingState: some View {
-        VStack(spacing: 32) {
-            // Custom loading animation
-            ZStack {
-                ForEach(0..<3) { index in
-                    Circle()
-                        .fill(Color.arkadGold.opacity(0.3 - Double(index) * 0.1))
-                        .frame(width: 40 + CGFloat(index) * 20, height: 40 + CGFloat(index) * 20)
-                        .scaleEffect(showSearchHint ? 1.2 : 0.8)
-                        .animation(
-                            .easeInOut(duration: 1.5)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.2),
-                            value: showSearchHint
-                        )
-                }
-            }
-            .onAppear { showSearchHint = true }
-            
-            VStack(spacing: 12) {
-                Text("Searching...")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .foregroundColor(.primary)
-                
-                Text("Finding the best results for you")
-                    .font(.system(size: 15))
-                    .foregroundColor(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-    
-    // MARK: - No Results State
-    
-    private var noResultsState: some View {
-        VStack(spacing: 32) {
-            // Enhanced no results illustration
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(.systemGray5), Color(.systemGray6)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 120, height: 120)
-                
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 50, weight: .light))
-                    .foregroundColor(.secondary)
-                    .rotationEffect(.degrees(-15))
-            }
-            
-            VStack(spacing: 16) {
-                Text("No results found")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
-                
-                Text("We couldn't find anything matching\n\"\(searchText)\"")
-                    .font(.system(size: 16))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-            }
-            
-            // Enhanced suggestions
-            VStack(spacing: 12) {
-                Text("Try these:")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .padding(.bottom, 4)
-                
-                VStack(spacing: 10) {
-                    suggestionPill("Different keywords")
-                    suggestionPill("Check spelling")
-                    suggestionPill("Broader search terms")
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 32)
-    }
-    
-    private func suggestionPill(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lightbulb.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.arkadGold)
-            
-            Text(text)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.primary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(
-            Capsule()
-                .fill(Color.arkadGold.opacity(0.1))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.arkadGold.opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
-    
-    // MARK: - Search Results
-    
-    private var searchResults: some View {
+    // MARK: - Discover home (empty query)
+
+    private var discoverHome: some View {
         ScrollView {
-                    LazyVStack(spacing: 12) {
-                        // Enhanced results header
-                        enhancedResultsHeader
-                            .padding(.horizontal, 20)
-                            .padding(.top, 16)
-                        
-                        // Results with enhanced cards
-                        ForEach(Array(filteredResults.enumerated()), id: \.element.id) { index, result in
-                            SearchResultView(result: result)
-                                .environmentObject(authService)  // ← Now this will work
-                                .padding(.horizontal, 20)
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                                    removal: .move(edge: .top).combined(with: .opacity)
-                                ))
-                                .animation(
-                                    .spring(response: 0.6, dampingFraction: 0.8)
-                                    .delay(Double(index) * 0.05),
-                                    value: filteredResults.count
-                                )
-                        }
-                    }
-                    .padding(.bottom, 100)
+            VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                if !searchViewModel.searchHistory.isEmpty {
+                    recentSearchesSection
                 }
-    }
-    
-    private var enhancedResultsHeader: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(filteredResults.count) \(filteredResults.count == 1 ? "Result" : "Results")")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
-                
-                if let performance = searchViewModel.searchPerformance {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(.arkadGold)
-                        
-                        Text("\(String(format: "%.1f", performance.searchTime))s")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
+
+                if !searchViewModel.suggestedCommunities.isEmpty {
+                    popularCommunitiesSection
+                }
+
+                if !searchViewModel.suggestedTraders.isEmpty {
+                    popularTradersSection
+                }
+
+                if searchViewModel.isLoadingSuggestions && !hasSuggestions {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 60)
+                } else if !hasSuggestions && searchViewModel.searchHistory.isEmpty {
+                    EmptyStateView(
+                        systemImage: "magnifyingglass",
+                        title: "Search Arkad",
+                        message: "Find communities to join, traders to follow, and posts and trades by ticker."
+                    )
                 }
             }
-            
-            Spacer()
+            .padding(.top, DS.Spacing.m)
+            .padding(.bottom, DS.Spacing.xxl)
+        }
+        .scrollDismissesKeyboard(.immediately)
+        .refreshable { await searchViewModel.loadDiscoverSuggestions() }
+    }
+
+    private var hasSuggestions: Bool {
+        !searchViewModel.suggestedCommunities.isEmpty || !searchViewModel.suggestedTraders.isEmpty
+    }
+
+    private var recentSearchesSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Recent", actionTitle: "Clear") {
+                withAnimation(.snappy(duration: 0.25)) {
+                    searchViewModel.clearSearchHistory()
+                }
+            }
+
+            VStack(spacing: 0) {
+                let recent = Array(searchViewModel.searchHistory.prefix(5))
+                ForEach(Array(recent.enumerated()), id: \.element) { index, search in
+                    if index > 0 { rowDivider(inset: DS.Spacing.l + 28) }
+                    recentSearchRow(search)
+                }
+            }
+            .cardStyle(padding: 0)
+        }
+        .padding(.horizontal, DS.pageMargin)
+    }
+
+    private func recentSearchRow(_ search: String) -> some View {
+        Button {
+            searchText = search
+            performSearch()
+        } label: {
+            HStack(spacing: DS.Spacing.m) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(search)
+                    .font(.body)
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.left")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, DS.Spacing.l)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("Search for \(search)")
+    }
+
+    private var popularCommunitiesSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Popular communities", actionTitle: "See all") {
+                tabRouter.selected = .communities
+            }
+            .padding(.horizontal, DS.pageMargin)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: DS.Spacing.m) {
+                    ForEach(searchViewModel.suggestedCommunities) { community in
+                        SearchResultView(result: SearchResult(community: community), style: .communityCard)
+                            .environmentObject(authService)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .contentMargins(.horizontal, DS.pageMargin, for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
         }
     }
-    
+
+    private var popularTradersSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Popular traders")
+
+            VStack(spacing: 0) {
+                let traders = searchViewModel.suggestedTraders
+                ForEach(Array(traders.enumerated()), id: \.element.id) { index, user in
+                    if index > 0 { rowDivider() }
+                    SearchResultView(result: SearchResult(user: user))
+                        .environmentObject(authService)
+                }
+            }
+            .cardStyle(padding: 0)
+        }
+        .padding(.horizontal, DS.pageMargin)
+    }
+
+    // MARK: - Searching / no results
+
+    private var searchingState: some View {
+        ScrollView {
+            VStack(spacing: DS.Spacing.m) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Searching…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 80)
+        }
+        .scrollDismissesKeyboard(.immediately)
+    }
+
+    private var noResultsState: some View {
+        ScrollView {
+            if selectedSearchType != .all && !searchViewModel.searchResults.isEmpty {
+                EmptyStateView(
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    title: "No \(scopeTitle(for: selectedSearchType).lowercased())",
+                    message: "Nothing in \(scopeTitle(for: selectedSearchType).lowercased()) matched “\(trimmedQuery)”.",
+                    actionTitle: "Show all results"
+                ) {
+                    withAnimation(.snappy(duration: 0.25)) { selectedSearchType = .all }
+                }
+            } else {
+                EmptyStateView(
+                    systemImage: "magnifyingglass",
+                    title: "No results",
+                    message: "Nothing matched “\(trimmedQuery)”. Try a ticker, a username or a community name."
+                )
+            }
+        }
+        .scrollDismissesKeyboard(.immediately)
+    }
+
+    // MARK: - Results
+
+    private var resultsList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                if selectedSearchType == .all {
+                    ForEach(scopes.filter { $0 != .all }, id: \.self) { scope in
+                        let scoped = results(for: scope)
+                        if !scoped.isEmpty {
+                            resultsSection(scope: scope, results: scoped, limit: previewLimit)
+                        }
+                    }
+                } else {
+                    resultsSection(scope: selectedSearchType, results: filteredResults, limit: nil)
+                }
+            }
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.top, DS.Spacing.m)
+            .padding(.bottom, DS.Spacing.xxl)
+        }
+        .scrollDismissesKeyboard(.immediately)
+    }
+
+    private func resultsSection(scope: SearchType, results: [SearchResult], limit: Int?) -> some View {
+        let shown = limit.map { Array(results.prefix($0)) } ?? results
+        var expandAction: (() -> Void)? = nil
+        if limit != nil && results.count > shown.count {
+            expandAction = {
+                withAnimation(.snappy(duration: 0.25)) { selectedSearchType = scope }
+            }
+        }
+
+        return VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(
+                title: scopeTitle(for: scope),
+                count: results.count,
+                actionTitle: expandAction == nil ? nil : "See all",
+                action: expandAction
+            )
+
+            VStack(spacing: 0) {
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, result in
+                    if index > 0 { rowDivider() }
+                    SearchResultView(result: result)
+                        .environmentObject(authService)
+                }
+            }
+            .cardStyle(padding: 0)
+        }
+    }
+
+    private func rowDivider(inset: CGFloat = DS.Spacing.l + 44 + DS.Spacing.m) -> some View {
+        Divider()
+            .overlay(Color.hairline)
+            .padding(.leading, inset)
+    }
+
     // MARK: - Computed Properties
-    
+
+    private var trimmedQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var filteredResults: [SearchResult] {
-        switch selectedSearchType {
+        results(for: selectedSearchType)
+    }
+
+    private func results(for scope: SearchType) -> [SearchResult] {
+        switch scope {
         case .all:
             return searchViewModel.searchResults
         case .users:
@@ -613,69 +395,77 @@ struct SearchView: View {
             return searchViewModel.searchResults.filter { $0.type == .group }
         }
     }
-    
-    // MARK: - Helper Methods
-    
-    /// Pill label. The `.stocks` filter matches traders' logged trades, so call it "Trades".
-    private func pillTitle(for type: SearchType) -> String {
-        type == .stocks ? "Trades" : type.displayName
+
+    /// Scope label. `.stocks` matches traders' logged trades, so it's "Trades".
+    private func scopeTitle(for type: SearchType) -> String {
+        switch type {
+        case .all: return "All"
+        case .groups: return "Communities"
+        case .users: return "Traders"
+        case .posts: return "Posts"
+        case .stocks: return "Trades"
+        }
     }
-    
+
+    // MARK: - Helper Methods
+
     private func handleSearchTextChange(_ newValue: String) {
         searchTask?.cancel()
-        
-        if newValue.isEmpty {
+
+        if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             isSearching = false
             searchViewModel.clearResults()
             return
         }
-        
+
         isSearching = true
         searchTask = Task {
-            try? await Task.sleep(nanoseconds: 300_000_000) // Reduced debounce
-            if !Task.isCancelled && !newValue.isEmpty {
-                await performSearchAsync()
-            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            await performSearchAsync()
             isSearching = false
         }
     }
-    
+
     private func performSearch() {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-        
+        guard hasQuery else { return }
+
+        searchTask?.cancel()
         Task {
             isSearching = true
             await performSearchAsync()
             isSearching = false
         }
     }
-    
+
     private func performSearchAsync() async {
         await searchViewModel.search(query: searchText)
     }
-    
-    private func clearSearch() {
-        withAnimation(.spring()) {
-            searchTask?.cancel()
-            searchText = ""
-            isSearching = false
-            searchViewModel.clearResults()
-            isSearchFocused = false
-        }
+
+    /// Clears the text but keeps the keyboard up.
+    private func clearText() {
+        searchTask?.cancel()
+        searchText = ""
+        isSearching = false
+        selectedSearchType = .all
+        searchViewModel.clearResults()
+    }
+
+    /// Clears the search and dismisses the keyboard.
+    private func cancelSearch() {
+        clearText()
+        isSearchFocused = false
     }
 }
 
-// MARK: - Supporting Views
-
 // MARK: - Custom Button Style
 
+/// Subtle press scale. Also used by the Communities leaderboard.
 struct ScaleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.spring(response: 0.2), value: configuration.isPressed)
+            .animation(.snappy(duration: 0.18), value: configuration.isPressed)
     }
 }
 
@@ -684,4 +474,5 @@ struct ScaleButtonStyle: ButtonStyle {
 #Preview {
     SearchView()
         .environmentObject(FirebaseAuthService.shared)
+        .environmentObject(TabRouter())
 }

@@ -2,11 +2,6 @@
 // Search sheet for finding messages in a channel.
 
 import SwiftUI
-import UIKit
-import UniformTypeIdentifiers
-import FirebaseStorage
-import Photos
-import MobileCoreServices
 
 // MARK: - Message Search Sheet
 struct MessageSearchSheet: View {
@@ -16,123 +11,82 @@ struct MessageSearchSheet: View {
     @Binding var searchResults: [CommunityMessage]
     let onMessageSelected: (CommunityMessage) -> Void
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Search Bar
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    
-                    TextField("Search messages...", text: $searchText)
-                        .textFieldStyle(PlainTextFieldStyle())
-                        .onChange(of: searchText) {
-                            performSearch()
-                        }
-                    
-                    if !searchText.isEmpty {
-                        Button("Clear") {
-                            searchText = ""
-                            searchResults = []
-                        }
-                        .foregroundColor(.accentColor)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(.systemGray6))
-                .cornerRadius(10)
-                .padding()
-                
-                Divider()
-                
-                // Search Results
-                if searchText.isEmpty {
-                    // Recent messages or suggestions
-                    VStack(spacing: 20) {
-                        Spacer()
-                        
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 50))
-                            .foregroundColor(.secondary)
-                        
-                        VStack(spacing: 8) {
-                            Text("Search Messages")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                            
-                            Text("Find messages, mentions, and shared media")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        
-                        Spacer()
-                    }
-                } else if searchResults.isEmpty {
-                    // No results
-                    VStack(spacing: 20) {
-                        Spacer()
-                        
-                        Image(systemName: "questionmark.circle")
-                            .font(.system(size: 50))
-                            .foregroundColor(.secondary)
-                        
-                        VStack(spacing: 8) {
-                            Text("No Results")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                            
-                            Text("Try different keywords or check spelling")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        
-                        Spacer()
-                    }
-                } else {
-                    // Search Results List
-                    List(searchResults) { message in
-                        SearchMessageRow(
-                            message: message,
-                            author: userCache[message.authorId],
-                            searchTerm: searchText,
-                            onTap: {
-                                onMessageSelected(message)
-                            }
-                        )
-                        .listRowSeparator(.hidden)
-                    }
-                    .listStyle(PlainListStyle())
-                }
+        NavigationStack {
+            ScrollView {
+                content
+                    .padding(.horizontal, DS.pageMargin)
+                    .padding(.vertical, DS.Spacing.m)
             }
+            .scrollDismissesKeyboard(.immediately)
+            .screenBackground()
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Messages, people or tickers"
+            )
+            .onChange(of: searchText) {
+                performSearch()
+            }
+            .onAppear {
+                performSearch()
+            }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                        .tint(Color.goldText)
                 }
             }
         }
     }
-    
+
+    @ViewBuilder
+    private var content: some View {
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            EmptyStateView(
+                systemImage: "magnifyingglass",
+                title: "Search this channel",
+                message: "Find messages, mentions and callouts from the latest \(messages.count) messages."
+            )
+        } else if searchResults.isEmpty {
+            EmptyStateView(
+                systemImage: "text.magnifyingglass",
+                title: "No results",
+                message: "Nothing matches \"\(searchText)\". Try a different word or a username."
+            )
+        } else {
+            VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                Text("\(searchResults.count) \(searchResults.count == 1 ? "result" : "results")")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, DS.Spacing.xs)
+
+                CommunityCardList(items: searchResults, dividerInset: DS.Spacing.l) { message in
+                    SearchMessageRow(
+                        message: message,
+                        author: userCache[message.authorId],
+                        searchTerm: searchText,
+                        onTap: { onMessageSelected(message) }
+                    )
+                }
+            }
+        }
+    }
+
     private func performSearch() {
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             searchResults = []
             return
         }
-        
+
         let query = searchText.lowercased()
         searchResults = messages.filter { message in
-            // Search in message content
             message.content.lowercased().contains(query) ||
-            // Search in author username
             message.authorUsername.lowercased().contains(query) ||
-            // Search in author full name
             (userCache[message.authorId]?.fullName.lowercased().contains(query) ?? false)
         }
         .sorted { $0.createdAt > $1.createdAt } // Most recent first
@@ -145,93 +99,63 @@ struct SearchMessageRow: View {
     let author: User?
     let searchTerm: String
     let onTap: () -> Void
-    
+
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Author and timestamp
-                HStack {
-                    // Profile image
-                    Group {
-                        if let author = author,
-                           let profileImageUrl = author.profileImageUrl,
-                           !profileImageUrl.isEmpty {
-                            AsyncImage(url: URL(string: profileImageUrl)) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } placeholder: {
-                                Circle()
-                                    .fill(Color.accentColor.opacity(0.2))
-                                    .overlay(
-                                        Text(author.fullName.prefix(1))
-                                            .font(.caption)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(.accentColor)
-                                    )
-                            }
-                        } else {
-                            Circle()
-                                .fill(Color.accentColor.opacity(0.2))
-                                .overlay(
-                                    Text(message.authorUsername.prefix(1))
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.accentColor)
-                                )
-                        }
-                    }
-                    .frame(width: 32, height: 32)
-                    .clipShape(Circle())
-                    
-                    VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: DS.Spacing.m) {
+                UserAvatar(username: message.authorUsername, imageURL: author?.profileImageUrl, size: 32)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
                         Text(message.authorUsername)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.primary)
+                        Spacer()
                         Text(formatTimestamp(message.createdAt))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
-                    
-                    Spacer()
+
+                    Text(highlightedMessageContent)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
                 }
-                
-                // Message content with highlighted search term
-                Text(highlightedMessageContent)
-                    .font(.body)
-                    .foregroundColor(.primary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
             }
-            .padding(.vertical, 8)
+            .padding(DS.Spacing.l)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(PressableStyle())
     }
-    
-    private var highlightedMessageContent: AttributedString {
-        var attributedString = AttributedString(message.content)
-        
-        // Highlight search term (simple version)
-        if let range = attributedString.range(of: searchTerm, options: .caseInsensitive) {
-            attributedString[range].backgroundColor = .yellow.opacity(0.3)
+
+    /// Media messages show a label instead of their storage URL
+    private var displayContent: String {
+        if message.content.hasPrefix("[MEDIA:IMAGE]") { return "Photo" }
+        if message.content.hasPrefix("[MEDIA:VIDEO]") { return "Video" }
+        if message.content.hasPrefix("[MEDIA:DOCUMENT]") {
+            let parts = String(message.content.dropFirst(16)).components(separatedBy: "|")
+            return parts.count >= 2 ? "File: \(parts[1])" : "File"
         }
-        
+        return message.content
+    }
+
+    private var highlightedMessageContent: AttributedString {
+        var attributedString = AttributedString(displayContent)
+        if let range = attributedString.range(of: searchTerm, options: .caseInsensitive) {
+            attributedString[range].backgroundColor = .goldTint
+            attributedString[range].font = .subheadline.weight(.semibold)
+        }
         return attributedString
     }
-    
+
     private func formatTimestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        
         if Calendar.current.isDateInToday(date) {
-            formatter.timeStyle = .short
-            return formatter.string(from: date)
+            return date.formatted(date: .omitted, time: .shortened)
         } else if Calendar.current.isDateInYesterday(date) {
             return "Yesterday"
         } else {
-            formatter.dateStyle = .short
-            return formatter.string(from: date)
+            return date.formatted(date: .abbreviated, time: .omitted)
         }
     }
 }

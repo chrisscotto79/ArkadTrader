@@ -1,82 +1,86 @@
 // File: Shared/Components/CustomButton.swift
-// Simplified Custom Button
+// Full-width button with a built-in loading state, built on the design system's
+// button styles (PrimaryButtonStyle / SecondaryButtonStyle).
 
 import SwiftUI
 
-// MARK: - Enhanced Custom Button (drop-in replacement)
 struct CustomButton: View {
     let title: String
     let action: () -> Void
     var isLoading: Bool = false
     var isDisabled: Bool = false
     var style: ButtonStyleType = .primary
-    
+    var systemImage: String? = nil
+
     enum ButtonStyleType {
-        case primary, secondary, outline
-        
-        var backgroundColor: Color {
-            switch self {
-            case .primary: return .blue
-            case .secondary: return .gray
-            case .outline: return .clear
-            }
-        }
-        
-        var foregroundColor: Color {
-            switch self {
-            case .primary: return .white
-            case .secondary: return .white
-            case .outline: return .blue
+        /// Solid gold call to action
+        case primary
+        /// Neutral filled button
+        case secondary
+        /// Hairline capsule, transparent background
+        case outline
+    }
+
+    var body: some View {
+        styled(Button(action: action) { label })
+            .disabled(isDisabled || isLoading)
+            .accessibilityLabel(title)
+    }
+
+    private var label: some View {
+        HStack(spacing: 8) {
+            if isLoading {
+                ProgressView()
+                    .tint(style == .primary ? Color.onGold : Color.primary)
+            } else {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.body.weight(.semibold))
+                }
+                Text(title)
             }
         }
     }
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: style.foregroundColor))
-                        .scaleEffect(0.8)
-                } else {
-                    Text(title)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                }
-            }
-            .foregroundColor(isDisabled ? .gray : style.foregroundColor)
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(
-                Group {
-                    if isDisabled {
-                        Color.gray.opacity(0.3)
-                    } else {
-                        LinearGradient(
-                            gradient: Gradient(colors: [style.backgroundColor, style.backgroundColor.opacity(0.8)]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    }
-                }
-            )
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(style == .outline ? (isDisabled ? .gray : .blue) : .clear, lineWidth: 1)
-            )
-            .scaleEffect(isDisabled ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: isDisabled)
+
+    @ViewBuilder
+    private func styled<Label: View>(_ button: Button<Label>) -> some View {
+        switch style {
+        case .primary:
+            button.buttonStyle(PrimaryButtonStyle())
+        case .secondary:
+            button.buttonStyle(SecondaryButtonStyle())
+        case .outline:
+            button.buttonStyle(OutlineCapsuleButtonStyle())
         }
-        .disabled(isDisabled || isLoading)
+    }
+}
+
+/// Full-width transparent capsule with a hairline border (CustomButton's `.outline`).
+struct OutlineCapsuleButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(Color.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(Capsule().strokeBorder(Color.hairline, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.snappy(duration: 0.18), value: configuration.isPressed)
     }
 }
 
 #Preview {
-    VStack {
-        CustomButton(title: "Click Me", action: {})
+    VStack(spacing: 12) {
+        CustomButton(title: "Sign in", action: {})
         CustomButton(title: "Loading", action: {}, isLoading: true)
+        CustomButton(title: "Secondary", action: {}, style: .secondary)
+        CustomButton(title: "Outline", action: {}, style: .outline)
         CustomButton(title: "Disabled", action: {}, isDisabled: true)
     }
     .padding()
+    .screenBackground()
 }

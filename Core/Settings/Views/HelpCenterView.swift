@@ -8,52 +8,65 @@ struct HelpCenterView: View {
     @State private var searchText = ""
 
     var body: some View {
-        NavigationView {
-            List {
-                if filteredTopics.isEmpty {
-                    Section {
-                        VStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.title2)
-                                .foregroundColor(.gray)
-                            Text("No answers match \"\(searchText)\"")
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 20)
-                    }
-                } else {
-                    ForEach(filteredTopics) { topic in
-                        Section(topic.title) {
-                            ForEach(topic.questions) { item in
-                                FAQRow(item: item, startExpanded: !trimmedSearch.isEmpty)
-                            }
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    if filteredTopics.isEmpty {
+                        EmptyStateView(
+                            systemImage: "magnifyingglass",
+                            title: "No answers found",
+                            message: "Nothing matches \"\(trimmedSearch)\". Try another word, or email us below."
+                        )
+                        .cardStyle(padding: 0)
+                    } else {
+                        ForEach(filteredTopics) { topic in
+                            topicCard(topic)
                         }
                     }
-                }
 
-                Section {
-                    EmailSupportButton(title: "Still need help? Email us", subject: "ArkadTrader Help")
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                } footer: {
-                    Text("Your app version and iOS version are added to the email for you.")
+                    VStack(spacing: DS.Spacing.s) {
+                        Text("Still need help?")
+                            .font(.headline)
+                        EmailSupportButton(title: "Email us", subject: "Arkad Help")
+                        Text("Your app version and iOS version are added to the email for you.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .cardStyle()
                 }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
-            .listStyle(InsetGroupedListStyle())
+            .scrollDismissesKeyboard(.interactively)
+            .screenBackground()
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search questions")
             .navigationTitle("Help Center")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                 }
+            }
+        }
+    }
+
+    private func topicCard(_ topic: FAQTopic) -> some View {
+        SettingsGroupCard(title: topic.title) {
+            ForEach(Array(topic.questions.enumerated()), id: \.element.id) { index, item in
+                if index > 0 {
+                    Rectangle()
+                        .fill(Color.hairline)
+                        .frame(height: 1)
+                        .padding(.leading, DS.Spacing.l)
+                }
+                FAQRow(item: item, startExpanded: !trimmedSearch.isEmpty)
             }
         }
     }
@@ -84,19 +97,41 @@ private struct FAQRow: View {
     @State private var isExpanded = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            Text(item.answer)
-                .font(.subheadline)
-                .foregroundColor(.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.vertical, 4)
-        } label: {
-            Text(item.question)
-                .font(.body)
-                .fontWeight(.medium)
-                .foregroundColor(.textPrimary)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.25)) { isExpanded.toggle() }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.m) {
+                    Text(item.question)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.primary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: DS.Spacing.s)
+                    Image(systemName: "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(isExpanded ? Color.goldText : Color.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+                .padding(.horizontal, DS.Spacing.l)
+                .padding(.vertical, 14)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(SettingsRowButtonStyle())
+            .accessibilityHint(isExpanded ? "Hides the answer" : "Shows the answer")
+
+            if isExpanded {
+                Text(item.answer)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, DS.Spacing.l)
+                    .padding(.bottom, DS.Spacing.l)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        .tint(.arkadGoldDark)
+        .clipped()
         .onAppear { if startExpanded { isExpanded = true } }
         .onChange(of: startExpanded) { _, newValue in isExpanded = newValue }
     }
@@ -119,7 +154,7 @@ struct FAQTopic: Identifiable {
         FAQTopic(title: "Portfolio", questions: [
             FAQItem(
                 question: "How do I log a trade?",
-                answer: "Open the Portfolio tab and tap Add Trade. Choose the asset type, then enter the ticker, entry price, quantity and entry date. Notes are optional. ArkadTrader is a journal: trades are entered by you and nothing is placed with a broker."
+                answer: "Open the Portfolio tab and tap Add Trade. Choose the asset type, then enter the ticker, entry price, quantity and entry date. Notes are optional. Arkad is a journal: trades are entered by you and nothing is placed with a broker."
             ),
             FAQItem(
                 question: "How do I close a trade?",
@@ -213,7 +248,7 @@ struct FAQTopic: Identifiable {
         FAQTopic(title: "Account & Data", questions: [
             FAQItem(
                 question: "How do I export my data?",
-                answer: "Open Settings (the gear icon on your Profile) and tap Export Data. ArkadTrader creates CSV files of your trades and posts on your device. Use the share sheet to save them to Files or send them to another app."
+                answer: "Open Settings (the gear icon on your Profile) and tap Export Data. Arkad creates CSV files of your trades and posts on your device. Use the share sheet to save them to Files or send them to another app."
             ),
             FAQItem(
                 question: "How do I reset my password?",
@@ -225,7 +260,7 @@ struct FAQTopic: Identifiable {
             ),
             FAQItem(
                 question: "Who can see my information?",
-                answer: "Other signed-in users can see your profile, posts and comments. Members of a community can see its channel messages. Your trades can appear in search results, and your closed trades are used for leaderboards. See the Privacy Policy in Settings > About ArkadTrader for details."
+                answer: "Other signed-in users can see your profile, posts and comments. Members of a community can see its channel messages. Your trades can appear in search results, and your closed trades are used for leaderboards. See the Privacy Policy in Settings > About Arkad for details."
             )
         ])
     ]

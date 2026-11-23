@@ -1,13 +1,5 @@
-//
-//  CommunityPreviewSheet.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 8/12/25.
-//
-
-
 // File: Core/Communities/Views/Components/CommunityPreviewSheet.swift
-// Community Preview Sheet for quick community overview
+// Quick look at a community from Discover: who it's for, how big it is, and a Join button.
 
 import SwiftUI
 
@@ -17,448 +9,165 @@ struct CommunityPreviewSheet: View {
     let onJoin: () -> Void
     let onEnterCommunity: () -> Void
     let onClose: () -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
     @State private var isJoining = false
-    
+
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 0) {
-                    // Header with banner and profile
-                    headerSection
-                    
-                    // Content sections
-                    VStack(spacing: 24) {
-                        // Room for the avatar that overlaps the banner
-                        Color.clear.frame(height: 30)
-                        
-                        // Stats section
-                        statsSection
-                        
-                        // Description section
-                        descriptionSection
-                        
-                        // Community features section
-                        featuresSection
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 100) // Space for floating button
-                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                hero
+                statsRow
+                aboutCard
+                featuresCard
             }
-            .navigationBarHidden(true)
-            .overlay(alignment: .bottom) {
-                floatingActionButton
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.top, DS.Spacing.xl)
+            .padding(.bottom, DS.Spacing.l)
+        }
+        .screenBackground()
+        .safeAreaInset(edge: .bottom) {
+            actionBar
+        }
+        .overlay(alignment: .topTrailing) {
+            IconButton(systemName: "xmark", accessibilityLabel: "Close", size: 32) {
+                onClose()
+                dismiss()
             }
+            .padding(DS.Spacing.l)
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
-    
-    // MARK: - Header Section
-    private var headerSection: some View {
-        ZStack(alignment: .topTrailing) {
-            // Banner background
-            bannerBackground
-                .frame(height: 200)
-            
-            // Close button
-            closeButton
-                .padding(16)
-            
-            // Profile image and basic info overlay
-            VStack {
-                Spacer()
-                profileAndBasicInfo
-                    .padding(.horizontal, 20)
-                    .offset(y: 30) // Overlap with content
-            }
-        }
-    }
-    
-    private var bannerBackground: some View {
-        Group {
-            if let bannerUrl = community.bannerURL, !bannerUrl.isEmpty {
-                AsyncImage(url: URL(string: bannerUrl)) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    defaultBannerGradient
-                }
-            } else {
-                defaultBannerGradient
-            }
-        }
-        .overlay(
-            // Dark overlay for better text readability
-            LinearGradient(
-                colors: [Color.clear, Color.black.opacity(0.4)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .clipped()
-    }
-    
-    private var defaultBannerGradient: some View {
-        LinearGradient(
-            colors: [
-                getCommunityColor(),
-                getCommunityColor().opacity(0.7)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-    
-    private var closeButton: some View {
-        Button(action: { dismiss() }) {
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .frame(width: 32, height: 32)
-                
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-            .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
-        }
-    }
-    
-    private var profileAndBasicInfo: some View {
-        HStack(spacing: 16) {
-            // Community profile image
-            ZStack {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 80, height: 80)
-                    .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
-                
-                if let profileUrl = community.avatarURL, !profileUrl.isEmpty {
-                    AsyncImage(url: URL(string: profileUrl)) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 76, height: 76)
-                            .clipShape(Circle())
-                    } placeholder: {
-                        defaultProfileImage
-                    }
-                } else {
-                    defaultProfileImage
-                }
-                
-                // Member indicator
-                if isUserMember {
-                    Circle()
-                        .fill(Color.marketGreen)
-                        .frame(width: 24, height: 24)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white, lineWidth: 3)
-                        )
-                        .overlay(
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.white)
-                        )
-                        .offset(x: 28, y: 28)
-                }
-            }
-            
-            // Name and type
-            VStack(alignment: .leading, spacing: 8) {
+
+    // MARK: - Hero
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            CommunityAvatar(community: community, size: 72)
+
+            VStack(alignment: .leading, spacing: 4) {
                 Text(community.name)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                
-                HStack(spacing: 8) {
-                    // Type badge
-                    Text(community.type.displayName)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(.white.opacity(0.2))
-                        )
-                    
-                    // Privacy badge
-                    if community.isPrivate {
-                        HStack(spacing: 4) {
-                            Image(systemName: "lock.fill")
-                                .font(.caption2)
-                            Text("Private")
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(.white.opacity(0.2))
-                        )
-                    }
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Color.primary)
+                Text(CommunityFormat.summary(community))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: DS.Spacing.s) {
+                Tag(text: community.type.displayName, systemImage: community.typeIcon, tint: .secondary)
+                if community.isPrivate {
+                    Tag(text: "Private", systemImage: "lock.fill", tint: .secondary)
+                }
+                if isUserMember {
+                    JoinedTag()
                 }
             }
-            
-            Spacer()
+        }
+        .padding(.trailing, 44) // room for the close button
+    }
+
+    // MARK: - Stats
+
+    private var statsRow: some View {
+        HStack(spacing: DS.Spacing.s) {
+            StatTile(title: "Members", value: community.memberCount.formatted())
+            StatTile(title: "Created", value: community.createdAt.formatted(.dateTime.month(.abbreviated).year()))
+            StatTile(title: "Activity", value: activityValue)
         }
     }
-    
-    private var defaultProfileImage: some View {
-        Circle()
-            .fill(
-                LinearGradient(
-                    colors: [getCommunityColor(), getCommunityColor().opacity(0.7)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .frame(width: 76, height: 76)
-            .overlay(
-                Text(community.initials)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-            )
+
+    /// "2h ago" style activity, or "Quiet" when nothing's been posted recently
+    private var activityValue: String {
+        guard community.lastActivityDate != nil else { return "Quiet" }
+        let text = community.lastActivityText
+        if text == "Active now" { return "Now" }
+        return text.replacingOccurrences(of: "Active ", with: "")
     }
-    
-    // MARK: - Content Sections
-    private var statsSection: some View {
-        HStack(spacing: 0) {
-            statItem(
-                value: "\(community.memberCount)",
-                label: "Members",
-                icon: "person.3.fill"
-            )
-            
-            Divider()
-                .frame(height: 40)
-            
-            statItem(
-                value: formatDate(community.createdAt),
-                label: "Created",
-                icon: "calendar"
-            )
-            
-            Divider()
-                .frame(height: 40)
-            
-            statItem(
-                value: community.lastActivityText,
-                label: "Activity",
-                icon: "chart.line.uptrend.xyaxis"
-            )
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.borderPrimary.opacity(0.3), lineWidth: 1)
-                )
-        )
-    }
-    
-    private func statItem(value: String, label: String, icon: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 20))
-                .foregroundColor(getCommunityColor())
-            
-            VStack(spacing: 2) {
-                Text(value)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
-                
-                Text(label)
-                    .font(.caption)
-                    .foregroundColor(.textSecondary)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-    
-    private var descriptionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+
+    // MARK: - About
+
+    private var aboutCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
             Text("About")
                 .font(.headline)
-                .fontWeight(.semibold)
-                .foregroundColor(.textPrimary)
-            
-            Text(community.description.isEmpty ? "No description available." : community.description)
+            Text(community.description.isEmpty ? "No description yet." : community.description)
                 .font(.body)
-                .foregroundColor(.textSecondary)
-                .lineSpacing(4)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.borderPrimary.opacity(0.3), lineWidth: 1)
-                )
-        )
+        .cardStyle(padding: DS.Spacing.l)
     }
-    
-    private var featuresSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(.arkadGold)
-                
-                Text("Community Features")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.textPrimary)
-            }
-            
-            VStack(spacing: 8) {
-                featureRow(icon: "bubble.left.and.bubble.right.fill", text: "Text channels for discussions")
-                featureRow(icon: "megaphone.fill", text: "Trading callouts and signals")
-                featureRow(icon: "chart.bar.fill", text: "Performance leaderboards")
-                if !community.isPrivate {
-                    featureRow(icon: "globe", text: "Public, listed in Discover")
-                } else {
-                    featureRow(icon: "lock.fill", text: "Private, hidden from Discover")
-                }
+
+    private var featuresCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            Text("What's inside")
+                .font(.headline)
+            featureRow(icon: "bubble.left.and.bubble.right.fill", text: "Channels to talk trades with other members")
+            featureRow(icon: "megaphone.fill", text: "Trade callouts you can track in your portfolio")
+            featureRow(icon: "trophy.fill", text: "A leaderboard ranked by closed trades")
+            if community.isPrivate {
+                featureRow(icon: "lock.fill", text: "Private: hidden from Discover and search")
+            } else {
+                featureRow(icon: "globe", text: "Public: anyone can find and join")
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.borderPrimary.opacity(0.3), lineWidth: 1)
-                )
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle(padding: DS.Spacing.l)
     }
-    
+
     private func featureRow(icon: String, text: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 14))
-                .foregroundColor(getCommunityColor())
-                .frame(width: 20)
-            
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: icon, size: 32)
             Text(text)
                 .font(.subheadline)
-                .foregroundColor(.textSecondary)
-            
-            Spacer()
+                .foregroundStyle(Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
-    
-    // MARK: - Floating Action Button
-    private var floatingActionButton: some View {
-        VStack(spacing: 12) {
+
+    // MARK: - Action
+
+    private var actionBar: some View {
+        Group {
             if isUserMember {
-                // Enter Community Button
-                Button(action: {
+                Button {
                     onEnterCommunity()
                     dismiss()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.system(size: 18))
-                        
-                        Text("Enter Community")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(
-                                LinearGradient(
-                                    colors: [getCommunityColor(), getCommunityColor().opacity(0.8)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    )
-                    .shadow(color: getCommunityColor().opacity(0.3), radius: 8, x: 0, y: 4)
+                } label: {
+                    Label("Open community", systemImage: "arrow.right")
                 }
-                .disabled(isJoining)
+                .buttonStyle(PrimaryButtonStyle())
             } else {
-                // Join Button
                 Button(action: joinCommunity) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Spacing.s) {
                         if isJoining {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        } else {
-                            Image(systemName: "person.badge.plus")
-                                .font(.system(size: 18))
+                            ProgressView().tint(Color.onGold)
                         }
-                        
-                        Text(isJoining ? "Joining..." : "Join Community")
-                            .font(.headline)
-                            .fontWeight(.semibold)
+                        Text(isJoining ? "Joining…" : "Join community")
                     }
-                    .foregroundColor(.arkadBlack)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.arkadGold, Color.arkadGold.opacity(0.9)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    )
-                    .shadow(color: .arkadGold.opacity(0.3), radius: 8, x: 0, y: 4)
                 }
+                .buttonStyle(PrimaryButtonStyle())
                 .disabled(isJoining)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
-        .background(
-            // Gradient overlay to separate from content
-            LinearGradient(
-                colors: [Color.clear, Color.backgroundPrimary.opacity(0.8), Color.backgroundPrimary],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .padding(.horizontal, DS.pageMargin)
+        .padding(.top, DS.Spacing.m)
+        .padding(.bottom, DS.Spacing.s)
+        .background(Color.appBackground.ignoresSafeArea())
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.hairline).frame(height: 1)
+        }
     }
-    
+
     // MARK: - Helper Methods
     private func joinCommunity() {
         isJoining = true
         onJoin()
         dismiss()
-    }
-    
-    private func getCommunityColor() -> Color {
-        community.type.tint
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM yyyy"
-        return formatter.string(from: date)
     }
 }
 
@@ -466,24 +175,18 @@ struct CommunityPreviewSheet: View {
 #Preview {
     let sampleCommunity = Community(
         name: "Crypto Elite Traders",
-        description: "Advanced cryptocurrency trading community focused on technical analysis, market trends, and profitable trading strategies. We share insights, discuss market movements, and help each other grow as traders.",
+        description: "Advanced cryptocurrency trading community focused on technical analysis and market trends.",
         type: .crypto,
         creatorId: "user123",
         memberCount: 1247,
         isPrivate: false
     )
-    
+
     CommunityPreviewSheet(
         community: sampleCommunity,
         isUserMember: false,
-        onJoin: {
-            print("Join tapped")
-        },
-        onEnterCommunity: {
-            print("Enter community tapped")
-        },
-        onClose: {
-            print("Close tapped")
-        }
+        onJoin: {},
+        onEnterCommunity: {},
+        onClose: {}
     )
 }

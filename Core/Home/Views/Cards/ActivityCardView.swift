@@ -1,75 +1,53 @@
-//
-//  ActivityCardView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/16/25.
-//
+// File: Core/Home/Views/Cards/ActivityCardView.swift
+// An activity item (joined a community, closed a trade…) in the Following feed.
 
 import SwiftUI
 
 struct ActivityCardView: View {
     let activity: ActivityItem
-    
+
     var body: some View {
-        HStack(spacing: 12) {
-            // Activity type icon
-            ZStack {
-                Circle()
-                    .fill(activity.activityType.color.opacity(0.1))
-                    .frame(width: 40, height: 40)
-                
-                Image(systemName: activity.activityType.icon)
-                    .foregroundColor(activity.activityType.color)
-                    .font(.system(size: 18, weight: .medium))
-            }
-            
-            // Activity content
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            IconWell(systemName: activity.activityType.icon, tint: activity.activityType.color, size: 40)
+
+            VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                HStack(spacing: 6) {
                     Text("@\(activity.username)")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    
-                    Spacer()
-                    
-                    Text(activity.createdAt.formatted(.relative(presentation: .named)))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    Text("· \(activity.createdAt.feedRelativeText)")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
-                
+
                 Text(activity.content)
-                    .font(.body)
-                    .foregroundColor(.primary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(3)
-                
-                // Activity type badge
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Text(activity.activityType.displayName)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(activity.activityType.color.opacity(0.1))
-                    .foregroundColor(activity.activityType.color)
-                    .cornerRadius(8)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
-            
-            Spacer()
         }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+        .accessibilityElement(children: .combine)
     }
 }
 
-// Extension for activity type colors
+// Colour for each activity type (readable in light and dark mode)
 extension ActivityItem.ActivityType {
     var color: Color {
         switch self {
-        case .newPost: return .blue
-        case .newTrade: return .green
-        case .joinedCommunity: return .orange
+        case .newPost: return .info
+        case .newTrade: return .marketGreen
+        case .joinedCommunity: return .goldText
         case .tradeClosed: return .purple
-        case .achievement: return .yellow
+        case .achievement: return .warning
         }
     }
 }

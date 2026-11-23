@@ -211,76 +211,65 @@ extension ChannelChatView {
 // MARK: - Emoji Picker Overlay Extension
 extension ChannelChatView {
     var emojiPickerOverlay: some View {
-        ZStack {
-            // Dark overlay
-            Color.black.opacity(0.3)
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.25)
                 .ignoresSafeArea()
                 .onTapGesture {
                     showEmojiPicker = false
                     emojiPickerForMessage = nil
                 }
-            
-            VStack {
-                Spacer()
-                
-                // Emoji Picker Card
-                VStack(spacing: 0) {
-                    // Handle bar
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(Color.secondary.opacity(0.5))
-                        .frame(width: 36, height: 5)
-                        .padding(.top, 8)
-                    
-                    // Header
-                    HStack {
-                        Text(emojiPickerForMessage != nil ? "React to message" : "Add emoji")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Spacer()
-                        
-                        Button("Done") {
-                            showEmojiPicker = false
-                            emojiPickerForMessage = nil
-                        }
-                        .fontWeight(.semibold)
-                        .foregroundColor(.accentColor)
+
+            VStack(spacing: 0) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.4))
+                    .frame(width: 36, height: 5)
+                    .padding(.top, DS.Spacing.s)
+
+                HStack {
+                    Text(emojiPickerForMessage != nil ? "React to message" : "Add emoji")
+                        .font(.headline)
+                    Spacer()
+                    Button("Done") {
+                        showEmojiPicker = false
+                        emojiPickerForMessage = nil
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    
-                    Divider()
-                    
-                    // Emoji Grid
-                    emojiGrid
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
                 }
-                .background(Color(.systemBackground))
-                .cornerRadius(16, corners: [.topLeft, .topRight])
-                .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: -5)
+                .padding(.horizontal, DS.Spacing.xl)
+                .padding(.vertical, DS.Spacing.m)
+
+                emojiGrid
             }
+            .background(
+                UnevenRoundedRectangle(topLeadingRadius: DS.Radius.xl, topTrailingRadius: DS.Radius.xl, style: .continuous)
+                    .fill(Color.surface)
+                    .ignoresSafeArea(edges: .bottom)
+            )
+            .transition(.move(edge: .bottom))
         }
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showEmojiPicker)
+        .transition(.opacity)
+        .animation(.snappy(duration: 0.3), value: showEmojiPicker)
     }
     
     var emojiGrid: some View {
         ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 16) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 8), spacing: 8) {
                 ForEach(EmojiData.popularEmojis, id: \.self) { emoji in
                     Button(action: {
                         handleEmojiSelection(emoji)
                     }) {
                         Text(emoji)
                             .font(.title2)
-                            .frame(width: 44, height: 44)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(22)
+                            .frame(width: 42, height: 42)
+                            .background(Circle().fill(Color.surfaceRaised))
                     }
                     .buttonStyle(EmojiButtonStyle())
+                    .accessibilityLabel(emoji)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.horizontal, DS.Spacing.l)
+            .padding(.bottom, DS.Spacing.l)
         }
         .frame(height: 300)
     }

@@ -1,5 +1,5 @@
 // File: Core/Settings/Views/AboutView.swift
-// About: version, release notes, plain-language terms and privacy summaries,
+// About: version, release notes, Terms of Service and Privacy Policy,
 // open source licenses, and a link to Contact Support.
 
 import SwiftUI
@@ -13,9 +13,9 @@ struct AboutView: View {
     @State private var showingContactSupport = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: DS.Spacing.xl) {
                     appHeaderSection
                     appInfoSection
                     legalSection
@@ -24,22 +24,23 @@ struct AboutView: View {
 
                     Text(AppInfo.copyright)
                         .font(.caption)
-                        .foregroundColor(.gray)
-                        .padding(.top, 8)
-
-                    Spacer(minLength: 30)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, DS.Spacing.xs)
                 }
-                .padding()
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
-            .navigationTitle("About ArkadTrader")
+            .screenBackground()
+            .navigationTitle("About Arkad")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                 }
             }
         }
@@ -57,328 +58,165 @@ struct AboutView: View {
         }
     }
 
-    // MARK: - App Header Section
-    private var appHeaderSection: some View {
-        VStack(spacing: 20) {
-            RoundedRectangle(cornerRadius: 20)
-                .fill(
-                    LinearGradient(
-                        gradient: Gradient(colors: [Color.arkadGold, Color.arkadGoldLight]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 100, height: 100)
-                .overlay(
-                    Text("AT")
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundColor(.white)
-                )
-                .shadow(color: Color.arkadGold.opacity(0.4), radius: 10, x: 0, y: 5)
+    // MARK: - App Header
 
-            VStack(spacing: 8) {
-                Text("ArkadTrader")
-                    .font(.title)
-                    .fontWeight(.bold)
+    private var appHeaderSection: some View {
+        VStack(spacing: DS.Spacing.l) {
+            ArkadLogo(height: 56)
+                .frame(maxWidth: 220)
+
+            VStack(spacing: 6) {
+                Text("Trading. Simplified.")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
 
                 Text(AppInfo.versionLine)
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-
-                Text("Trading. Simplified.")
-                    .font(.caption)
-                    .foregroundColor(.arkadGoldDark)
-                    .fontWeight(.medium)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-        )
+        .padding(.vertical, DS.Spacing.l)
+        .cardStyle(padding: DS.Spacing.xl)
     }
 
-    // MARK: - App Information Section
+    // MARK: - App Information
+
     private var appInfoSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("App Information")
-                .font(.headline)
-                .fontWeight(.semibold)
-
-            VStack(spacing: 12) {
-                InfoRow(
-                    icon: "iphone",
-                    title: "Compatibility",
-                    value: "iOS \(AppInfo.minimumIOSVersion) or later",
-                    color: .green
-                )
-
-                InfoRow(
-                    icon: "globe",
-                    title: "Language",
-                    value: "English",
-                    color: .purple
-                )
-
-                LegalRow(
-                    icon: "doc.text",
-                    title: "Release Notes",
-                    description: "What's in version \(AppInfo.version)",
-                    color: .blue
-                ) {
-                    showingReleaseNotes = true
-                }
+        SettingsGroupCard(title: "App") {
+            SettingsRowLabel(
+                icon: "iphone",
+                title: "Compatibility",
+                value: "iOS \(AppInfo.minimumIOSVersion) or later",
+                accessory: .none
+            )
+            SettingsRowDivider()
+            SettingsRowLabel(icon: "globe", title: "Language", value: "English", accessory: .none)
+            SettingsRowDivider()
+            SettingsListRow(
+                icon: "sparkles",
+                title: "Release notes",
+                subtitle: "What's in version \(AppInfo.version)"
+            ) {
+                showingReleaseNotes = true
             }
         }
     }
 
-    // MARK: - Legal Section
+    // MARK: - Legal
+
     private var legalSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Legal & Privacy")
-                .font(.headline)
-                .fontWeight(.semibold)
-
-            VStack(spacing: 12) {
-                LegalRow(
-                    icon: "doc.text",
-                    title: "Terms of Service",
-                    description: "The rules for using ArkadTrader",
-                    color: .blue
-                ) {
-                    legalDocument = .terms
-                }
-
-                LegalRow(
-                    icon: "hand.raised",
-                    title: "Privacy Policy",
-                    description: "What data the app stores and who can see it",
-                    color: .green
-                ) {
-                    legalDocument = .privacy
-                }
-
-                LegalRow(
-                    icon: "list.bullet",
-                    title: "Open Source Licenses",
-                    description: "Third-party software used in the app",
-                    color: .purple
-                ) {
-                    showingLicenses = true
-                }
+        SettingsGroupCard(title: "Legal & privacy") {
+            SettingsListRow(
+                icon: "doc.text",
+                title: "Terms of Service",
+                subtitle: "The rules for using Arkad"
+            ) {
+                legalDocument = .terms
+            }
+            SettingsRowDivider()
+            SettingsListRow(
+                icon: "hand.raised",
+                title: "Privacy Policy",
+                subtitle: "What data the app stores and who can see it"
+            ) {
+                legalDocument = .privacy
+            }
+            SettingsRowDivider()
+            SettingsListRow(
+                icon: "list.bullet.rectangle",
+                title: "Open source licenses",
+                subtitle: "Third-party software used in the app"
+            ) {
+                showingLicenses = true
             }
         }
     }
 
-    // MARK: - Development Section
+    // MARK: - Development
+
     private var developmentSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Development")
-                .font(.headline)
-                .fontWeight(.semibold)
-
-            VStack(spacing: 12) {
-                InfoRow(
-                    icon: "person.circle",
-                    title: "Developer",
-                    value: "Arkad",
-                    color: .blue
-                )
-
-                InfoRow(
-                    icon: "hammer",
-                    title: "Built with",
-                    value: "SwiftUI & Firebase",
-                    color: .orange
-                )
-            }
+        SettingsGroupCard(title: "Development") {
+            SettingsRowLabel(icon: "person.circle", title: "Developer", value: "Arkad", accessory: .none)
+            SettingsRowDivider()
+            SettingsRowLabel(icon: "hammer", title: "Built with", value: "SwiftUI & Firebase", accessory: .none)
         }
     }
 
-    // MARK: - Support Section
+    // MARK: - Support
+
     private var supportSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Support & Feedback")
-                .font(.headline)
-                .fontWeight(.semibold)
-
-            VStack(spacing: 12) {
-                SupportActionRow(
-                    icon: "envelope",
-                    title: "Contact Support",
-                    description: "Email us with a question or a problem",
-                    color: .blue
-                ) {
-                    showingContactSupport = true
-                }
-
-                ShareLink(item: "I'm using ArkadTrader to log my trades and share results with other traders.") {
-                    SupportActionLabel(
-                        icon: "square.and.arrow.up",
-                        title: "Share ArkadTrader",
-                        description: "Tell your friends about the app",
-                        color: .green
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
+        SettingsGroupCard(title: "Support & feedback") {
+            SettingsListRow(
+                icon: "envelope",
+                title: "Contact support",
+                subtitle: "Email us with a question or a problem"
+            ) {
+                showingContactSupport = true
             }
-        }
-    }
-}
-
-// MARK: - Supporting Views
-
-struct InfoRow: View {
-    let icon: String
-    let title: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundColor(color)
-                .frame(width: 24)
-
-            Text(title)
-                .foregroundColor(.primary)
-                .fontWeight(.medium)
-
-            Spacer()
-
-            Text(value)
-                .foregroundColor(.gray)
-                .font(.subheadline)
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-struct LegalRow: View {
-    let icon: String
-    let title: String
-    let description: String
-    let color: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .frame(width: 24)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .foregroundColor(.primary)
-                        .fontWeight(.medium)
-
-                    Text(description)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
-                    .font(.caption)
+            SettingsRowDivider()
+            ShareLink(item: "I'm using Arkad to journal my trades and learn with other traders in communities.") {
+                SettingsRowLabel(
+                    icon: "square.and.arrow.up",
+                    title: "Share Arkad",
+                    subtitle: "Tell your friends about the app"
+                )
             }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .buttonStyle(SettingsRowButtonStyle())
         }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-struct SupportActionRow: View {
-    let icon: String
-    let title: String
-    let description: String
-    let color: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            SupportActionLabel(icon: icon, title: title, description: description, color: color)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-struct SupportActionLabel: View {
-    let icon: String
-    let title: String
-    let description: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundColor(color)
-                .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .foregroundColor(.primary)
-                    .fontWeight(.medium)
-
-                Text(description)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .foregroundColor(.gray)
-                .font(.caption)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
     }
 }
 
 // MARK: - Licenses View
+
 struct LicensesView: View {
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        NavigationView {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Firebase iOS SDK")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        Text("Apache License 2.0")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Text("Copyright Google LLC. Used for sign-in, the database, file storage and analytics. It includes supporting Google libraries under their own open source licenses.")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                    }
-                    .padding(.vertical, 4)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    SettingsGroupCard(title: "Open source libraries") {
+                        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("Firebase iOS SDK")
+                                    .font(.headline)
+                                Spacer()
+                                Tag(text: "Apache 2.0")
+                            }
+                            Text("Copyright Google LLC. Used for sign-in, the database, file storage and analytics. It includes supporting Google libraries under their own open source licenses.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(DS.Spacing.l)
 
-                    Link("Read the Apache License 2.0", destination: URL(string: "https://www.apache.org/licenses/LICENSE-2.0")!)
-                        .foregroundColor(.arkadGoldDark)
-                } header: {
-                    Text("Open Source Libraries")
+                        SettingsRowDivider()
+
+                        Link(destination: URL(string: "https://www.apache.org/licenses/LICENSE-2.0")!) {
+                            SettingsRowLabel(
+                                icon: "doc.plaintext",
+                                title: "Read the Apache License 2.0",
+                                accessory: .external
+                            )
+                        }
+                        .buttonStyle(SettingsRowButtonStyle())
+                    }
                 }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
-            .listStyle(InsetGroupedListStyle())
+            .screenBackground()
             .navigationTitle("Licenses")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                 }
             }
         }
@@ -386,6 +224,7 @@ struct LicensesView: View {
 }
 
 // MARK: - Release Notes View
+
 struct ReleaseNotesView: View {
     @Environment(\.dismiss) var dismiss
 
@@ -399,33 +238,52 @@ struct ReleaseNotesView: View {
         "Communities with channels, chat and trade callouts",
         "Leaderboards ranked by closed trades",
         "Search for people, posts, trades and communities",
-        "Export your trades and posts as CSV files, and delete your account in Settings"
+        "Export your trades and posts as CSV files, and delete your account in Settings",
+        "Light and dark mode"
     ]
 
     var body: some View {
-        NavigationView {
-            List {
-                Section("Version \(AppInfo.version): first release") {
-                    ForEach(changes, id: \.self) { change in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("•")
-                                .foregroundColor(.arkadGoldDark)
-                            Text(change)
-                                .font(.body)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Version \(AppInfo.version)")
+                            .font(.system(size: 28, weight: .bold))
+                        Text("First release")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                        ForEach(changes, id: \.self) { change in
+                            HStack(alignment: .top, spacing: DS.Spacing.m) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.goldText)
+                                    .padding(.top, 1)
+                                Text(change)
+                                    .font(.subheadline)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
                         }
                     }
+                    .cardStyle()
                 }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
-            .listStyle(InsetGroupedListStyle())
+            .screenBackground()
             .navigationTitle("Release Notes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                 }
             }
         }

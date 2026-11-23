@@ -1,5 +1,6 @@
 // File: Core/Communities/Views/Callouts/CalloutCardView.swift
-// Card shown in chat for a structured trade callout.
+// Card shown in chat for a structured trade callout: ticker, direction, status,
+// entry / stop / target levels and the Track in Portfolio action.
 
 import SwiftUI
 
@@ -12,154 +13,167 @@ struct CalloutCardView: View {
     let onUpdateStatus: (TradeCallout.Status) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
             header
             levels
             if let note = callout.note, !note.isEmpty {
                 Text(note)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(Color.primary.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)
             }
             actions
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(callout.direction.color.opacity(0.35), lineWidth: 1)
-        )
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(callout.direction.color)
-                .frame(width: 4)
-                .padding(.vertical, 12)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(callout.direction.displayName) callout on \(callout.ticker), entry \(callout.entryPrice.asCurrency), status \(callout.status.displayName)")
+        .cardStyle(padding: DS.Spacing.l, radius: DS.Radius.l)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
     }
 
-    // MARK: - Sections
+    private var accessibilitySummary: String {
+        var parts = ["\(callout.direction.displayName) callout on \(callout.ticker)",
+                     "entry \(TradeCallout.formatPrice(callout.entryPrice))"]
+        if let stop = callout.stopPrice { parts.append("stop \(TradeCallout.formatPrice(stop))") }
+        if let target = callout.targetPrice { parts.append("target \(TradeCallout.formatPrice(target))") }
+        parts.append("status \(callout.status.displayName)")
+        return parts.joined(separator: ", ")
+    }
+
+    // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "megaphone.fill")
-                .font(.caption)
-                .foregroundColor(.arkadGold)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(Color.arkadGold.opacity(0.15)))
+        HStack(alignment: .center, spacing: DS.Spacing.m) {
+            IconWell(systemName: callout.direction.icon, tint: callout.direction.color, size: 40)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text("$\(callout.ticker)")
-                        .font(.headline)
-                    Label(callout.direction.displayName, systemImage: callout.direction.icon)
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(callout.direction.color)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(callout.direction.color.opacity(0.12)))
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Tag(text: callout.direction.displayName.uppercased(), tint: callout.direction.color)
                 }
-                Text("\(callout.assetType.displayName) callout")
+                Label("\(callout.assetType.displayName) callout", systemImage: "megaphone.fill")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
             }
 
-            Spacer()
+            Spacer(minLength: DS.Spacing.s)
 
-            Text(callout.status.displayName)
-                .font(.caption.weight(.semibold))
-                .foregroundColor(callout.status.color)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(callout.status.color.opacity(0.12)))
+            Tag(text: callout.status.displayName, systemImage: callout.status.icon, tint: callout.status.color)
         }
     }
+
+    // MARK: - Levels
 
     private var levels: some View {
         HStack(spacing: 0) {
-            levelColumn(title: "Entry", value: callout.entryPrice.asCurrency, detail: nil, color: .primary)
-            Divider().frame(height: 36)
+            levelColumn(title: "Entry", value: TradeCallout.formatPrice(callout.entryPrice), detail: nil, color: .primary)
+            levelDivider
             levelColumn(
                 title: "Stop",
-                value: callout.stopPrice?.asCurrency ?? "—",
+                value: callout.stopPrice.map(TradeCallout.formatPrice) ?? "—",
                 detail: callout.stopPrice.map { String(format: "%+.1f%%", callout.percentMove(to: $0)) },
-                color: .marketRed
+                color: callout.stopPrice == nil ? .secondary : .marketRed
             )
-            Divider().frame(height: 36)
+            levelDivider
             levelColumn(
                 title: "Target",
-                value: callout.targetPrice?.asCurrency ?? "—",
+                value: callout.targetPrice.map(TradeCallout.formatPrice) ?? "—",
                 detail: callout.targetPrice.map { String(format: "%+.1f%%", callout.percentMove(to: $0)) },
-                color: .marketGreen
+                color: callout.targetPrice == nil ? .secondary : .marketGreen
             )
             if let rr = callout.riskReward {
-                Divider().frame(height: 36)
-                levelColumn(title: "R:R", value: String(format: "%.1f", rr), detail: nil, color: .arkadGold)
+                levelDivider
+                levelColumn(title: "R:R", value: String(format: "%.1f", rr), detail: nil, color: .goldText)
             }
         }
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.tertiarySystemGroupedBackground)))
+        .padding(.vertical, DS.Spacing.m)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).fill(Color.surfaceRaised)
+        )
+    }
+
+    private var levelDivider: some View {
+        Rectangle()
+            .fill(Color.hairline)
+            .frame(width: 1, height: 34)
     }
 
     private func levelColumn(title: String, value: String, detail: String?, color: Color) -> some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 3) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.secondary)
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
             Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundColor(color)
+                .arkadNumber(15)
+                .foregroundStyle(color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.6)
             if let detail {
                 Text(detail)
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundColor(.secondary)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
+        .padding(.horizontal, 4)
     }
 
+    // MARK: - Actions
+
     private var actions: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.Spacing.s) {
             Button(action: onTrack) {
-                Label("Track in Portfolio", systemImage: "plus.circle.fill")
-                    .font(.subheadline.weight(.semibold))
+                Label(callout.status == .open ? "Track in Portfolio" : "Callout \(callout.status.displayName.lowercased())",
+                      systemImage: callout.status == .open ? "plus" : callout.status.icon)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.arkadGold))
-                    .foregroundColor(.black)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PillButtonStyle(kind: callout.status == .open ? .gold : .neutral))
             .disabled(callout.status != .open)
-            .opacity(callout.status == .open ? 1 : 0.5)
 
             if canManage {
                 Menu {
-                    ForEach(TradeCallout.Status.allCases, id: \.self) { status in
-                        Button {
-                            onUpdateStatus(status)
-                        } label: {
-                            if status == callout.status {
-                                Label(status.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(status.displayName)
+                    Section("Update status") {
+                        ForEach(TradeCallout.Status.allCases, id: \.self) { status in
+                            Button {
+                                onUpdateStatus(status)
+                            } label: {
+                                if status == callout.status {
+                                    Label(status.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(status.displayName)
+                                }
                             }
                         }
                     }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.subheadline.weight(.bold))
-                        .frame(width: 40, height: 36)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(.tertiarySystemGroupedBackground)))
-                        .foregroundColor(.primary)
+                        .foregroundStyle(Color.primary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.surfaceRaised))
                 }
                 .accessibilityLabel("Update callout status")
             }
         }
     }
+}
+
+#Preview {
+    CalloutCardView(
+        callout: TradeCallout(
+            ticker: "AAPL", assetType: .stock, direction: .long,
+            entryPrice: 182.45, stopPrice: 178, targetPrice: 195,
+            note: "Breakout over the 50-day with volume."
+        ),
+        authorUsername: "trader",
+        canManage: true,
+        onTrack: {},
+        onUpdateStatus: { _ in }
+    )
+    .padding()
+    .screenBackground()
 }

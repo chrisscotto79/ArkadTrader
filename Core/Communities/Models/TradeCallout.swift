@@ -30,12 +30,27 @@ struct TradeCallout: Codable, Equatable {
 
         var color: Color {
             switch self {
-            case .open: return .blue
+            case .open: return .goldText
             case .targetHit: return .marketGreen
             case .stoppedOut: return .marketRed
             case .closed: return .secondary
             }
         }
+
+        var icon: String {
+            switch self {
+            case .open: return "circle.fill"
+            case .targetHit: return "checkmark.circle.fill"
+            case .stoppedOut: return "xmark.octagon.fill"
+            case .closed: return "lock.fill"
+            }
+        }
+    }
+
+    /// Price with cents ("$182.45"), or more decimals for sub-dollar prices ("$0.0042").
+    static func formatPrice(_ price: Double) -> String {
+        let digits = abs(price) < 1 ? 4 : 2
+        return price.formatted(.currency(code: "USD").precision(.fractionLength(digits)))
     }
 
     var ticker: String

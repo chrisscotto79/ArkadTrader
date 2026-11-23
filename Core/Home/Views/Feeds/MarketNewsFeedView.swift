@@ -1,5 +1,5 @@
 // File: Core/Home/Views/Feeds/MarketNewsFeedView.swift
-// Market news feed: top stories carousel and the latest articles (Finnhub).
+// Market news feed: a top stories carousel and the latest articles (Finnhub).
 
 import SwiftUI
 
@@ -8,24 +8,27 @@ import SwiftUI
 struct MarketNewsFeedView: View {
     @ObservedObject var homeViewModel: HomeViewModel
     @State private var selectedArticle: MarketNewsArticle?
-    
+
     var body: some View {
         Group {
             if homeViewModel.isLoadingNews && homeViewModel.marketNews.isEmpty {
-                LoadingNewsView()
+                HomeFeedLoadingView(message: "Loading market news…")
             } else if homeViewModel.marketNews.isEmpty {
-                EmptyNewsView {
-                    Task {
-                        await homeViewModel.loadMarketNews()
-                    }
+                EmptyStateView(
+                    systemImage: "newspaper.fill",
+                    title: "No market news",
+                    message: "We couldn't load the latest headlines. Check your connection and try again.",
+                    actionTitle: "Try again"
+                ) {
+                    Task { await homeViewModel.loadMarketNews() }
                 }
             } else {
-                VStack(spacing: 24) {
-                    if !homeViewModel.getTopStories().isEmpty {
-                        topStoriesSection
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    let topStories = homeViewModel.getTopStories()
+                    if !topStories.isEmpty {
+                        topStoriesSection(topStories)
                     }
-                    
-                    allNewsSection
+                    latestSection
                 }
             }
         }
@@ -38,468 +41,259 @@ struct MarketNewsFeedView: View {
             ArticleDetailView(article: article)
         }
     }
-    
-    // MARK: - Top Stories Section
-    private var topStoriesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Top Stories")
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-                .padding(.horizontal)
-            
+
+    // MARK: - Top stories
+
+    private func topStoriesSection(_ stories: [MarketNewsArticle]) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Top stories")
+                .padding(.horizontal, DS.pageMargin)
+
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
-                    ForEach(homeViewModel.getTopStories(), id: \.id) { article in
-                        TopStoryCard(article: article) {
+                LazyHStack(spacing: DS.Spacing.m) {
+                    ForEach(stories, id: \.id) { article in
+                        Button {
                             selectedArticle = article
+                        } label: {
+                            TopStoryCard(article: article)
                         }
+                        .buttonStyle(PressableStyle())
                     }
                 }
-                .padding(.horizontal)
+                .scrollTargetLayout()
             }
+            .contentMargins(.horizontal, DS.pageMargin, for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
         }
     }
-    
-    // MARK: - All News Section
-    private var allNewsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Latest News")
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-                .padding(.horizontal)
-            
-            LazyVStack(spacing: 16) {
+
+    // MARK: - Latest
+
+    private var latestSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Latest")
+
+            LazyVStack(spacing: DS.Spacing.s) {
                 ForEach(homeViewModel.getRegularNews(), id: \.id) { article in
-                    NewsArticleCard(article: article) {
+                    Button {
                         selectedArticle = article
+                    } label: {
+                        NewsArticleRow(article: article)
                     }
-                    .padding(.horizontal)
+                    .buttonStyle(PressableStyle())
                 }
             }
         }
+        .padding(.horizontal, DS.pageMargin)
     }
+}
+
+// MARK: - Shared bits
+
+/// Remote news image with a quiet placeholder while it loads or when it fails.
+private struct NewsImage: View {
+    let urlString: String?
+    var iconSize: Font = .title2
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(Color.surfaceRaised)
+            if let urlString, !urlString.isEmpty, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        placeholderIcon
+                    default:
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            } else {
+                placeholderIcon
+            }
+        }
+        .clipped()
+        .accessibilityHidden(true)
+    }
+
+    private var placeholderIcon: some View {
+        Image(systemName: "newspaper")
+            .font(iconSize)
+            .foregroundStyle(.tertiary)
+    }
+}
+
+/// "Reuters · 2h ago"
+private func newsByline(_ article: MarketNewsArticle) -> String {
+    let source = (article.source?.isEmpty == false) ? article.source! : "Market news"
+    let time = article.relativePublishedText
+    return time.isEmpty ? source : "\(source) · \(time)"
 }
 
 // MARK: - Top Story Card
-struct TopStoryCard: View {
+
+private struct TopStoryCard: View {
     let article: MarketNewsArticle
-    let onTap: () -> Void
-    @State private var imageLoadError = false
-    
+
     var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 12) {
-                // Image
-                if let imageUrl = article.imageUrl, !imageUrl.isEmpty, !imageLoadError {
-                    AsyncImage(url: URL(string: imageUrl)) { phase in
-                        switch phase {
-                        case .empty:
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(width: 280, height: 160)
-                                .overlay(
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                )
-                                .cornerRadius(12)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 280, height: 160)
-                                .clipped()
-                                .cornerRadius(12)
-                        case .failure(_):
-                            newsImagePlaceholder
-                                .onAppear { imageLoadError = true }
-                        @unknown default:
-                            newsImagePlaceholder
-                        }
-                    }
-                } else {
-                    newsImagePlaceholder
-                }
-                
-                // Content
-                VStack(alignment: .leading, spacing: 8) {
-                    // Source and Time
-                    HStack {
-                        Text(article.source ?? "Market News")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                        
-                        Spacer()
-                        
-                        Text(article.relativePublishedText)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    // Title
-                    Text(article.title)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .foregroundColor(.primary)
-                    
-                    // Category Tag
-                    if let category = article.category {
-                        Text(category.uppercased())
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(categoryColor(for: category))
-                            .cornerRadius(4)
-                    }
-                }
-                .padding(.horizontal, 4)
+        VStack(alignment: .leading, spacing: 0) {
+            NewsImage(urlString: article.imageUrl, iconSize: .largeTitle)
+                .frame(width: 280, height: 158)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(newsByline(article))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Text(article.title)
+                    .font(.headline)
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                Spacer(minLength: 0)
             }
+            .padding(DS.Spacing.m)
+            .frame(width: 280, height: 112, alignment: .topLeading)
         }
-        .frame(width: 280)
-        .buttonStyle(PlainButtonStyle())
+        .background(Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous)
+                .strokeBorder(Color.hairline, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
-    
-    private var newsImagePlaceholder: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [Color.blue.opacity(0.1), Color.blue.opacity(0.2)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .frame(width: 280, height: 160)
-            .overlay(
-                Image(systemName: "newspaper.fill")
-                    .font(.largeTitle)
-                    .foregroundColor(.blue.opacity(0.5))
-            )
-            .cornerRadius(12)
-    }
-    
-    private func categoryColor(for category: String) -> Color {
-        switch category.lowercased() {
-        case "general": return .blue
-        case "forex": return .green
-        case "crypto": return .orange
-        case "merger": return .purple
-        default: return .gray
-        }
-    }
-    
 }
 
-// MARK: - News Article Card
-struct NewsArticleCard: View {
+// MARK: - News Article Row
+
+private struct NewsArticleRow: View {
     let article: MarketNewsArticle
-    let onTap: () -> Void
-    @State private var imageLoadError = false
-    
+
     var body: some View {
-        Button(action: onTap) {
-            HStack(alignment: .top, spacing: 16) {
-                // Article Image
-                if let imageUrl = article.imageUrl, !imageUrl.isEmpty, !imageLoadError {
-                    AsyncImage(url: URL(string: imageUrl)) { phase in
-                        switch phase {
-                        case .empty:
-                            imagePlaceholder
-                                .overlay(
-                                    ProgressView()
-                                        .scaleEffect(0.6)
-                                )
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 100, height: 100)
-                                .clipped()
-                                .cornerRadius(12)
-                        case .failure(_):
-                            imagePlaceholder
-                                .onAppear { imageLoadError = true }
-                        @unknown default:
-                            imagePlaceholder
-                        }
-                    }
-                } else {
-                    imagePlaceholder
-                }
-                
-                // Article Content
-                VStack(alignment: .leading, spacing: 8) {
-                    // Source
-                    HStack {
-                        Image(systemName: "newspaper")
-                            .font(.caption2)
-                            .foregroundColor(.blue)
-                        
-                        Text(article.source ?? "Market News")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                    }
-                    
-                    // Title
-                    Text(article.title)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .foregroundColor(.primary)
-                    
-                    // Description
-                    if let description = article.description {
-                        Text(description)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    // Time
-                    Text(article.relativePublishedText)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                // Chevron
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.gray.opacity(0.5))
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(newsByline(article))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Text(article.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
             }
-            .padding()
-            .background(Color.white)
-            .cornerRadius(16)
-            .shadow(color: .gray.opacity(0.1), radius: 4, x: 0, y: 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let imageUrl = article.imageUrl, !imageUrl.isEmpty {
+                NewsImage(urlString: imageUrl, iconSize: .body)
+                    .frame(width: 76, height: 76)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+            }
         }
-        .buttonStyle(PlainButtonStyle())
+        .cardStyle(padding: 14, radius: DS.Radius.m)
+        .accessibilityElement(children: .combine)
     }
-    
-    private var imagePlaceholder: some View {
-        Rectangle()
-            .fill(Color.blue.opacity(0.1))
-            .frame(width: 100, height: 100)
-            .overlay(
-                Image(systemName: "newspaper")
-                    .font(.title2)
-                    .foregroundColor(.blue.opacity(0.5))
-            )
-            .cornerRadius(12)
-    }
-    
 }
 
 // MARK: - Article Detail View
-struct ArticleDetailView: View {
+
+private struct ArticleDetailView: View {
     let article: MarketNewsArticle
     @Environment(\.dismiss) var dismiss
     @Environment(\.openURL) var openURL
-    @State private var imageLoadError = false
-    
+
+    private var keywords: [String] {
+        article.keywords
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .prefix(5)
+            .map { $0 }
+    }
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Article Image
-                    if let imageUrl = article.imageUrl, !imageUrl.isEmpty, !imageLoadError {
-                        AsyncImage(url: URL(string: imageUrl)) { phase in
-                            switch phase {
-                            case .empty:
-                                detailImagePlaceholder
-                                    .overlay(ProgressView())
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(maxHeight: 250)
-                                    .clipped()
-                                    .cornerRadius(16)
-                            case .failure(_):
-                                detailImagePlaceholder
-                                    .onAppear { imageLoadError = true }
-                            @unknown default:
-                                detailImagePlaceholder
-                            }
-                        }
-                    } else {
-                        detailImagePlaceholder
+                VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                    if let imageUrl = article.imageUrl, !imageUrl.isEmpty {
+                        NewsImage(urlString: imageUrl, iconSize: .system(size: 40))
+                            .frame(height: 220)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
                     }
-                    
-                    // Article Info
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Source and Date
-                        HStack {
-                            Label(article.source ?? "Market News", systemImage: "newspaper")
-                                .font(.subheadline)
-                                .foregroundColor(.blue)
-                            
-                            Spacer()
-                            
-                            Text(formatDetailDate(article))
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                        }
-                        
-                        // Title
+
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text(article.source?.isEmpty == false ? article.source! : "Market news")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.goldText)
                         Text(article.title)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .lineSpacing(4)
-                        
-                        // Category Tags
-                        if !article.keywords.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(Array(article.keywords.prefix(5)), id: \.self) { keyword in
-                                        Text(keyword)
-                                            .font(.caption)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.blue)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(Color.blue.opacity(0.1))
-                                            .cornerRadius(16)
-                                    }
+                            .font(.title2.weight(.bold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let date = formattedDate {
+                            Text(date)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if !keywords.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(keywords, id: \.self) { keyword in
+                                    Tag(text: keyword, tint: .secondary)
                                 }
                             }
                         }
-                        
-                        // Description
-                        if let description = article.description {
-                            Text(description)
-                                .font(.body)
-                                .lineSpacing(6)
-                        }
-                        
-                        // Read Full Article Button
-                        Button(action: {
-                            if let url = URL(string: article.articleUrl) {
-                                openURL(url)
-                            }
-                        }) {
-                            HStack {
-                                Text("Read Full Article")
-                                Image(systemName: "arrow.up.right.square")
-                            }
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue)
-                            .cornerRadius(12)
-                        }
-                        .padding(.top, 20)
+                        .scrollClipDisabled()
                     }
-                    .padding(.horizontal)
-                    
-                    Spacer(minLength: 50)
+
+                    if let description = article.description, !description.isEmpty {
+                        Text(description)
+                            .font(.body)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let url = URL(string: article.articleUrl) {
+                        Button {
+                            openURL(url)
+                        } label: {
+                            Label("Read full article", systemImage: "arrow.up.right")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .padding(.top, DS.Spacing.s)
+                    }
                 }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xxl)
             }
+            .screenBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     if let articleURL = URL(string: article.articleUrl) {
                         ShareLink(item: articleURL) {
                             Image(systemName: "square.and.arrow.up")
                         }
+                        .accessibilityLabel("Share article")
                     }
                 }
             }
         }
     }
-    
-    private var detailImagePlaceholder: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [Color.blue.opacity(0.1), Color.blue.opacity(0.2)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .frame(height: 250)
-            .overlay(
-                Image(systemName: "newspaper.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.blue.opacity(0.5))
-            )
-            .cornerRadius(16)
-    }
-    
-    private func formatDetailDate(_ article: MarketNewsArticle) -> String {
-        guard let date = article.publishedDate else { return "" }
+
+    private var formattedDate: String? {
+        guard let date = article.publishedDate else { return nil }
         return "\(date.formatted(date: .abbreviated, time: .shortened)) · \(article.relativePublishedText)"
-    }
-}
-
-// MARK: - Empty State Views
-
-struct EmptyNewsView: View {
-    let onRetry: () -> Void
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "newspaper")
-                .font(.system(size: 64))
-                .foregroundColor(.blue.opacity(0.7))
-            
-            VStack(spacing: 8) {
-                Text("No Market News")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Text("We couldn't fetch the latest market news. Please check your connection and try again.")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
-            
-            Button(action: onRetry) {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Text("Try Again")
-                }
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundColor(.white)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(Color.blue)
-                .cornerRadius(20)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 100)
-    }
-}
-
-struct LoadingNewsView: View {
-    var body: some View {
-        VStack(spacing: 20) {
-            ProgressView()
-                .scaleEffect(1.2)
-            
-            Text("Loading market news...")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 100)
     }
 }
 
@@ -507,4 +301,5 @@ struct LoadingNewsView: View {
     ScrollView {
         MarketNewsFeedView(homeViewModel: HomeViewModel())
     }
+    .screenBackground()
 }

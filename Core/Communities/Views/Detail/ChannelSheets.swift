@@ -4,45 +4,67 @@
 import SwiftUI
 import PhotosUI
 
-// MARK: - Enhanced Channel Row Component
+// MARK: - Channel Row
+/// One channel in the community's channel list. Sits inside a card list.
 struct EnhancedChannelRow: View {
     let channel: Channel
     let canManage: Bool
     let onOptionsPress: () -> Void
     
+    private var isCallouts: Bool { channel.type == .callouts }
+
     var body: some View {
-        HStack {
-            // Channel icon
-            Image(systemName: channel.type.icon)
-                .font(.system(size: 16))
-                .foregroundColor(.secondary)
-                .frame(width: 24)
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(
+                systemName: isCallouts ? "megaphone.fill" : "number",
+                tint: isCallouts ? .goldText : .secondary,
+                size: 36
+            )
             
-            // Channel info
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             
-            Spacer()
+            Spacer(minLength: DS.Spacing.s)
+
+            if channel.adminOnly {
+                Image(systemName: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Admins only")
+            }
             
-            // Options button for managers
             if canManage {
                 Button(action: onOptionsPress) {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                        .padding(8)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Options for #\(channel.name)")
+            } else {
+                CommunityChevron()
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(.horizontal, DS.Spacing.l)
+        .padding(.vertical, DS.Spacing.m)
+        .contentShape(Rectangle())
+    }
+
+    private var subtitle: String {
+        if isCallouts {
+            return channel.adminOnly ? "Trade callouts from admins" : "Trade callouts"
+        }
+        return channel.adminOnly ? "Announcements from admins" : "Open to every member"
     }
 }
 
@@ -70,7 +92,7 @@ struct CreateChannelSheet: View {
             Form {
                 Section {
                     HStack(spacing: 4) {
-                        Text("#").foregroundColor(.secondary)
+                        Text("#").foregroundStyle(.secondary)
                         TextField("channel-name", text: $channelName)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -81,19 +103,25 @@ struct CreateChannelSheet: View {
                         }
                     }
                 }
+                .listRowBackground(Color.surface)
 
                 Section {
                     Toggle("Only admins can post", isOn: $isAdminOnly)
                 } footer: {
                     Text("Members can still read and react. Use this for announcements and trade callouts.")
                 }
+                .listRowBackground(Color.surface)
 
                 if let errorMessage {
                     Section {
-                        Text(errorMessage).font(.footnote).foregroundColor(.marketRed)
+                        Text(errorMessage).font(.footnote).foregroundStyle(Color.marketRed)
                     }
+                    .listRowBackground(Color.surface)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .tint(Color.goldText)
             .navigationTitle(editing == nil ? "New Channel" : "Edit Channel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

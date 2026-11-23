@@ -9,25 +9,27 @@ struct ContactSupportView: View {
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                     headerSection
                     EmailSupportButton()
                     tipsSection
                 }
-                .padding()
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.l)
+                .padding(.bottom, DS.Spacing.xxl)
             }
-            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .screenBackground()
             .navigationTitle("Contact Support")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(.arkadGold)
                     .fontWeight(.semibold)
+                    .foregroundStyle(Color.goldText)
                 }
             }
         }
@@ -35,56 +37,41 @@ struct ContactSupportView: View {
 
     // MARK: - Header
     private var headerSection: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "envelope.circle.fill")
-                .foregroundColor(.arkadGold)
-                .font(.system(size: 56))
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            IconWell(systemName: "envelope.fill", size: 52)
 
             Text("How can we help?")
-                .font(.title2)
-                .fontWeight(.bold)
+                .font(.system(size: 28, weight: .bold))
+                .accessibilityAddTraits(.isHeader)
 
             Text("Email us with a question, a bug or an idea. Your app version and iOS version are added to the message for you.")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
-        )
     }
 
     // MARK: - Tips
     private var tipsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("To help us help you")
-                .font(.headline)
-                .fontWeight(.semibold)
-
-            tipRow(icon: "text.bubble", text: "Say what you were trying to do and what happened instead.")
-            tipRow(icon: "photo", text: "Attach a screenshot if something looks wrong.")
-            tipRow(icon: "person.crop.circle", text: "Send it from the email address you sign in with, so we can find your account.")
+        SettingsGroupCard(title: "To help us help you") {
+            VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                tipRow(icon: "text.bubble", text: "Say what you were trying to do and what happened instead.")
+                tipRow(icon: "photo", text: "Attach a screenshot if something looks wrong.")
+                tipRow(icon: "person.crop.circle", text: "Send it from the email address you sign in with, so we can find your account.")
+            }
+            .padding(DS.Spacing.l)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
-        )
     }
 
     private func tipRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .foregroundColor(.arkadGold)
-                .frame(width: 24)
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            IconWell(systemName: icon, size: 30)
             Text(text)
                 .font(.subheadline)
-                .foregroundColor(.primary)
+                .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 5)
+            Spacer(minLength: 0)
         }
     }
 }
@@ -96,13 +83,13 @@ enum SupportEmail {
     static var address: String { AppInfo.supportEmail }
 
     @MainActor
-    static func url(subject: String = "ArkadTrader Support") -> URL? {
+    static func url(subject: String = "Arkad Support") -> URL? {
         let body = """
 
 
         ---
         Please keep the details below, they help us look into your request.
-        App: ArkadTrader \(AppInfo.version) (\(AppInfo.build))
+        App: Arkad \(AppInfo.version) (\(AppInfo.build))
         iOS: \(UIDevice.current.systemVersion)
         Device: \(UIDevice.current.model)
         """
@@ -121,37 +108,28 @@ enum SupportEmail {
 /// A button that opens Mail with a pre-filled support email. If no mail app can
 /// handle the link, it shows the address with a Copy option instead.
 struct EmailSupportButton: View {
-    var title: String = "Email Support"
-    var subject: String = "ArkadTrader Support"
+    var title: String = "Email support"
+    var subject: String = "Arkad Support"
 
     @Environment(\.openURL) private var openURL
     @State private var showNoMailAlert = false
 
     var body: some View {
-        Button(action: sendEmail) {
-            HStack(spacing: 12) {
-                Image(systemName: "envelope.fill")
-                    .font(.title3)
-                VStack(alignment: .leading, spacing: 2) {
+        VStack(spacing: DS.Spacing.s) {
+            Button(action: sendEmail) {
+                HStack(spacing: 8) {
+                    Image(systemName: "envelope.fill")
                     Text(title)
-                        .fontWeight(.semibold)
-                    Text(SupportEmail.address)
-                        .font(.caption)
-                        .opacity(0.8)
                 }
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.caption)
             }
-            .foregroundColor(.arkadBlack)
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.arkadGold)
-            )
+            .buttonStyle(PrimaryButtonStyle())
+
+            Text(SupportEmail.address)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
-        .buttonStyle(PlainButtonStyle())
+        .frame(maxWidth: .infinity)
         .alert("Couldn't Open Mail", isPresented: $showNoMailAlert) {
             Button("Copy Address") {
                 UIPasteboard.general.string = SupportEmail.address

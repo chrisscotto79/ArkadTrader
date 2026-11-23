@@ -1,321 +1,431 @@
 // File: Core/Profile/Views/ProfileTabs.swift
-// Profile tab selector and the Posts, Trades, Portfolio and Groups tab contents.
+// Profile building blocks (hero, stats, performance, empty/loading cards) and the
+// Posts, Trades and Communities tab contents of the signed-in user's profile.
 
 import SwiftUI
 
-// MARK: - Profile Tab Selector (Reusable Component)
-struct ProfileTabSelector: View {
-    @Binding var selectedTab: ProfileTab
-    
+// MARK: - Profile Tabs
+
+enum ProfileTab: CaseIterable {
+    case posts, trades, groups
+
+    var title: String {
+        switch self {
+        case .posts: return "Posts"
+        case .trades: return "Trades"
+        case .groups: return "Communities"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .posts: return "square.and.pencil"
+        case .trades: return "chart.line.uptrend.xyaxis"
+        case .groups: return "person.3.fill"
+        }
+    }
+}
+
+// MARK: - Hero
+
+/// Large avatar, name, @username, join date and bio, followed by the profile's actions.
+struct ProfileHeroView<Actions: View>: View {
+    let user: User?
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.l) {
+            HStack(alignment: .center, spacing: DS.Spacing.l) {
+                ProfileImageView(user: user, size: 88)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(displayName)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(Color.primary)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                        if user?.isVerified == true {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.headline)
+                                .foregroundStyle(Color.goldText)
+                                .accessibilityLabel("Verified")
+                        }
+                    }
+
+                    if let username = user?.username, !username.isEmpty {
+                        Text("@\(username)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    if let user {
+                        Label(
+                            "Joined \(user.createdAt.formatted(.dateTime.month(.wide).year()))",
+                            systemImage: "calendar"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .labelStyle(ProfileCompactLabelStyle())
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if let bio = user?.bio, !bio.isEmpty {
+                Text(bio)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.primary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            actions()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var displayName: String {
+        guard let user else { return "" }
+        return user.fullName.isEmpty ? user.username : user.fullName
+    }
+}
+
+// MARK: - Stats Row
+
+struct ProfileStatItem {
+    let title: String
+    let value: String
+    /// Tappable when set (followers / following lists)
+    var action: (() -> Void)? = nil
+}
+
+/// Followers / following / trades / win rate in one card.
+struct ProfileStatsCard: View {
+    let items: [ProfileStatItem]
+
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(ProfileTab.allCases, id: \.self) { tab in
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        selectedTab = tab
-                    }
-                }) {
-                    VStack(spacing: 8) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 20, weight: selectedTab == tab ? .semibold : .medium))
-                            .foregroundColor(selectedTab == tab ? .arkadGold : .textSecondary)
-                        
-                        Text(tab.title)
-                            .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
-                            .foregroundColor(selectedTab == tab ? .arkadGold : .textSecondary)
-                        
-                        // Active indicator
-                        Circle()
-                            .fill(selectedTab == tab ? Color.arkadGold : Color.clear)
-                            .frame(width: 6, height: 6)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(selectedTab == tab ? Color.arkadGold.opacity(0.1) : Color.clear)
-                    )
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                if index > 0 {
+                    Rectangle()
+                        .fill(Color.hairline)
+                        .frame(width: 1, height: 32)
                 }
-                .buttonStyle(PlainButtonStyle())
+                statView(item)
             }
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+        .padding(.vertical, DS.Spacing.m)
+        .cardStyle(padding: 0)
+    }
+
+    @ViewBuilder
+    private func statView(_ item: ProfileStatItem) -> some View {
+        let label = VStack(spacing: 4) {
+            Text(item.value)
+                .arkadNumber(20)
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(item.title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+
+        if let action = item.action {
+            Button(action: action) { label }
+                .buttonStyle(PressableStyle())
+                .accessibilityElement(children: .combine)
+                .accessibilityHint("Shows the list")
+        } else {
+            label
+                .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+// MARK: - Performance Card (own profile)
+
+struct ProfilePerformanceCard: View {
+    let summary: PortfolioSummary
+    let bestTrade: Trade?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                HStack {
+                    Text("Performance")
+                        .font(.headline)
+                        .foregroundStyle(Color.primary)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Text("Portfolio")
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Total P&L")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text(summary.totalProfitLoss.asCurrencyWithSign)
+                        .arkadNumber(32)
+                        .foregroundStyle(Self.color(for: summary.totalProfitLoss))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+
+                HStack(alignment: .top, spacing: DS.Spacing.m) {
+                    metric("Today", summary.dayProfitLoss.asCurrencyWithSign, Self.color(for: summary.dayProfitLoss))
+                    metric("Open positions", "\(summary.openPositions)", .primary)
+                    metric("Best trade", bestTrade?.profitLoss.asCurrencyWithSign ?? "—",
+                           bestTrade.map { Self.color(for: $0.profitLoss) } ?? .secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardStyle()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityHint("Opens your portfolio")
+    }
+
+    private func metric(_ title: String, _ value: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(value)
+                .arkadNumber(15, weight: .semibold)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func color(for value: Double) -> Color {
+        if value > 0 { return .marketGreen }
+        if value < 0 { return .marketRed }
+        return .primary
+    }
+}
+
+// MARK: - Loading / Empty Cards
+
+struct ProfileTabLoadingCard: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: DS.Spacing.m) {
+            ProgressView()
+                .tint(Color.goldText)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.Spacing.xl)
+        .cardStyle(padding: 0)
+    }
+}
+
+struct ProfileEmptyCard: View {
+    let systemImage: String
+    let title: String
+    let message: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        EmptyStateView(
+            systemImage: systemImage,
+            title: title,
+            message: message,
+            actionTitle: actionTitle,
+            action: action
         )
+        .cardStyle(padding: 0)
     }
 }
 
 // MARK: - Portfolio Details Sheet
+
 struct PortfolioDetailsSheet: View {
     @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     @Environment(\.dismiss) var dismiss
-    
+
     var body: some View {
-        NavigationView {
-            PortfolioView()
-                .environmentObject(portfolioViewModel)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                        .foregroundColor(.arkadGold)
-                        .fontWeight(.semibold)
+        // PortfolioView brings its own NavigationStack and header, so the sheet only adds a Done bar.
+        PortfolioView()
+            .environmentObject(portfolioViewModel)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button("Done") {
+                        dismiss()
                     }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.goldText)
                 }
-        }
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.m)
+                .padding(.bottom, DS.Spacing.xs)
+                .background(Color.appBackground)
+            }
     }
 }
 
 // MARK: - Profile Tab Content
+
 struct ProfileTabContent: View {
     let selectedTab: ProfileTab
     @ObservedObject var portfolioViewModel: PortfolioViewModel
     @ObservedObject var postsViewModel: UserPostsViewModel
     @ObservedObject var groupsViewModel: UserGroupsViewModel
-    
+
     var body: some View {
         switch selectedTab {
         case .posts:
             UserPostsTab(postsViewModel: postsViewModel)
         case .trades:
             UserTradesTab(portfolioViewModel: portfolioViewModel)
-        case .portfolio:
-            UserPortfolioTab(portfolioViewModel: portfolioViewModel)
         case .groups:
             UserGroupsTab(groupsViewModel: groupsViewModel)
         }
     }
 }
 
-// MARK: - User Posts Tab
+// MARK: - Posts Tab
+
 struct UserPostsTab: View {
     @ObservedObject var postsViewModel: UserPostsViewModel
     @EnvironmentObject var tabRouter: TabRouter
     @State private var showAllPosts = false
-    
+
+    private var visiblePosts: [Post] {
+        showAllPosts ? postsViewModel.posts : Array(postsViewModel.posts.prefix(6))
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            if postsViewModel.isLoading {
-                // Loading state
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                        .tint(.arkadGold)
-                    
-                    Text("Loading posts...")
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                }
-                .padding(.top, 60)
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            if postsViewModel.isLoading && postsViewModel.posts.isEmpty {
+                ProfileTabLoadingCard(message: "Loading posts…")
             } else if !postsViewModel.errorMessage.isEmpty {
-                // Error state
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 48))
-                        .foregroundColor(.arkadGold.opacity(0.6))
-                    
-                    Text("Failed to Load Posts")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                    
-                    Text(postsViewModel.errorMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                    
-                    Button(action: {
-                        Task {
-                            await postsViewModel.refreshPosts()
-                        }
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Try Again")
-                        }
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.arkadGold)
-                        .cornerRadius(20)
-                    }
+                ProfileEmptyCard(
+                    systemImage: "exclamationmark.triangle",
+                    title: "Couldn't load posts",
+                    message: postsViewModel.errorMessage,
+                    actionTitle: "Try again"
+                ) {
+                    Task { await postsViewModel.refreshPosts() }
                 }
-                .padding(.top, 60)
             } else if postsViewModel.posts.isEmpty {
-                // Empty state
-                VStack(spacing: 16) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 48))
-                        .foregroundColor(.arkadGold.opacity(0.6))
-                    
-                    Text("No Posts Yet")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                    
-                    Text("Share your trading insights and market thoughts with the community")
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                    
-                    // Posts are written from the Home tab's "New Post" button
-                    Button(action: { tabRouter.selected = .home }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "plus")
-                            Text("Create Your First Post")
-                        }
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.arkadGold)
-                        .cornerRadius(20)
-                    }
+                // Posts are written from the Home tab's "New Post" button
+                ProfileEmptyCard(
+                    systemImage: "square.and.pencil",
+                    title: "No posts yet",
+                    message: "Share your trading insights and market thoughts with the community.",
+                    actionTitle: "Write a post"
+                ) {
+                    tabRouter.selected = .home
                 }
-                .padding(.top, 60)
             } else {
-                // Posts content
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("My Posts (\(postsViewModel.posts.count))")
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .foregroundColor(.textPrimary)
-                            
-                            Text("Your trading insights and updates")
-                                .font(.caption)
-                                .foregroundColor(.textSecondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if postsViewModel.posts.count > 6 {
-                            Button(action: { withAnimation { showAllPosts.toggle() } }) {
-                                HStack(spacing: 4) {
-                                    Text(showAllPosts ? "Show Less" : "View All")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Image(systemName: showAllPosts ? "chevron.up" : "chevron.down")
-                                        .font(.caption)
+                SectionHeader(
+                    title: "Posts",
+                    count: postsViewModel.posts.count,
+                    actionTitle: postsViewModel.posts.count > 6 ? (showAllPosts ? "Show less" : "Show all") : nil
+                ) {
+                    withAnimation(.snappy(duration: 0.3)) { showAllPosts.toggle() }
+                }
+
+                LazyVStack(spacing: DS.Spacing.m) {
+                    ForEach(visiblePosts, id: \.id) { post in
+                        ProfileUserPostCard(
+                            post: post,
+                            onPostDeleted: {
+                                Task {
+                                    await postsViewModel.refreshPosts()
                                 }
-                                .foregroundColor(.arkadGold)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color.arkadGold.opacity(0.1))
-                                .cornerRadius(16)
                             }
-                        }
+                        )
                     }
-                    .padding(.horizontal)
-                    
-                    // Enhanced Posts grid
-                    LazyVStack(spacing: 16) {
-                        ForEach(showAllPosts ? Array(postsViewModel.posts) : Array(postsViewModel.posts.prefix(6)), id: \.id) { post in
-                            ProfileUserPostCard(
-                                post: post,
-                                onPostDeleted: {
-                                    Task {
-                                        await postsViewModel.refreshPosts()
-                                    }
-                                }
-                            )
-                        }
-                    }
-                    .padding(.horizontal)
                 }
             }
-            
-            Spacer(minLength: 100)
-        }
-        .refreshable {
-            await postsViewModel.refreshPosts()
         }
     }
 }
 
-// MARK: - User Trades Tab
+// MARK: - Trades Tab
+
 struct UserTradesTab: View {
     @ObservedObject var portfolioViewModel: PortfolioViewModel
     @EnvironmentObject var authService: FirebaseAuthService
     @EnvironmentObject var tabRouter: TabRouter
     @State private var showAddTrade = false
-    
+
+    private var recentTrades: [Trade] {
+        Array(portfolioViewModel.trades.prefix(10))
+    }
+
+    private var topTrades: [Trade] {
+        Array(
+            portfolioViewModel.trades
+                .filter { !$0.isOpen && $0.profitLoss > 0 }
+                .sorted { $0.profitLoss > $1.profitLoss }
+                .prefix(5)
+        )
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            if portfolioViewModel.trades.isEmpty {
-                // Empty state
-                VStack(spacing: 16) {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 48))
-                        .foregroundColor(.arkadGold.opacity(0.6))
-                    
-                    Text("No Trades Yet")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                    
-                    Text("Start logging your trades to track your performance and share your success with the community")
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                    
-                    Button(action: { showAddTrade = true }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "plus")
-                            Text("Add Your First Trade")
-                        }
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.arkadGold)
-                        .cornerRadius(20)
-                    }
+        VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+            if portfolioViewModel.isLoading && portfolioViewModel.trades.isEmpty {
+                ProfileTabLoadingCard(message: "Loading trades…")
+            } else if portfolioViewModel.trades.isEmpty {
+                ProfileEmptyCard(
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    title: "No trades yet",
+                    message: "Log your trades to track your performance and share results with the community.",
+                    actionTitle: "Add your first trade"
+                ) {
+                    showAddTrade = true
                 }
-                .padding(.top, 60)
             } else {
-                // Recent trades
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Recent Trades")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Spacer()
-                        
-                        Button(action: { tabRouter.selected = .portfolio }) {
-                            Text("View All")
-                                .font(.subheadline)
-                                .foregroundColor(.arkadGold)
-                        }
-                    }
-                    .padding(.horizontal)
-                    
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(Array(portfolioViewModel.trades.prefix(10)), id: \.id) { trade in
-                                ProfileUserTradeCard(trade: trade)
+                tradeList(
+                    title: "Recent trades",
+                    count: portfolioViewModel.trades.count,
+                    trades: recentTrades,
+                    actionTitle: "See all"
+                ) {
+                    tabRouter.selected = .portfolio
+                }
+
+                if !topTrades.isEmpty {
+                    VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                        SectionHeader(title: "Top trades")
+                        VStack(spacing: 0) {
+                            ForEach(Array(topTrades.enumerated()), id: \.element.id) { index, trade in
+                                if index > 0 { ProfileRowDivider() }
+                                TopPositionCard(trade: trade)
                             }
                         }
-                        .padding(.horizontal)
+                        .cardStyle(padding: 0)
                     }
                 }
             }
-            
-            Spacer(minLength: 100)
         }
         .sheet(isPresented: $showAddTrade) {
             AddTradeView()
@@ -323,260 +433,75 @@ struct UserTradesTab: View {
                 .environmentObject(portfolioViewModel)
         }
     }
-}
 
-// MARK: - User Portfolio Tab
-struct UserPortfolioTab: View {
-    @ObservedObject var portfolioViewModel: PortfolioViewModel
-    
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Performance summary
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Performance Summary")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal)
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
-                        performanceCard(
-                            title: "Total Return",
-                            value: portfolioViewModel.getPortfolioSummaryForProfile().totalProfitLoss.asCurrencyWithSign,
-                            color: portfolioViewModel.getPortfolioSummaryForProfile().totalProfitLoss >= 0 ? .marketGreen : .marketRed,
-                            icon: "dollarsign.circle.fill"
-                        )
-                        
-                        performanceCard(
-                            title: "Win Rate",
-                            value: String(format: "%.0f%%", portfolioViewModel.getPortfolioSummaryForProfile().winRate),
-                            color: portfolioViewModel.getPortfolioSummaryForProfile().winRate >= 50 ? .marketGreen : .marketRed,
-                            icon: "target"
-                        )
-                        
-                        performanceCard(
-                            title: "Best Trade",
-                            value: getBestTradeValue(),
-                            color: .marketGreen,
-                            icon: "star.fill"
-                        )
-                        
-                        performanceCard(
-                            title: "Total Trades",
-                            value: "\(portfolioViewModel.getPortfolioSummaryForProfile().totalTrades)",
-                            color: .arkadGold,
-                            icon: "number.circle.fill"
-                        )
-                    }
-                    .padding(.horizontal)
+    private func tradeList(
+        title: String,
+        count: Int,
+        trades: [Trade],
+        actionTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: title, count: count, actionTitle: actionTitle, action: action)
+            VStack(spacing: 0) {
+                ForEach(Array(trades.enumerated()), id: \.element.id) { index, trade in
+                    if index > 0 { ProfileRowDivider() }
+                    ProfileUserTradeCard(trade: trade)
                 }
-                
-                // Top positions (closed, profitable trades)
-                if !getTopPerformingTrades().isEmpty {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Top Performing Trades")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal)
-                        
-                        ForEach(Array(getTopPerformingTrades().prefix(5)), id: \.id) { trade in
-                            TopPositionCard(trade: trade)
-                        }
-                        .padding(.horizontal)
-                    }
-                }
-                
-                Spacer(minLength: 100)
             }
+            .cardStyle(padding: 0)
         }
-    }
-    
-    private func getBestTradeValue() -> String {
-        let closedTrades = portfolioViewModel.trades.filter { !$0.isOpen }
-        guard let bestTrade = closedTrades.max(by: { $0.profitLoss < $1.profitLoss }) else { return "—" }
-        return bestTrade.profitLoss.asCurrencyWithSign
-    }
-    
-    private func getTopPerformingTrades() -> [Trade] {
-        return portfolioViewModel.trades
-            .filter { !$0.isOpen && $0.profitLoss > 0 }
-            .sorted { $0.profitLoss > $1.profitLoss }
-    }
-    
-    private func performanceCard(title: String, value: String, color: Color, icon: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(color)
-            
-            VStack(spacing: 4) {
-                Text(value)
-                    .font(.title3)
-                    .fontWeight(.bold)
-                    .foregroundColor(color)
-                
-                Text(title)
-                    .font(.caption)
-                    .foregroundColor(.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(color.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(color.opacity(0.2), lineWidth: 1)
-                )
-        )
     }
 }
 
-// MARK: - User Groups Tab
+// MARK: - Communities Tab
+
 struct UserGroupsTab: View {
     @ObservedObject var groupsViewModel: UserGroupsViewModel
     @EnvironmentObject var tabRouter: TabRouter
-    
+
+    private let columns = [
+        GridItem(.flexible(), spacing: DS.Spacing.m),
+        GridItem(.flexible(), spacing: DS.Spacing.m)
+    ]
+
     var body: some View {
-        VStack(spacing: 16) {
-            if groupsViewModel.isLoading {
-                // Loading state
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                        .tint(.arkadGold)
-                    
-                    Text("Loading groups...")
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                }
-                .padding(.top, 60)
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            if groupsViewModel.isLoading && groupsViewModel.groups.isEmpty {
+                ProfileTabLoadingCard(message: "Loading communities…")
             } else if !groupsViewModel.errorMessage.isEmpty {
-                // Error state
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 48))
-                        .foregroundColor(.arkadGold.opacity(0.6))
-                    
-                    Text("Failed to Load Groups")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                    
-                    Text(groupsViewModel.errorMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                    
-                    Button(action: {
-                        Task {
-                            await groupsViewModel.refreshGroups()
-                        }
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Try Again")
-                        }
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.arkadGold)
-                        .cornerRadius(20)
-                    }
+                ProfileEmptyCard(
+                    systemImage: "exclamationmark.triangle",
+                    title: "Couldn't load communities",
+                    message: groupsViewModel.errorMessage,
+                    actionTitle: "Try again"
+                ) {
+                    Task { await groupsViewModel.refreshGroups() }
                 }
-                .padding(.top, 60)
             } else if groupsViewModel.groups.isEmpty {
-                // Empty state
-                VStack(spacing: 16) {
-                    Image(systemName: "person.3")
-                        .font(.system(size: 48))
-                        .foregroundColor(.arkadGold.opacity(0.6))
-                    
-                    Text("No Groups Yet")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.textPrimary)
-                    
-                    Text("Join trading communities to connect with like-minded traders and share strategies")
-                        .font(.subheadline)
-                        .foregroundColor(.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                    
-                    Button(action: { tabRouter.selected = .communities }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                            Text("Discover Groups")
-                        }
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.arkadGold)
-                        .cornerRadius(20)
-                    }
+                ProfileEmptyCard(
+                    systemImage: "person.3.fill",
+                    title: "No communities yet",
+                    message: "Join a trading community to learn with other traders and share ideas.",
+                    actionTitle: "Discover communities"
+                ) {
+                    tabRouter.selected = .communities
                 }
-                .padding(.top, 60)
             } else {
-                // Groups content
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("My Groups (\(groupsViewModel.groups.count))")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Spacer()
-                        
-                        Button(action: { tabRouter.selected = .communities }) {
-                            Text("Discover More")
-                                .font(.subheadline)
-                                .foregroundColor(.arkadGold)
-                        }
+                SectionHeader(
+                    title: "Communities",
+                    count: groupsViewModel.groups.count,
+                    actionTitle: "Discover"
+                ) {
+                    tabRouter.selected = .communities
+                }
+
+                LazyVGrid(columns: columns, spacing: DS.Spacing.m) {
+                    ForEach(groupsViewModel.groups, id: \.id) { group in
+                        ProfileUserGroupCard(group: group)
                     }
-                    .padding(.horizontal)
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
-                        ForEach(groupsViewModel.groups, id: \.id) { group in
-                            ProfileUserGroupCard(group: group)
-                        }
-                    }
-                    .padding(.horizontal)
                 }
             }
-            
-            Spacer(minLength: 100)
-        }
-        .refreshable {
-            await groupsViewModel.refreshGroups()
-        }
-    }
-}
-
-// MARK: - Supporting Types and View Models
-enum ProfileTab: CaseIterable {
-    case posts, trades, portfolio, groups
-    
-    var title: String {
-        switch self {
-        case .posts: return "Posts"
-        case .trades: return "Trades"
-        case .portfolio: return "Portfolio"
-        case .groups: return "Groups"
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .posts: return "square.and.pencil"
-        case .trades: return "chart.line.uptrend.xyaxis"
-        case .portfolio: return "chart.bar.fill"
-        case .groups: return "person.3.fill"
         }
     }
 }

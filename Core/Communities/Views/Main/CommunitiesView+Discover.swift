@@ -1,320 +1,292 @@
 // File: Core/Communities/Views/Main/CommunitiesView+Discover.swift
-// The Discover tab: search, featured communities and type sections.
+// The Discover tab: search, category chips, popular communities and a section per trading style.
 
 import SwiftUI
 
 // MARK: - Discover Content
 extension CommunitiesView {
+    @ViewBuilder
     var discoverContent: some View {
-        VStack(spacing: 28) {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
             searchBar
-
-            if viewModel.discoveryCommunities.isEmpty && !viewModel.isLoading {
-                emptyDiscoverState
-            } else if !viewModel.searchQuery.isEmpty {
-                searchResultsSection
-            } else {
-                VStack(spacing: 36) {
-                    if !viewModel.featuredCommunities.isEmpty && viewModel.selectedCategory == nil {
-                        featuredCommunitiesSection
-                    }
-                    communityTypesSections
-                }
-            }
+            categoryChips
         }
+
+        if viewModel.discoveryCommunities.isEmpty {
+            if viewModel.isLoading {
+                loadingCard(text: "Finding communities…")
+            } else {
+                emptyDiscoverState
+            }
+        } else if !viewModel.searchQuery.isEmpty {
+            searchResultsSection
+        } else if let category = viewModel.selectedCategory {
+            categoryResultsSection(category)
+        } else {
+            if !popularCommunities.isEmpty {
+                featuredCommunitiesSection
+            }
+            communityTypesSections
+        }
+    }
+
+    /// Popular communities (most members, boosted by recent activity), excluding private ones you can't see
+    var popularCommunities: [Community] {
+        viewModel.featuredCommunities.filter { !$0.isPrivate || viewModel.isUserMember(of: $0) }
     }
 
     // MARK: - Search Results
     var searchResultsSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(
-                title: "Results",
-                icon: "magnifyingglass",
-                iconColor: .arkadGold,
-                count: viewModel.discoveryCommunities.count
-            )
-            communityGrid(viewModel.discoveryCommunities)
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: "Results", count: viewModel.discoveryCommunities.count)
+            discoveryList(viewModel.discoveryCommunities)
         }
     }
 
-    // MARK: - Featured Communities Section
+    // MARK: - Single Category
+    func categoryResultsSection(_ category: CommunityType) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            SectionHeader(title: category.displayName, count: viewModel.discoveryCommunities.count)
+            discoveryList(viewModel.discoveryCommunities)
+        }
+    }
+
+    // MARK: - Popular carousel
     var featuredCommunitiesSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(
-                title: "Featured",
-                icon: "star.fill",
-                iconColor: .arkadGold,
-                count: viewModel.featuredCommunities.count
-            )
-            
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            VStack(alignment: .leading, spacing: 2) {
+                SectionHeader(title: "Popular")
+                Text("The biggest and most active communities on Arkad")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 18) {
-                    ForEach(viewModel.featuredCommunities) { community in
+                LazyHStack(spacing: DS.Spacing.m) {
+                    ForEach(popularCommunities) { community in
                         EnhancedCommunityCard(
                             community: community,
-                            style: .featured(),
                             isUserMember: viewModel.isUserMember(of: community),
-                            onTap: {
-                                navigateToCommunitDetail(community)
-                            },
-                            onJoin: {
-                                viewModel.joinCommunity(community)
-                                HapticManager.shared.notification(type: .success)
-                            },
-                            onInfo: {
-                                showCommunityPreview(community)
-                            }
+                            onTap: { navigateToCommunitDetail(community) },
+                            onJoin: { join(community) },
+                            onInfo: { showCommunityPreview(community) }
                         )
                     }
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, DS.pageMargin)
             }
-            .padding(.horizontal, -24)
+            .padding(.horizontal, -DS.pageMargin)
         }
     }
-    
+
     // MARK: - Community Types Sections
     var communityTypesSections: some View {
-        VStack(spacing: 32) {
-            ForEach(viewModel.allCommunityTypesInOrder, id: \.self) { type in
-                communityTypeSection(for: type)
+        ForEach(viewModel.allCommunityTypesInOrder, id: \.self) { type in
+            communityTypeSection(for: type)
+        }
+    }
+
+    @ViewBuilder
+    func communityTypeSection(for type: CommunityType) -> some View {
+        let communities = viewModel.communitiesForType(type)
+        if !communities.isEmpty {
+            VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                SectionHeader(
+                    title: viewModel.sectionTitle(for: type),
+                    count: communities.count,
+                    actionTitle: communities.count > Self.typeSectionLimit ? "See all" : nil,
+                    action: { selectCategory(type) }
+                )
+                discoveryList(Array(communities.prefix(Self.typeSectionLimit)))
             }
         }
     }
-    
-    func communityTypeSection(for type: CommunityType) -> some View {
-        let communities = viewModel.communitiesForType(type)
 
-        return Group {
-            if !communities.isEmpty {
-                VStack(alignment: .leading, spacing: 18) {
-                    sectionHeader(
-                        title: viewModel.sectionTitle(for: type),
-                        icon: viewModel.sectionIcon(for: type),
-                        iconColor: getSectionColor(for: type),
-                        count: communities.count
-                    )
-                    communityGrid(communities)
+    /// How many communities each type section shows before "See all"
+    static var typeSectionLimit: Int { 4 }
+
+    // MARK: - Rows
+    func discoveryList(_ communities: [Community]) -> some View {
+        CommunityCardList(items: communities) { community in
+            discoveryRow(community)
+        }
+    }
+
+    func discoveryRow(_ community: Community) -> some View {
+        let isMember = viewModel.isUserMember(of: community)
+        return HStack(spacing: 0) {
+            Button {
+                navigateToCommunitDetail(community)
+            } label: {
+                CommunityRowContent(community: community) { EmptyView() }
+            }
+            .buttonStyle(PressableStyle())
+
+            Group {
+                if isMember {
+                    JoinedTag()
+                } else {
+                    Button("Join") { join(community) }
+                        .buttonStyle(PillButtonStyle(kind: .gold))
+                        .accessibilityLabel("Join \(community.name)")
+                }
+            }
+            .padding(.trailing, DS.Spacing.l)
+        }
+        .contextMenu {
+            Button {
+                showCommunityPreview(community)
+            } label: {
+                Label("Quick Look", systemImage: "info.circle")
+            }
+            if !isMember {
+                Button {
+                    join(community)
+                } label: {
+                    Label("Join", systemImage: "person.badge.plus")
                 }
             }
         }
     }
 
-    func communityGrid(_ communities: [Community]) -> some View {
-        LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
-            spacing: 18
-        ) {
-            ForEach(communities) { community in
-                EnhancedCommunityCard(
-                    community: community,
-                    style: .regular(),
-                    isUserMember: viewModel.isUserMember(of: community),
-                    onTap: { navigateToCommunitDetail(community) },
-                    onJoin: {
-                        viewModel.joinCommunity(community)
-                        HapticManager.shared.notification(type: .success)
-                    },
-                    onInfo: { showCommunityPreview(community) }
+    // MARK: - Empty State
+    var emptyDiscoverState: some View {
+        Group {
+            if !viewModel.searchQuery.isEmpty {
+                EmptyStateView(
+                    systemImage: "magnifyingglass",
+                    title: "No matches",
+                    message: "No communities match \"\(viewModel.searchQuery)\". Try another name or clear your filters."
+                )
+            } else if hasActiveFilters {
+                EmptyStateView(
+                    systemImage: "line.3.horizontal.decrease",
+                    title: "Nothing with these filters",
+                    message: "Try a different category or fewer filters.",
+                    actionTitle: "Clear filters",
+                    action: clearFilters
+                )
+            } else {
+                EmptyStateView(
+                    systemImage: "person.3.fill",
+                    title: "No communities yet",
+                    message: "Be the first to start one. Invite traders, post callouts and run a leaderboard.",
+                    actionTitle: "Create a community",
+                    action: showCreate
                 )
             }
         }
+        .cardStyle(padding: 0)
     }
 
-    // MARK: - Section Header
-    func sectionHeader(
-        title: String,
-        icon: String,
-        iconColor: Color,
-        count: Int
-    ) -> some View {
-        HStack(alignment: .center) {
-            HStack(spacing: 10) {
-                // Icon with background
-                ZStack {
-                    Circle()
-                        .fill(iconColor.opacity(0.15))
-                        .frame(width: 32, height: 32)
-                    
-                    Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(iconColor)
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(.textPrimary)
-                    
-                    if count > 0 {
-                        Text("\(count) \(count == 1 ? "community" : "communities")")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.textSecondary)
-                    }
-                }
-            }
-            
-            Spacer()
-        }
-    }
-    
-    // MARK: - Empty States
-    var emptyDiscoverState: some View {
-        VStack(spacing: 28) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.arkadGold.opacity(0.1), Color.arkadGold.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 100, height: 100)
-                
-                Image(systemName: "magnifyingglass.circle.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.7)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
-            
-            VStack(spacing: 14) {
-                Text("No Communities Available")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-                
-                Text("Be the first to create a community!")
-                    .font(.system(size: 15))
-                    .foregroundColor(.textSecondary)
-            }
-            
-            Button("Create Community") {
-                showCreateCommunity = true
-            }
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundColor(.arkadBlack)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 14)
-            .background(
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.arkadGold, Color.arkadGold.opacity(0.9)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            )
-            .shadow(color: .arkadGold.opacity(0.3), radius: 12, x: 0, y: 6)
-        }
-        .padding(.top, 80)
-    }
-    
     // MARK: - Helper Methods
     func getSectionColor(for type: CommunityType) -> Color {
         type.tint
     }
-    
+
     func showCommunityPreview(_ community: Community) {
         selectedCommunityForPreview = community
         showCommunityPreview = true
     }
+
+    func join(_ community: Community) {
+        viewModel.joinCommunity(community)
+        HapticManager.shared.notification(type: .success)
+    }
+
+    func selectCategory(_ category: CommunityType?) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        withAnimation(.snappy(duration: 0.25)) {
+            viewModel.selectedCategory = category
+        }
+    }
+
+    func clearFilters() {
+        viewModel.selectedCategory = nil
+        viewModel.minimumMemberCount = 0
+        viewModel.sortType = .memberCount
+        Task { await viewModel.loadDiscoveryCommunities() }
+    }
 }
 
-// MARK: - Working Search Bar and Filter
+// MARK: - Search Bar, Filter and Category Chips
 extension CommunitiesView {
     var searchBar: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 12) {
+        HStack(spacing: DS.Spacing.s) {
+            HStack(spacing: DS.Spacing.s) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.textSecondary)
-                
-                TextField("Search communities...", text: $viewModel.searchQuery)
-                    .font(.system(size: 16))
-                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                TextField("Search communities", text: $viewModel.searchQuery)
+                    .textFieldStyle(.plain)
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
                     .onSubmit {
-                        // Trigger search when user presses return
                         Task {
                             await viewModel.searchCommunities(query: viewModel.searchQuery)
                         }
                     }
-                
-                Spacer()
-                
+
                 if !viewModel.searchQuery.isEmpty {
-                    Button(action: {
+                    Button {
                         viewModel.searchQuery = ""
-                        Task {
-                            await viewModel.loadDiscoveryCommunities()
-                        }
-                    }) {
+                        Task { await viewModel.loadDiscoveryCommunities() }
+                    } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(.textSecondary)
+                            .foregroundStyle(.secondary)
                     }
+                    .accessibilityLabel("Clear search")
                 }
             }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(
-                                viewModel.searchQuery.isEmpty ?
-                                    Color.borderPrimary.opacity(0.3) :
-                                    Color.arkadGold.opacity(0.5),
-                                lineWidth: 1
-                            )
-                    )
-            )
-            
-            // Working Filter button
-            Button(action: {
-                showFilterSheet = true
-            }) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(hasActiveFilters ? Color.arkadGold.opacity(0.15) : Color.arkadGold.opacity(0.1))
-                        .frame(width: 48, height: 48)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .strokeBorder(
-                                    hasActiveFilters ? Color.arkadGold.opacity(0.6) : Color.arkadGold.opacity(0.3),
-                                    lineWidth: 1
-                                )
-                        )
-                    
-                    ZStack {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(.arkadGold)
-                        
-                        // Active filter indicator
-                        if hasActiveFilters {
-                            Circle()
-                                .fill(Color.arkadGold)
-                                .frame(width: 8, height: 8)
-                                .offset(x: 12, y: -12)
-                        }
-                    }
-                }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(Capsule().fill(Color.surfaceRaised))
+
+            filterButton
+        }
+    }
+
+    private var filterButton: some View {
+        IconButton(systemName: "slider.horizontal.3", accessibilityLabel: "Sort and filter", size: 44) {
+            showFilterSheet = true
+        }
+        .overlay(alignment: .topTrailing) {
+            if hasActiveFilters {
+                Circle()
+                    .fill(Color.arkadGold)
+                    .frame(width: 10, height: 10)
+                    .overlay(Circle().strokeBorder(Color.appBackground, lineWidth: 2))
+                    .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 24)
     }
-    
+
+    var categoryChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: DS.Spacing.s) {
+                Chip(title: "All", isSelected: viewModel.selectedCategory == nil) {
+                    selectCategory(nil)
+                }
+                ForEach(viewModel.allCommunityTypesInOrder, id: \.self) { type in
+                    Chip(
+                        title: type.shortDisplayName,
+                        systemImage: viewModel.sectionIcon(for: type),
+                        isSelected: viewModel.selectedCategory == type
+                    ) {
+                        selectCategory(viewModel.selectedCategory == type ? nil : type)
+                    }
+                }
+            }
+            .padding(.horizontal, DS.pageMargin)
+        }
+        .padding(.horizontal, -DS.pageMargin)
+    }
+
     // Check if any filters are active
     var hasActiveFilters: Bool {
         viewModel.selectedCategory != nil ||
         viewModel.minimumMemberCount > 0 ||
         viewModel.sortType != .memberCount
-
     }
 }

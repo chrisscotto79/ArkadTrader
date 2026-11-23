@@ -1,6 +1,6 @@
 // File: Core/Portfolio/ViewModels/PortfolioViewModel.swift
-// Enhanced Portfolio ViewModel with Realistic Performance Analytics - Production Ready
-// FIXED: All compilation errors resolved
+// Portfolio state: the user's trades, account value and stats, plus live stock quotes.
+// Only stock positions are priced live; options, crypto and forex are valued at entry price until closed.
 
 import Foundation
 import SwiftUI
@@ -547,8 +547,14 @@ class PortfolioViewModel: ObservableObject {
         }
     }
 
+    /// Applies cached quotes to open stock positions. Other asset types have no quote source,
+    /// so any stored price is cleared and they're valued at entry price (no unrealized P&L).
     private func applyLatestQuotes() {
         for index in trades.indices where trades[index].isOpen {
+            guard trades[index].tradeType == .stock else {
+                trades[index].currentPrice = nil
+                continue
+            }
             if let price = latestQuotes[trades[index].ticker.uppercased()] {
                 trades[index].currentPrice = price
             }
@@ -722,217 +728,164 @@ enum PortfolioError: LocalizedError {
     }
 }
 
-// MARK: - DepositWithdrawSheet View (PRODUCTION READY)
+// MARK: - Deposit / withdraw sheet
+
+/// Adjusts the account balance used to compute account value and returns.
 struct DepositWithdrawSheet: View {
     @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     @Environment(\.dismiss) var dismiss
     @State private var selectedAction: FundAction = .deposit
     @State private var amountInput = ""
-    @State private var showAlert = false
-    @State private var alertMessage = ""
     @FocusState private var isInputFocused: Bool
-    
+
     enum FundAction: CaseIterable {
         case deposit, withdraw
-        
+
         var title: String {
             switch self {
             case .deposit: return "Deposit"
             case .withdraw: return "Withdraw"
             }
         }
-        
-        var icon: String {
-            switch self {
-            case .deposit: return "plus.circle.fill"
-            case .withdraw: return "minus.circle.fill"
-            }
-        }
-        
-        var color: Color {
-            switch self {
-            case .deposit: return .green
-            case .withdraw: return .red
-            }
-        }
     }
-    
+
+    private let quickAmounts: [Double] = [100, 500, 1_000, 5_000, 10_000, 25_000]
+
     var body: some View {
-        NavigationView {
-            VStack(spacing: 24) {
-                // Header
-                VStack(spacing: 16) {
-                    Image(systemName: selectedAction.icon)
-                        .font(.system(size: 48))
-                        .foregroundColor(selectedAction.color)
-                    
-                    Text("Adjust Account Value")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    
-                    Text("Adjust your account balance for deposits or withdrawals")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .multilineTextAlignment(.center)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    SegmentedPicker(options: FundAction.allCases, selection: $selectedAction) { $0.title }
+                    amountCard
+                    quickAmountChips
+                    Text("This only changes the balance Arkad uses to track your account value and returns. No money is moved.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.top)
-                
-                // Current Balance Display
-                if let currentBalance = portfolioViewModel.authService.currentUser?.startingCapital, currentBalance > 0 {
-                    VStack(spacing: 8) {
-                        Text("Current Balance")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(currentBalance.asCurrency)
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                    }
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
-                }
-                
-                // Action Selector
-                HStack(spacing: 0) {
-                    ForEach(FundAction.allCases, id: \.self) { action in
-                        Button(action: { selectedAction = action }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: action.icon)
-                                Text(action.title)
-                            }
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(selectedAction == action ? .white : .secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(selectedAction == action ? action.color : Color.clear)
-                        }
-                    }
-                }
-                .background(Color(.systemGray5))
-                .cornerRadius(12)
-                .padding(.horizontal)
-                
-                // Amount Input
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Amount")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    HStack {
-                        Text("$")
-                            .font(.title2)
-                            .foregroundColor(.gray)
-                        
-                        TextField("0.00", text: $amountInput)
-                            .keyboardType(.decimalPad)
-                            .font(.title2)
-                            .focused($isInputFocused)
-                    }
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
-                }
-                .padding(.horizontal)
-                
-                // Quick Amount Buttons
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Quick Select")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .padding(.horizontal)
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
-                        quickAmountButton("$100", amount: 100)
-                        quickAmountButton("$500", amount: 500)
-                        quickAmountButton("$1,000", amount: 1000)
-                        quickAmountButton("$5,000", amount: 5000)
-                        quickAmountButton("$10,000", amount: 10000)
-                        quickAmountButton("$25,000", amount: 25000)
-                    }
-                    .padding(.horizontal)
-                }
-                
-                Spacer()
-                
-                // Action Button
-                Button(action: performAction) {
-                    Text("Confirm Adjustment")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(isValidAmount ? selectedAction.color : Color.gray)
-                        .cornerRadius(12)
-                }
-                .disabled(!isValidAmount)
-                .padding(.horizontal)
+                .padding(.horizontal, DS.pageMargin)
+                .padding(.top, DS.Spacing.s)
+                .padding(.bottom, DS.Spacing.xl)
             }
-            .padding(.vertical)
-            .navigationTitle("Adjust Account Value")
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) { confirmBar }
+            .screenBackground()
+            .navigationTitle("Adjust balance")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.primary)
                 }
             }
-            .onAppear {
-                isInputFocused = true
+            .onAppear { isInputFocused = true }
+        }
+    }
+
+    private var amountCard: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            if currentBalance > 0 {
+                HStack {
+                    Text("Current balance")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(currentBalance.asCurrency)
+                        .arkadNumber(17, weight: .semibold)
+                }
+                Divider().overlay(Color.hairline)
+            }
+            Text("\(selectedAction.title) amount")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text("$")
+                    .arkadNumber(34)
+                    .foregroundStyle(.secondary)
+                TextField("0", text: $amountInput)
+                    .keyboardType(.decimalPad)
+                    .arkadNumber(34)
+                    .focused($isInputFocused)
+            }
+            if let message = validationMessage {
+                Text(message)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.marketRed)
+            } else if let amount = parsedAmount {
+                Text("New balance: \(newBalance(after: amount).asCurrency)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
-        .alert("Transaction Complete", isPresented: $showAlert) {
-            Button("OK") { dismiss() }
-        } message: {
-            Text(alertMessage)
-        }
+        .cardStyle()
     }
-    
-    private func quickAmountButton(_ title: String, amount: Double) -> some View {
-        Button(action: {
-            amountInput = String(format: "%.0f", amount)
-        }) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.arkadGold)
+
+    private var quickAmountChips: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.s), count: 3), spacing: DS.Spacing.s) {
+            ForEach(quickAmounts, id: \.self) { amount in
+                Button(amount.asCurrency) {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    amountInput = String(format: "%.0f", amount)
+                }
+                .buttonStyle(PillButtonStyle(kind: .neutral))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(Color.arkadGold.opacity(0.1))
-                .cornerRadius(8)
+            }
         }
     }
-    
+
+    private var confirmBar: some View {
+        Button(selectedAction == .deposit ? "Confirm deposit" : "Confirm withdrawal", action: performAction)
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(!isValidAmount)
+            .padding(.horizontal, DS.pageMargin)
+            .padding(.top, DS.Spacing.m)
+            .padding(.bottom, DS.Spacing.s)
+            .background(
+                Color.appBackground
+                    .overlay(alignment: .top) { Divider().overlay(Color.hairline) }
+                    .ignoresSafeArea()
+            )
+    }
+
+    private var currentBalance: Double {
+        portfolioViewModel.authService.currentUser?.startingCapital ?? 0
+    }
+
+    private var parsedAmount: Double? {
+        guard let amount = AssetTerms.parseNumber(amountInput), amount > 0 else { return nil }
+        return amount
+    }
+
+    private func newBalance(after amount: Double) -> Double {
+        selectedAction == .deposit ? currentBalance + amount : currentBalance - amount
+    }
+
+    private var validationMessage: String? {
+        guard selectedAction == .withdraw, let amount = parsedAmount, amount > currentBalance else { return nil }
+        return "You can withdraw up to \(currentBalance.asCurrency)."
+    }
+
     private var isValidAmount: Bool {
-        guard let amount = Double(amountInput.replacingOccurrences(of: ",", with: "")) else { return false }
-        
-        if selectedAction == .withdraw {
-            let currentBalance = portfolioViewModel.authService.currentUser?.startingCapital ?? 0
-            return amount > 0 && amount <= currentBalance
-        }
-        
-        return amount > 0
+        parsedAmount != nil && validationMessage == nil
     }
-    
+
     private func performAction() {
-        guard let amount = Double(amountInput.replacingOccurrences(of: ",", with: "")) else { return }
-        
+        guard let amount = parsedAmount, isValidAmount else { return }
         switch selectedAction {
         case .deposit:
             portfolioViewModel.depositFunds(amount)
-            alertMessage = "Successfully added \(amount.asCurrency) to your account."
         case .withdraw:
             portfolioViewModel.withdrawFunds(amount)
-            alertMessage = "Successfully withdrew \(amount.asCurrency) from your account."
         }
-        
-        showAlert = true
+        // Errors surface on the Portfolio screen's alert
+        dismiss()
     }
 }
 
 // MARK: - Market quotes
 
 /// Minimal Finnhub quote client: GET /quote?symbol=AAPL returns {"c": current price, ...}
+/// Stock symbols only: callers must not pass option underlyings, crypto or forex pairs.
 enum MarketQuotes {
     private struct Quote: Decodable { let c: Double }
 

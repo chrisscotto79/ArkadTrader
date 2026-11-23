@@ -231,9 +231,9 @@ class CommunityCreationViewModel: ObservableObject {
     var characterCountColor: Color {
         let remaining = descriptionMaxLength - description.count
         if remaining < 20 {
-            return .red
+            return .marketRed
         } else if remaining < 50 {
-            return .orange
+            return .warning
         } else {
             return .secondary
         }
@@ -247,9 +247,9 @@ class CommunityCreationViewModel: ObservableObject {
     var nameCharacterCountColor: Color {
         let remaining = nameMaxLength - name.count
         if remaining < 5 {
-            return .red
+            return .marketRed
         } else if remaining < 10 {
-            return .orange
+            return .warning
         } else {
             return .secondary
         }

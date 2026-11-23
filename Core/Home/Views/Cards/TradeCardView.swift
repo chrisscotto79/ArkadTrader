@@ -1,10 +1,5 @@
-//
-//  TradeCardView.swift
-//  ArkadTrader
-//
-//  Created by chris scotto on 7/16/25.
-//
-
+// File: Core/Home/Views/Cards/TradeCardView.swift
+// A followed trader's public trade in the Following feed.
 
 import SwiftUI
 
@@ -15,11 +10,11 @@ struct TradeCardView: View {
     @EnvironmentObject var authService: FirebaseAuthService
     @State private var trader: User?
     @State private var showProfile = false
-    
+
     private var traderName: String {
         trader?.username ?? ""
     }
-    
+
     /// "@name opened AAPL" once the trader has loaded, "Opened AAPL" until then.
     private var title: String {
         let action = trade.isOpen ? "opened" : "closed"
@@ -28,103 +23,33 @@ struct TradeCardView: View {
         }
         return "\(action.capitalized) \(trade.ticker)"
     }
-    
+
     private var eventDate: Date {
         trade.isOpen ? trade.entryDate : (trade.exitDate ?? trade.entryDate)
     }
-    
+
     private var quantityLabel: String {
         trade.tradeType == .option ? "Contracts" : "Shares"
     }
-    
+
+    private var isGain: Bool { trade.profitLoss >= 0 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Button {
-                    if trader != nil { showProfile = true }
-                } label: {
-                    UserAvatar(username: traderName, imageURL: trader?.profileImageUrl, size: 40)
-                }
-                .buttonStyle(.plain)
-                .disabled(trader == nil)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    
-                    Text(eventDate.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                // Status badge
-                Text(trade.isOpen ? "OPEN" : "CLOSED")
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(trade.isOpen ? Color.arkadGold.opacity(0.15) : Color.gray.opacity(0.1))
-                    .foregroundColor(trade.isOpen ? .arkadGoldDark : .gray)
-                    .cornerRadius(12)
-            }
-            
-            // Trade info
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Entry")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(trade.entryPrice.asCurrency)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                }
-                
-                Spacer()
-                
-                if let exitPrice = trade.exitPrice, !trade.isOpen {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Exit")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(exitPrice.asCurrency)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                    }
-                    
-                    Spacer()
-                }
-                
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(quantityLabel)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(trade.quantity.quantityString)")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                }
-            }
-            
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            header
             if !trade.isOpen {
-                Text("\(trade.profitLoss.asCurrencyWithSign) (\(String(format: "%+.1f%%", trade.profitLossPercentage)))")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundColor(trade.profitLoss >= 0 ? .marketGreen : .marketRed)
+                resultRow
             }
-            
+            statsRow
             if let notes = trade.notes, !notes.isEmpty {
                 Text(notes)
                     .font(.body)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+        .cardStyle()
         .task(id: trade.userId) {
             guard trader == nil else { return }
             trader = try? await authService.getUserById(userId: trade.userId)
@@ -136,6 +61,89 @@ struct TradeCardView: View {
             }
         }
     }
-}
 
-// MARK: - Activity Card View
+    private var header: some View {
+        HStack(spacing: DS.Spacing.m) {
+            Button {
+                if trader != nil { showProfile = true }
+            } label: {
+                UserAvatar(username: traderName, imageURL: trader?.profileImageUrl, size: 42)
+            }
+            .buttonStyle(PressableStyle())
+            .disabled(trader == nil)
+            .accessibilityLabel(trader.map { "Open @\($0.username)'s profile" } ?? "Trader")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+
+                Text("\(trade.tradeType.displayName) · \(eventDate.feedRelativeText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Tag(
+                text: trade.isOpen ? "Open" : "Closed",
+                systemImage: trade.isOpen ? "circle.fill" : "checkmark",
+                tint: trade.isOpen ? .goldText : .secondary
+            )
+        }
+    }
+
+    /// Closed trades lead with the result.
+    private var resultRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+            Text(trade.profitLoss.asCurrencyWithSign)
+                .arkadNumber(24)
+                .foregroundStyle(isGain ? Color.marketGreen : Color.marketRed)
+            ChangePill(
+                text: String(format: "%+.1f%%", trade.profitLossPercentage),
+                isPositive: isGain
+            )
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var statsRow: some View {
+        HStack(spacing: 0) {
+            stat("Entry", trade.entryPrice.formatted(.currency(code: "USD")))
+            if let exitPrice = trade.exitPrice, !trade.isOpen {
+                divider
+                stat("Exit", exitPrice.formatted(.currency(code: "USD")))
+            }
+            divider
+            stat(quantityLabel, trade.quantity.quantityString)
+        }
+        .padding(.vertical, DS.Spacing.m)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                .fill(Color.surfaceRaised)
+        )
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.hairline)
+            .frame(width: 1, height: 28)
+    }
+
+    private func stat(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .arkadNumber(15, weight: .semibold)
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}
