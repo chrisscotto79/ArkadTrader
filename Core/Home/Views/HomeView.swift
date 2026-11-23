@@ -11,6 +11,8 @@ struct HomeView: View {
     @ObservedObject private var pushManager = PushNotificationManager.shared
     @StateObject private var homeViewModel = HomeViewModel()
     @StateObject private var followingViewModel = FollowingFeedViewModel()
+    @ObservedObject private var postStore = PostStore.shared
+    @ObservedObject private var blockStore = BlockStore.shared
     @State private var selectedTab: HomeFeedTab = .feed
     @State private var showCreatePost = false
     @State private var showNotifications = false
@@ -47,14 +49,13 @@ struct HomeView: View {
                 .refreshable { await refreshContent() }
             }
             .screenBackground()
+            .statusBarBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showLearn) { LearnHubView() }
         }
         .sheet(isPresented: $showCreatePost) {
             CreatePostView { draft in
-                Task {
-                    await homeViewModel.createPost(draft)
-                }
+                try await homeViewModel.createPost(draft)
             }
             .environmentObject(authService)
         }
@@ -63,13 +64,8 @@ struct HomeView: View {
                 .environmentObject(authService)
         }
         .sheet(item: $linkedPost) { post in
-            CommentsView(
-                postId: post.id,
-                onCommentCountChanged: { newCount in
-                    homeViewModel.updatePostCommentCount(postId: post.id, newCount: newCount)
-                }
-            )
-            .environmentObject(authService)
+            CommentsView(postId: post.id)
+                .environmentObject(authService)
         }
         .onAppear { openLinkedPost(tabRouter.pendingDeepLink) }
         .onChange(of: tabRouter.pendingDeepLink) { _, link in
@@ -80,6 +76,7 @@ struct HomeView: View {
                 await homeViewModel.loadPosts()
             }
         }
+        .postStoreFeedback()
         .alert("Something went wrong", isPresented: $homeViewModel.showError) {
             Button("OK") { homeViewModel.showError = false }
         } message: {
@@ -161,7 +158,7 @@ struct HomeView: View {
             feedContent
                 .transition(.opacity)
         case .following:
-            FollowingFeedView(viewModel: followingViewModel, homeViewModel: homeViewModel)
+            FollowingFeedView(viewModel: followingViewModel)
                 .environmentObject(authService)
                 .transition(.opacity)
         case .marketNews:
@@ -171,12 +168,23 @@ struct HomeView: View {
     }
 
     private var feedContent: some View {
-        LazyVStack(spacing: DS.Spacing.m) {
+        let visiblePosts = postStore.visible(homeViewModel.posts)
+
+        return LazyVStack(spacing: DS.Spacing.m) {
             HomeLearnCard()
 
             if homeViewModel.isLoading && homeViewModel.posts.isEmpty {
                 HomeFeedLoadingView(message: "Loading posts…")
-            } else if homeViewModel.posts.isEmpty {
+            } else if let loadError = homeViewModel.loadError, homeViewModel.posts.isEmpty {
+                EmptyStateView(
+                    systemImage: "wifi.exclamationmark",
+                    title: "Couldn't load posts",
+                    message: loadError,
+                    actionTitle: "Try again"
+                ) {
+                    Task { await homeViewModel.loadPosts() }
+                }
+            } else if visiblePosts.isEmpty && !homeViewModel.hasMorePosts {
                 EmptyStateView(
                     systemImage: "text.bubble.fill",
                     title: "No posts yet",
@@ -186,27 +194,51 @@ struct HomeView: View {
                     showCreatePost = true
                 }
             } else {
-                ForEach(homeViewModel.posts, id: \.id) { post in
-                    UserPostCard(post: post, homeViewModel: homeViewModel)
+                if let loadError = homeViewModel.loadError {
+                    Label(loadError, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if homeViewModel.hasMorePosts && !homeViewModel.isLoadingMore {
-                    Button {
-                        Task { await homeViewModel.loadMorePosts() }
-                    } label: {
-                        Label("Load more", systemImage: "arrow.down")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .padding(.top, DS.Spacing.xs)
+                ForEach(visiblePosts, id: \.id) { post in
+                    UserPostCard(post: post)
                 }
 
-                if homeViewModel.isLoadingMore {
-                    ProgressView()
-                        .padding(.vertical, DS.Spacing.l)
-                }
+                feedFooter
             }
         }
         .padding(.horizontal, DS.pageMargin)
+    }
+
+    @ViewBuilder
+    private var feedFooter: some View {
+        if homeViewModel.isLoadingMore {
+            ProgressView()
+                .padding(.vertical, DS.Spacing.l)
+        } else if let error = homeViewModel.loadMoreError {
+            VStack(spacing: DS.Spacing.s) {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Try again") {
+                    Task { await homeViewModel.loadMorePosts() }
+                }
+                .buttonStyle(PillButtonStyle(kind: .neutral))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.Spacing.l)
+        } else if homeViewModel.hasMorePosts {
+            Button {
+                Task { await homeViewModel.loadMorePosts() }
+            } label: {
+                Label("Load more", systemImage: "arrow.down")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .padding(.top, DS.Spacing.xs)
+        }
     }
 
     @MainActor

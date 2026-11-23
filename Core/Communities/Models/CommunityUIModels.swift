@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import FirebaseCore
 import FirebaseFirestore
 import SwiftUI
 
@@ -139,11 +140,21 @@ struct CommunityMessage: Identifiable, Codable {
     var tradeShare: TradeShareInfo?
     /// A leader's daily watchlist
     var gamePlan: GamePlan?
+    /// A photo, file or video attachment (`media: { type, url, fileName? }`). Only shown when the
+    /// URL is on this project's Cloud Storage bucket or is an `arkad-image://` id.
+    var media: MessageMedia?
+    /// Reactions, keyed by user: `reactions: { <uid>: [emoji, ...] }`. Each person changes only their own key.
+    var reactions: [String: [String]] = [:]
+
+    /// Fields a soft delete removes from the doc, along with the text
+    static let structuredFields = ["callout", "calloutUpdate", "calloutResult", "tradeShare",
+                                   "gamePlan", "replyTo", "media", "reactions"]
 
     /// True for callouts, updates, results, trade shares and game plans. Their `content` is a
     /// generated summary, so they aren't edited as text.
     var hasStructuredKind: Bool {
         callout != nil || calloutUpdate != nil || calloutResult != nil || tradeShare != nil || gamePlan != nil
+            || media != nil
     }
 
     /// One line describing the message, for reply quotes, banners, pins and search.
@@ -151,11 +162,12 @@ struct CommunityMessage: Identifiable, Codable {
         if isDeleted { return "Message deleted" }
         if let callout { return "\(callout.direction.displayName) $\(callout.ticker) callout" }
         if let gamePlan { return gamePlan.title }
-        if content.hasPrefix("[MEDIA:IMAGE]") { return "Photo" }
-        if content.hasPrefix("[MEDIA:VIDEO]") { return "Video" }
-        if content.hasPrefix("[MEDIA:DOCUMENT]") {
-            let parts = String(content.dropFirst(16)).components(separatedBy: "|")
-            return parts.count >= 2 ? parts[1] : "Document"
+        if let media = displayMedia {
+            switch media.type {
+            case .image: return "Photo"
+            case .video: return "Video"
+            case .document: return media.fileName ?? "Document"
+            }
         }
         return content
             .replacingOccurrences(of: "\n", with: " ")
@@ -204,6 +216,7 @@ struct CommunityMessage: Identifiable, Codable {
         if let calloutResult { data["calloutResult"] = calloutResult.toFirestore() }
         if let tradeShare { data["tradeShare"] = tradeShare.toFirestore() }
         if let gamePlan { data["gamePlan"] = gamePlan.toFirestore() }
+        if let media { data["media"] = media.toFirestore() }
         if let editedAt { data["editedAt"] = Timestamp(date: editedAt) }
         return data
     }
@@ -244,8 +257,118 @@ struct CommunityMessage: Identifiable, Codable {
             message.calloutResult = (data["calloutResult"] as? [String: Any]).flatMap(CalloutResult.fromFirestore)
             message.tradeShare = (data["tradeShare"] as? [String: Any]).flatMap(TradeShareInfo.fromFirestore)
             message.gamePlan = (data["gamePlan"] as? [String: Any]).flatMap(GamePlan.fromFirestore)
+            message.media = (data["media"] as? [String: Any]).flatMap(MessageMedia.fromFirestore)
+            if let reactions = data["reactions"] as? [String: Any] {
+                for (userId, value) in reactions {
+                    let emoji = (value as? [String] ?? []).prefix(FirebaseServices.maxReactionsPerUser)
+                    if !emoji.isEmpty { message.reactions[userId] = Array(emoji) }
+                }
+            }
         }
         return message
+    }
+
+    /// The attachment to draw, if any: the structured `media` field, else an older
+    /// "[MEDIA:IMAGE]url" text message. Either way only when the URL passes `MessageMedia.isTrusted`;
+    /// anything else is shown as plain text.
+    var displayMedia: MessageMedia? {
+        if let media { return media.isTrusted ? media : nil }
+        return MessageMedia(legacyContent: content).flatMap { $0.isTrusted ? $0 : nil }
+    }
+
+    /// Per-emoji counts built from `reactions`, most used first.
+    func reactionGroups(currentUserId: String?) -> [EmojiReactionGroup] {
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for userId in reactions.keys.sorted() {
+            for emoji in reactions[userId] ?? [] {
+                if counts[emoji] == nil { order.append(emoji) }
+                counts[emoji, default: 0] += 1
+            }
+        }
+        let mine = Set(currentUserId.flatMap { reactions[$0] } ?? [])
+        return order
+            .map { EmojiReactionGroup(emoji: $0, count: counts[$0] ?? 0, hasUserReacted: mine.contains($0)) }
+            .sorted { $0.count > $1.count }
+    }
+}
+
+// MARK: - Reactions
+
+/// One emoji under a message with how many people used it
+struct EmojiReactionGroup: Identifiable {
+    var id: String { emoji }
+    let emoji: String
+    let count: Int
+    let hasUserReacted: Bool
+
+    var displayText: String {
+        if hasUserReacted {
+            if count == 1 { return "You" }
+            return "You and \(count - 1) \(count == 2 ? "other" : "others")"
+        }
+        return count == 1 ? "1 person" : "\(count) people"
+    }
+}
+
+// MARK: - Media attachment
+
+/// `media: { type: "image" | "document" | "video", url, fileName? }` on a channel message.
+struct MessageMedia: Codable, Equatable {
+    enum Kind: String, Codable { case image, document, video }
+
+    var type: Kind
+    var url: String
+    var fileName: String?
+
+    func toFirestore() -> [String: Any] {
+        var data: [String: Any] = ["type": type.rawValue, "url": url]
+        if let fileName, !fileName.isEmpty { data["fileName"] = fileName }
+        return data
+    }
+
+    static func fromFirestore(_ data: [String: Any]) -> MessageMedia? {
+        guard let typeString = data["type"] as? String, let type = Kind(rawValue: typeString),
+              let url = data["url"] as? String, !url.isEmpty else { return nil }
+        return MessageMedia(type: type, url: url, fileName: data["fileName"] as? String)
+    }
+
+    init(type: Kind, url: String, fileName: String? = nil) {
+        self.type = type
+        self.url = url
+        self.fileName = fileName
+    }
+
+    /// Reads the old text format: "[MEDIA:IMAGE]url", "[MEDIA:VIDEO]url", "[MEDIA:DOCUMENT]url|name".
+    init?(legacyContent content: String) {
+        if content.hasPrefix("[MEDIA:IMAGE]") {
+            self.init(type: .image, url: String(content.dropFirst(13)))
+        } else if content.hasPrefix("[MEDIA:VIDEO]") {
+            self.init(type: .video, url: String(content.dropFirst(13)))
+        } else if content.hasPrefix("[MEDIA:DOCUMENT]") {
+            let parts = String(content.dropFirst(16)).components(separatedBy: "|")
+            guard parts.count >= 2 else { return nil }
+            self.init(type: .document, url: parts[0], fileName: parts[1])
+        } else {
+            return nil
+        }
+    }
+
+    /// Only this project's own files: `arkad-image://` ids, or https URLs on Firebase Storage
+    /// for this app's bucket. Anything else could point anywhere, so it isn't drawn as media.
+    var isTrusted: Bool {
+        if url.hasPrefix(ArkadImageLoader.firestoreScheme) { return true }
+        guard let components = URLComponents(string: url), components.scheme == "https",
+              let host = components.host?.lowercased() else { return false }
+        guard let bucket = FirebaseApp.app()?.options.storageBucket, !bucket.isEmpty else { return false }
+        switch host {
+        case "firebasestorage.googleapis.com":
+            return components.path.hasPrefix("/v0/b/\(bucket)/")
+        case "storage.googleapis.com":
+            return components.path.hasPrefix("/\(bucket)/")
+        default:
+            return false
+        }
     }
 }
 
@@ -334,13 +457,16 @@ struct TradeShareInfo: Codable, Equatable {
     var exitPrice: Double?
     var proof: TradeProof
     var note: String?
+    /// "long" or "short" (older shares have none: long).
+    var side: String = "long"
 
     var assetType: TradeType? { TradeType(rawValue: tradeType) }
 
     /// Closed trades only. Same math as the portfolio (`Trade.profitLossPercentage`).
     var resultPercent: Double? {
         guard !isOpen, let exitPrice, entryPrice > 0 else { return nil }
-        return (exitPrice - entryPrice) / entryPrice * 100
+        let sign: Double = side == "short" ? -1 : 1
+        return sign * (exitPrice - entryPrice) / entryPrice * 100
     }
 
     /// Plain-text summary used as the message's `content`.
@@ -370,7 +496,8 @@ struct TradeShareInfo: Codable, Equatable {
             "entryPrice": entryPrice,
             "quantity": quantity,
             "isOpen": isOpen,
-            "proof": proof.rawValue
+            "proof": proof.rawValue,
+            "side": side
         ]
         if let exitPrice { data["exitPrice"] = exitPrice }
         if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { data["note"] = note }
@@ -393,7 +520,8 @@ struct TradeShareInfo: Codable, Equatable {
             "entryPrice": entryPrice,
             "quantity": quantity,
             "isOpen": isOpen,
-            "proof": proofValue(trade["proof"])
+            "proof": proofValue(trade["proof"]),
+            "side": (trade["side"] as? String) ?? "long"
         ]
         if !isOpen {
             guard let exitPrice = trade["exitPrice"], TrackRecordDecode.double(exitPrice) != nil else { return nil }
@@ -424,7 +552,8 @@ struct TradeShareInfo: Codable, Equatable {
             isOpen: data["isOpen"] as? Bool ?? true,
             exitPrice: TrackRecordDecode.double(data["exitPrice"]),
             proof: TradeProof(firestoreValue: data["proof"]),
-            note: data["note"] as? String
+            note: data["note"] as? String,
+            side: data["side"] as? String ?? "long"
         )
     }
 }
@@ -709,7 +838,7 @@ struct CommunityMemberWithRole: Identifiable, Codable, Hashable {
     let userId: String
     let username: String
     let fullName: String
-    let role: CommunityRole
+    var role: CommunityRole
     let joinedAt: Date
     
     // ✅ ENHANCED: Additional properties

@@ -114,6 +114,7 @@ struct ProfileUserPostCard: View {
     let onPostDeleted: (() -> Void)?
     @State private var showFullPost = false
     @State private var isDeleting = false
+    @State private var deleteError: String?
     @EnvironmentObject var authService: FirebaseAuthService
 
     init(post: Post, onPostDeleted: (() -> Void)? = nil) {
@@ -141,6 +142,14 @@ struct ProfileUserPostCard: View {
             )
             .environmentObject(authService)
         }
+        .alert(
+            "Couldn't Delete Post",
+            isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(deleteError ?? "")
+        }
     }
 
     @ViewBuilder
@@ -164,14 +173,9 @@ struct ProfileUserPostCard: View {
 
         do {
             try await authService.deletePost(postId: post.id)
-            print("✅ Post deleted successfully")
-
-            // Call the callback to refresh the posts list
-            await MainActor.run {
-                onPostDeleted?()
-            }
+            onPostDeleted?()
         } catch {
-            print("❌ Error deleting post: \(error)")
+            deleteError = "Couldn't delete the post. Check your connection and try again."
         }
 
         isDeleting = false

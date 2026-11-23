@@ -53,7 +53,6 @@
 		CED443042E028B970056B849 /* Exceptions for "Shared" folder in "ArkadTrader" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Components/CustomButton.swift,
 				"Services/FirebaseServices+NotificationCreation.swift",
 				Config/AppConfig.swift,
 				Components/CustomTextField.swift,
@@ -92,6 +91,7 @@
 				Components/ArkadAsyncImage.swift,
 				Components/TradeProofBadge.swift,
 				Services/ImageStore.swift,
+				Services/QuoteClient.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
@@ -261,6 +261,7 @@
 				Communities/Views/Share/ShareTradeToCommunitySheet.swift,
 				Home/Views/Cards/HomeLearnCard.swift,
 				TrackRecord/CalloutFollowUps.swift,
+				Home/ViewModels/PostStore.swift,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
 		};
@@ -270,9 +271,23 @@
 				ArkadTraderApp.swift,
 				ContentView.swift,
 				"GoogleService-Info.plist",
+				PrivacyInfo.xcprivacy,
 				Secrets.plist,
 			);
 			target = CE6AB6932DF7D0AE006085B4 /* ArkadTrader */;
+		};
+		CE7E57A12F1A00010011AA01 /* Exceptions for "Tests" folder in "ArkadTraderTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ArkadTraderTests/ModelTests/AssetTermsParseNumberTests.swift,
+				ArkadTraderTests/ModelTests/CashtagTests.swift,
+				ArkadTraderTests/ModelTests/TradeTests.swift,
+				ArkadTraderTests/ModelTests/TradeCalloutTests.swift,
+				ArkadTraderTests/ModelTests/UserAvatarInitialsTests.swift,
+				ArkadTraderTests/ServiceTests/TrackRecordMathTests.swift,
+				ArkadTraderTests/ServiceTests/SentimentVotesTests.swift,
+			);
+			target = CE6AB6A12DF7D0AF006085B4 /* ArkadTraderTests */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -311,6 +326,9 @@
 		};
 		CED442892E0272E10056B849 /* Tests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CE7E57A12F1A00010011AA01 /* Exceptions for "Tests" folder in "ArkadTraderTests" target */,
+			);
 			path = Tests;
 			sourceTree = "<group>";
 		};

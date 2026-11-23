@@ -78,6 +78,9 @@ struct CreateCalloutSheet: View {
     @State private var target = ""
     @State private var note = ""
     @State private var liveQuote: LiveQuote = .idle
+    /// The entry the form filled in from the live price, so a newer quote can replace it
+    /// unless the author typed their own.
+    @State private var autoFilledEntry: String?
 
     /// The live price the entry is checked against (anti-fake, docs/backend-contracts.md).
     private enum LiveQuote: Equatable {
@@ -101,9 +104,9 @@ struct CreateCalloutSheet: View {
             ticker: normalizedTicker,
             assetType: assetType,
             direction: direction,
-            entryPrice: Double(entry) ?? 0,
-            stopPrice: Double(stop),
-            targetPrice: Double(target),
+            entryPrice: TradeCallout.parsePrice(entry) ?? 0,
+            stopPrice: TradeCallout.parsePrice(stop),
+            targetPrice: TradeCallout.parsePrice(target),
             note: note.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         if let livePrice {
@@ -118,8 +121,10 @@ struct CreateCalloutSheet: View {
     /// The form's blocking problem, if any: the levels first, then the entry's distance from the live price.
     private var validationError: String? {
         if let error = callout.validationError { return error }
-        if let livePrice, let entryValue = Double(entry) {
-            return TradeCallout.entryCheckError(entry: entryValue, livePrice: livePrice)
+        if !stop.isEmpty, TradeCallout.parsePrice(stop) == nil { return "Enter a valid stop price" }
+        if !target.isEmpty, TradeCallout.parsePrice(target) == nil { return "Enter a valid target price" }
+        if let livePrice, let entryValue = TradeCallout.parsePrice(entry) {
+            return TradeCallout.entryCheckError(entry: entryValue, livePrice: livePrice, direction: direction)
         }
         return nil
     }
@@ -178,10 +183,12 @@ struct CreateCalloutSheet: View {
         let quote = await CalloutQuotes.shared.postingQuote(for: symbol)
         guard !Task.isCancelled else { return }
         liveQuote = quote.map { LiveQuote.live($0.price) } ?? LiveQuote.unavailable
-    }
-
-    private static func editablePrice(_ price: Double) -> String {
-        String(format: abs(price) < 1 ? "%.4f" : "%.2f", price)
+        // Start the entry at the live price, unless the author already typed one.
+        if let price = quote?.price, entry.isEmpty || entry == autoFilledEntry {
+            let text = TradeCallout.editablePrice(price)
+            entry = text
+            autoFilledEntry = text
+        }
     }
 
     @ViewBuilder
@@ -203,7 +210,8 @@ struct CreateCalloutSheet: View {
         case .live(let price):
             CalloutRowDivider()
             Button {
-                entry = Self.editablePrice(price)
+                entry = TradeCallout.editablePrice(price)
+                autoFilledEntry = entry
             } label: {
                 HStack {
                     Text("Use current price")
@@ -344,11 +352,11 @@ struct TrackCalloutSheet: View {
         self.callout = callout
         self.communityName = communityName
         self.onTrack = onTrack
-        _entry = State(initialValue: String(format: "%.2f", callout.entryPrice))
+        _entry = State(initialValue: TradeCallout.editablePrice(callout.entryPrice))
     }
 
-    private var entryValue: Double { Double(entry) ?? 0 }
-    private var quantityValue: Double { Double(quantity.replacingOccurrences(of: ",", with: "")) ?? 0 }
+    private var entryValue: Double { TradeCallout.parsePrice(entry) ?? 0 }
+    private var quantityValue: Double { AssetTerms.parseNumber(quantity).flatMap { $0.isFinite ? $0 : nil } ?? 0 }
     private var canSave: Bool { entryValue > 0 && quantityValue > 0 && !isSaving }
 
     var body: some View {
@@ -496,8 +504,9 @@ struct TrackCalloutSheet: View {
 // MARK: - Close Callout
 
 /// The author closes an open callout at an exit price. The result counts toward their record.
-/// The exit must be within 2% of a live quote; without one the author can close at any price,
-/// but the close is marked `exitCheck: "unchecked"` and doesn't count toward the record.
+/// With a live quote the exit must pass TradeCallout.exitCheckError (at most 0.25% better than
+/// the quote, at most 2% worse); without one the author can close at any price, but the close is
+/// marked `exitCheck: "unchecked"` and doesn't count toward the record.
 struct CloseCalloutSheet: View {
     let callout: TradeCallout
     let onClose: (_ exitPrice: Double, _ exitCheck: TradeCallout.PriceCheck) async throws -> Void
@@ -519,7 +528,7 @@ struct CloseCalloutSheet: View {
     init(callout: TradeCallout, onClose: @escaping (Double, TradeCallout.PriceCheck) async throws -> Void) {
         self.callout = callout
         self.onClose = onClose
-        let initial = callout.lastPrice.map(Self.editableString) ?? ""
+        let initial = callout.lastPrice.map(TradeCallout.editablePrice) ?? ""
         self.initialExitText = initial
         _exitText = State(initialValue: initial)
     }
@@ -534,7 +543,7 @@ struct CloseCalloutSheet: View {
     /// Blocks closing when the exit is too far from the live price.
     private var exitError: String? {
         guard let livePrice, let exitValue else { return nil }
-        return TradeCallout.exitCheckError(exit: exitValue, livePrice: livePrice)
+        return TradeCallout.exitCheckError(exit: exitValue, livePrice: livePrice, direction: callout.direction)
     }
 
     private func loadLiveQuote() async {
@@ -546,21 +555,15 @@ struct CloseCalloutSheet: View {
         guard !Task.isCancelled else { return }
         if let quote {
             liveQuote = .live(quote.price)
-            if exitText == initialExitText { exitText = Self.editableString(quote.price) }
+            if exitText == initialExitText { exitText = TradeCallout.editablePrice(quote.price) }
         } else {
             liveQuote = .unavailable
         }
     }
 
-    /// Accepts "182.4", "$182.40" and "182,4".
+    /// Accepts "182.4", "$182.40", and "182,4" where the decimal separator is a comma.
     private var exitValue: Double? {
-        var text = exitText.replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespaces)
-        if text.contains(",") && !text.contains(".") {
-            text = text.replacingOccurrences(of: ",", with: ".")
-        } else {
-            text = text.replacingOccurrences(of: ",", with: "")
-        }
-        guard let value = Double(text), value > 0, value.isFinite else { return nil }
+        guard let value = TradeCallout.parsePrice(exitText), value > 0 else { return nil }
         return value
     }
 
@@ -569,10 +572,6 @@ struct CloseCalloutSheet: View {
     }
 
     private var canSave: Bool { exitValue != nil && exitError == nil && liveQuote != .loading && !isSaving }
-
-    private static func editableString(_ price: Double) -> String {
-        String(format: abs(price) < 1 ? "%.4f" : "%.2f", price)
-    }
 
     var body: some View {
         NavigationStack {
@@ -680,7 +679,7 @@ struct CloseCalloutSheet: View {
 
     private func priceButton(title: String, price: Double, detail: String?) -> some View {
         Button {
-            exitText = Self.editableString(price)
+            exitText = TradeCallout.editablePrice(price)
         } label: {
             HStack {
                 Text(title)

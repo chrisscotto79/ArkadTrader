@@ -87,8 +87,9 @@ struct SettingsView: View {
             AboutView()
         }
         .alert("Delete Account?", isPresented: $showDeleteConfirmation) {
-            Button("Delete Account", role: .destructive) {
-                deleteAccount()
+            Button("Continue", role: .destructive) {
+                confirmPassword = ""
+                showPasswordPrompt = true
             }
             Button("Cancel", role: .cancel) { }
         } message: {
@@ -98,13 +99,13 @@ struct SettingsView: View {
             SecureField("Password", text: $confirmPassword)
                 .textContentType(.password)
             Button("Delete Account", role: .destructive) {
-                reauthenticateAndDelete()
+                deleteAccount()
             }
             Button("Cancel", role: .cancel) {
                 confirmPassword = ""
             }
         } message: {
-            Text("For your security, enter your password to delete your account.")
+            Text("Enter your password to permanently delete your account.")
         }
         .alert("Couldn't Delete Account", isPresented: $showDeleteError) {
             Button("OK", role: .cancel) { }
@@ -298,33 +299,16 @@ struct SettingsView: View {
             """
         }
         return """
-        This permanently deletes your Arkad account: your profile and photo, posts (with their comments and likes), trades, watchlist, price alerts, track record and followers. You leave the communities you've joined, and communities you own are deleted. Comments on other people's posts and messages in community chats stay.
+        This permanently deletes your Arkad account: your profile and photo, posts, your comments and likes, trades, watchlist, price alerts, track record and followers. You leave the communities you've joined, and communities you own are deleted. Messages in community chats stay. You'll be asked for your password next.
 
         This can't be undone.
         """
     }
 
-    /// With Cloud Functions, deletes the sign-in and the server removes everything else. In
-    /// free mode the app removes your data first, then the sign-in (FirebaseAuthService).
-    /// Either way, Firebase or the app asks for the password again if the last sign-in
-    /// wasn't recent, before anything is deleted.
+    /// Confirms the password first, so nothing is deleted if it's wrong. With Cloud Functions
+    /// that deletes the sign-in and the server removes everything else; in free mode the app
+    /// removes your data first, then the sign-in (FirebaseAuthService.deleteAccount).
     private func deleteAccount() {
-        isDeletingAccount = true
-        Task {
-            do {
-                try await authService.deleteAccount()
-                didDeleteAccount()
-            } catch let error where Self.requiresRecentLogin(error) {
-                isDeletingAccount = false
-                confirmPassword = ""
-                showPasswordPrompt = true
-            } catch {
-                showDeleteFailure(error)
-            }
-        }
-    }
-
-    private func reauthenticateAndDelete() {
         let password = confirmPassword
         confirmPassword = ""
         guard !password.isEmpty else { return }
@@ -332,8 +316,7 @@ struct SettingsView: View {
         isDeletingAccount = true
         Task {
             do {
-                try await authService.reauthenticate(password: password)
-                try await authService.deleteAccount()
+                try await authService.deleteAccount(password: password)
                 didDeleteAccount()
             } catch {
                 showDeleteFailure(error)
@@ -353,17 +336,14 @@ struct SettingsView: View {
         showDeleteError = true
     }
 
-    private static func requiresRecentLogin(_ error: Error) -> Bool {
-        if case AuthError.recentLoginRequired = error { return true }
-        return AuthErrorCode(rawValue: (error as NSError).code) == .requiresRecentLogin
-    }
-
     private static func message(for error: Error) -> String {
         switch AuthErrorCode(rawValue: (error as NSError).code) {
         case .wrongPassword, .invalidCredential:
             return "That password isn't right. Please try again."
         case .networkError:
             return "Check your connection and try again."
+        case .requiresRecentLogin:
+            return "Please sign out, sign back in, and try again."
         default:
             return "Something went wrong: \(error.localizedDescription) Please try again."
         }

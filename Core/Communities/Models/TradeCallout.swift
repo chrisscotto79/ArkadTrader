@@ -17,14 +17,17 @@ struct TradeCallout: Codable, Equatable {
     /// Whether a price was checked against a live quote: the entry when posting (`priceCheck`
     /// on the callout), or the exit of a manual close (`exitCheck`, on the mirror doc only).
     enum PriceCheck: String, Codable {
-        /// Entry was within `maxEntryDeviation` of `quoteAtPost`.
+        /// The price was within the allowed band around the live quote (`priceCheckError`).
         case live
         /// No quote was available (no key, unsupported asset or no network).
         case unchecked
     }
 
-    /// How far an entry (posting) or exit (closing by hand) may sit from the live price: 2%.
-    static let maxEntryDeviation = 0.02
+    /// How much better than the live price a checked entry or exit may be: 0.25%. "Better" is
+    /// lower for a long entry or short exit, higher for a short entry or long exit.
+    static let maxBetterDeviation = 0.0025
+    /// How much worse than the live price it may be (a typo guard): 2%.
+    static let maxWorseDeviation = 0.02
 
     enum Status: String, Codable, CaseIterable {
         case open
@@ -96,26 +99,57 @@ struct TradeCallout: Codable, Equatable {
     /// Signed percent move for the callout's direction; positive is a gain.
     var resultPercent: Double? = nil
 
+    /// Id of the `calloutUpdate` message that last moved the stop or target (written in the same
+    /// batch). The id is "<parentMessageId>_u<epochMillis>" (CalloutFollowUps.updateMessageId).
+    var lastUpdateId: String? = nil
+
     var isOpen: Bool { status == .open }
 
     /// The entry was checked against a live price when posted. Unchecked callouts (and ones
     /// posted before the check existed) still show, but don't count toward track records.
     var isPriceChecked: Bool { priceCheck == .live }
 
-    /// The validation message for an entry that's too far from the live price, or nil when it's close enough.
-    static func entryCheckError(entry: Double, livePrice: Double) -> String? {
-        priceCheckError("Entry", price: entry, livePrice: livePrice)
+    /// The validation message for an entry too far from the live price, or nil when it's fine.
+    /// A long's entry may be at most 0.25% below the live price, a short's at most 0.25% above.
+    static func entryCheckError(entry: Double, livePrice: Double, direction: Direction) -> String? {
+        priceCheckError("Entry", price: entry, livePrice: livePrice, lowerIsBetter: direction == .long)
     }
 
-    /// The same check for the exit price of a manual close.
-    static func exitCheckError(exit: Double, livePrice: Double) -> String? {
-        priceCheckError("Exit", price: exit, livePrice: livePrice)
+    /// The same check for the exit of a manual close: a long's exit may be at most 0.25% above
+    /// the live price, a short's at most 0.25% below.
+    static func exitCheckError(exit: Double, livePrice: Double, direction: Direction) -> String? {
+        priceCheckError("Exit", price: exit, livePrice: livePrice, lowerIsBetter: direction == .short)
     }
 
-    private static func priceCheckError(_ label: String, price: Double, livePrice: Double) -> String? {
-        guard livePrice > 0, price > 0 else { return nil }
-        guard abs(price - livePrice) / livePrice > maxEntryDeviation else { return nil }
+    private static func priceCheckError(_ label: String, price: Double, livePrice: Double, lowerIsBetter: Bool) -> String? {
+        guard livePrice > 0, price > 0, livePrice.isFinite, price.isFinite else { return nil }
+        let low = livePrice * (1 - (lowerIsBetter ? maxBetterDeviation : maxWorseDeviation))
+        let high = livePrice * (1 + (lowerIsBetter ? maxWorseDeviation : maxBetterDeviation))
+        if price >= low && price <= high { return nil }
+        let isBetter = lowerIsBetter ? price < low : price > high
+        if isBetter {
+            return "\(label) can't be better than the current price (\(formatPrice(livePrice)))"
+        }
         return "\(label) must be within 2% of the current price (\(formatPrice(livePrice)))"
+    }
+
+    /// A price typed into a callout form: "182.4", "$182.40", or "182,4" where the decimal
+    /// separator is a comma. Nil unless it's a finite number.
+    static func parsePrice(_ text: String) -> Double? {
+        let cleaned = text.replacingOccurrences(of: "$", with: "").replacingOccurrences(of: "%", with: "")
+        guard let value = AssetTerms.parseNumber(cleaned), value.isFinite else { return nil }
+        return value
+    }
+
+    /// A price for an editable field, with the device's decimal separator and no grouping.
+    static func editablePrice(_ price: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        let digits = abs(price) < 1 ? 4 : 2
+        formatter.minimumFractionDigits = digits
+        formatter.maximumFractionDigits = digits
+        return formatter.string(from: NSNumber(value: price)) ?? String(format: "%.\(digits)f", price)
     }
 
     /// Live move from entry to the last checked price, for open callouts.
@@ -150,27 +184,57 @@ struct TradeCallout: Codable, Equatable {
 
     // MARK: - Auto-close
 
-    /// Callouts with neither a stop nor a target close after this long, at the last price.
+    /// Callouts with neither a stop nor a target close after this long, at a fresh price.
     static let maxOpenDays = 30
 
     /// What a price check does to this open callout, or nil when it stays open.
     /// A target fills at the target and a stop at the stop, for longs and shorts alike.
-    /// With neither set, the callout closes at `price` once it's `maxOpenDays` old.
-    func autoClose(at price: Double, now: Date = Date()) -> (status: Status, exitPrice: Double)? {
+    /// - Parameters:
+    ///   - price: a fresh quote.
+    ///   - high, low: the trading day's range, only when the whole range is known to come after
+    ///     the callout's levels were set (the caller checks). A stop crossed intraday stops the
+    ///     callout out even if the price came back; when the stop and target were both crossed
+    ///     the same day, the stop wins (we can't tell which came first).
+    /// With neither level set, the callout closes at `price` once it's `maxOpenDays` old.
+    func autoClose(at price: Double, high: Double? = nil, low: Double? = nil, now: Date = Date()) -> (status: Status, exitPrice: Double)? {
         guard isOpen, price > 0, price.isFinite else { return nil }
-        if let target = targetPrice {
-            let hit = direction == .long ? price >= target : price <= target
-            if hit { return (status: Status.targetHit, exitPrice: target) }
-        }
+        let validHigh = high.flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
+        let validLow = low.flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
+        let highest = max(validHigh ?? price, price)
+        let lowest = min(validLow ?? price, price)
+
         if let stop = stopPrice {
-            let hit = direction == .long ? price <= stop : price >= stop
+            let hit = direction == .long ? lowest <= stop : highest >= stop
             if hit { return (status: Status.stoppedOut, exitPrice: stop) }
+        }
+        if let target = targetPrice {
+            let hit = direction == .long ? highest >= target : lowest <= target
+            if hit { return (status: Status.targetHit, exitPrice: target) }
         }
         if stopPrice == nil, targetPrice == nil, let postedAt,
            now.timeIntervalSince(postedAt) >= Double(Self.maxOpenDays) * 86_400 {
             return (status: Status.closed, exitPrice: price)
         }
         return nil
+    }
+
+    /// A closed callout whose numbers follow the close rules: a target hit exits at the target, a
+    /// stop-out at the stop, and the result is the signed move from entry (within 0.05).
+    /// Use it on the message's callout, which carries the current levels.
+    var isConsistentClose: Bool {
+        guard isConsistentResult else { return false }
+        switch status {
+        case .targetHit: return exitPrice == targetPrice
+        case .stoppedOut: return exitPrice == stopPrice
+        case .closed, .open: return true
+        }
+    }
+
+    /// Closed, with a result that is the signed move from entry to the exit (within 0.05). The
+    /// level check is left out: a mirror doc keeps the levels the callout was posted with.
+    var isConsistentResult: Bool {
+        guard !isOpen, let exitPrice, exitPrice > 0, let resultPercent else { return false }
+        return abs(resultPercent - percentMove(to: exitPrice)) <= 0.05
     }
 
     /// Reward-to-risk ratio, when both a stop and a target are set.
@@ -234,12 +298,15 @@ struct TradeCallout: Codable, Equatable {
         if let exitPrice { data["exitPrice"] = exitPrice }
         if let closedAt { data["closedAt"] = Timestamp(date: closedAt) }
         if let resultPercent { data["resultPercent"] = resultPercent }
+        if let lastUpdateId { data["lastUpdateId"] = lastUpdateId }
         return data
     }
 
     /// The author's mirror doc, `users/{uid}/callouts/{messageId}` (docs/backend-contracts.md,
-    /// section 0). Free mode computes track records from these. `closedAt` is written by the
-    /// caller as a server timestamp when the callout closes.
+    /// section 0), as created right after the callout message: the message's own values, so the
+    /// rules can compare them. Free mode computes track records from these docs. While open only
+    /// `lastPrice`, `lastPriceAt`, `deletedAt` and the close fields change; once closed it never
+    /// changes, and the app never deletes it (TrackRecordWriter).
     func mirrorData(communityId: String, channelId: String, messageId: String) -> [String: Any] {
         var data: [String: Any] = [
             "communityId": communityId,
@@ -249,14 +316,19 @@ struct TradeCallout: Codable, Equatable {
             "assetType": assetType.rawValue,
             "direction": direction.rawValue,
             "entryPrice": entryPrice,
-            "status": status.rawValue
+            "status": status.rawValue,
+            "priceCheck": (priceCheck ?? .unchecked).rawValue
         ]
         if let stopPrice { data["stopPrice"] = stopPrice }
         if let targetPrice { data["targetPrice"] = targetPrice }
         if let postedAt { data["postedAt"] = Timestamp(date: postedAt) }
-        if let priceCheck { data["priceCheck"] = priceCheck.rawValue }
         if let quoteAtPost { data["quoteAtPost"] = quoteAtPost }
-        if let closedAt { data["closedAt"] = Timestamp(date: closedAt) }
+        return data
+    }
+
+    /// The close fields of a mirror doc (status, exitPrice, resultPercent; closedAt is the caller's).
+    func mirrorCloseData() -> [String: Any] {
+        var data: [String: Any] = ["status": status.rawValue]
         if let exitPrice { data["exitPrice"] = exitPrice }
         if let resultPercent { data["resultPercent"] = resultPercent }
         return data
@@ -285,7 +357,8 @@ struct TradeCallout: Codable, Equatable {
             lastPriceAt: TrackRecordDecode.date(data["lastPriceAt"]),
             exitPrice: TrackRecordDecode.double(data["exitPrice"]),
             closedAt: TrackRecordDecode.date(data["closedAt"]),
-            resultPercent: TrackRecordDecode.double(data["resultPercent"])
+            resultPercent: TrackRecordDecode.double(data["resultPercent"]),
+            lastUpdateId: data["lastUpdateId"] as? String
         )
     }
 }
@@ -460,8 +533,8 @@ struct CalloutResult: Codable, Equatable {
 
     var isPriceChecked: Bool { exitCheck == .live }
 
-    /// "Price checked" or "Unchecked"
-    var checkLabel: String { isPriceChecked ? "Price checked" : "Unchecked" }
+    /// What `exitCheck` vouches for: the exit only (the entry's check is on the callout).
+    var checkLabel: String { isPriceChecked ? "Exit price checked" : "Exit unchecked" }
 
     /// Plain-text summary used as the message's `content`.
     var summary: String {

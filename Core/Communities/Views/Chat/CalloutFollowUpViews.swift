@@ -112,8 +112,20 @@ struct CalloutUpdateRow: View {
 
 struct CalloutResultCard: View {
     let result: CalloutResult
+    /// The callout this result closes, when it's loaded
+    var parent: TradeCallout? = nil
     /// Scrolls to the callout; nil when it isn't loaded
     var onOpenParent: (() -> Void)? = nil
+
+    /// "Price checked" needs both ends checked: the callout's entry and this exit. With the
+    /// callout not loaded, only the exit can be vouched for.
+    private var checkLabel: String {
+        guard result.isPriceChecked else { return "Unchecked" }
+        guard let parent else { return "Exit checked" }
+        return parent.isPriceChecked ? "Price checked" : "Entry unchecked"
+    }
+
+    private var isFullyChecked: Bool { result.isPriceChecked && parent?.isPriceChecked == true }
 
     private var icon: String {
         switch result.status {
@@ -159,9 +171,9 @@ struct CalloutResultCard: View {
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Label(result.checkLabel, systemImage: result.isPriceChecked ? "checkmark.shield.fill" : "questionmark.circle")
+                Label(checkLabel, systemImage: isFullyChecked ? "checkmark.shield.fill" : "questionmark.circle")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(result.isPriceChecked ? Color.goldText : Color.secondary)
+                    .foregroundStyle(isFullyChecked ? Color.goldText : Color.secondary)
                     .labelStyle(.titleAndIcon)
                     .lineLimit(1)
                     .fixedSize()
@@ -192,7 +204,7 @@ struct CalloutResultCard: View {
         )
         .frame(maxWidth: 360)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(result.direction.displayName) callout on \(result.ticker), \(result.howClosed), result \(TradeCallout.formatPercent(result.resultPercent)), exit \(TradeCallout.formatPrice(result.exitPrice)), \(result.checkLabel)")
+        .accessibilityLabel("\(result.direction.displayName) callout on \(result.ticker), \(result.howClosed), result \(TradeCallout.formatPercent(result.resultPercent)), exit \(TradeCallout.formatPrice(result.exitPrice)), \(checkLabel)")
     }
 }
 

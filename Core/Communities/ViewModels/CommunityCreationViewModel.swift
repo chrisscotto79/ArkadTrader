@@ -1,5 +1,6 @@
 // File: Core/Communities/ViewModels/CommunityCreationViewModel.swift
-// Complete Community Creation ViewModel
+// Creating a community: live validation (with a name check against public communities),
+// pricing (paid mode only), optional photos.
 
 import Foundation
 import Combine
@@ -48,6 +49,8 @@ class CommunityCreationViewModel: ObservableObject {
     private let communityService = CommunityFirebaseService.shared
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
+    /// The name check in flight; a newer name cancels it
+    private var nameCheckTask: Task<Void, Never>?
     
     // MARK: - Constants
     private let nameMinLength = 3
@@ -97,6 +100,7 @@ class CommunityCreationViewModel: ObservableObject {
     // MARK: - Validation Methods
     
     private func validateName(_ name: String) {
+        nameCheckTask?.cancel()
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         
         if trimmedName.isEmpty {
@@ -122,10 +126,10 @@ class CommunityCreationViewModel: ObservableObject {
         }
         
         nameValidation = .valid
-        
-        // Check name availability asynchronously
-        Task {
-            await checkNameAvailability(trimmedName)
+
+        // Then check it isn't taken (any capitals)
+        nameCheckTask = Task { [weak self] in
+            await self?.checkNameAvailability(trimmedName)
         }
     }
     
@@ -150,16 +154,16 @@ class CommunityCreationViewModel: ObservableObject {
         descriptionValidation = .valid
     }
     
+    /// Marks the name taken, but only if it's still the name typed and still otherwise valid
     private func checkNameAvailability(_ name: String) async {
-        do {
-            let isAvailable = try await communityService.isNameAvailable(name)
-            if !isAvailable {
-                nameValidation = .invalid("This name is already taken")
-            } else if nameValidation != .invalid("") { // Don't override other validation errors
-                nameValidation = .valid
-            }
-        } catch {
-            // Don't update validation state if name check fails
+        guard let isAvailable = try? await communityService.isNameAvailable(name) else {
+            return // The check couldn't run; creating still works
+        }
+        guard !Task.isCancelled,
+              self.name.trimmingCharacters(in: .whitespacesAndNewlines) == name,
+              nameValidation == .valid else { return }
+        if !isAvailable {
+            nameValidation = .invalid("This name is already taken")
         }
     }
     
@@ -271,7 +275,7 @@ class CommunityCreationViewModel: ObservableObject {
                 resetForm()
                 
             } catch {
-                errorMessage = "Failed to create community: \(error.localizedDescription)"
+                errorMessage = "Couldn't create the community. Check your connection and try again."
                 showError = true
             }
             

@@ -291,6 +291,20 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "trades",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isPublic",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ticker",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

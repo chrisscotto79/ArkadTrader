@@ -8,7 +8,14 @@ struct ReplyQuoteHeader: View {
     let reply: MessageReplyRef
     /// The original is in the loaded messages, so tapping can scroll to it
     var canJump: Bool = true
+    /// The original has been deleted since
+    var isOriginalDeleted: Bool = false
     let onTap: () -> Void
+
+    private var quoteText: String {
+        if isOriginalDeleted { return "Original message deleted" }
+        return reply.preview.isEmpty ? "Original message" : reply.preview
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -21,8 +28,9 @@ struct ReplyQuoteHeader: View {
                     .foregroundStyle(Color.goldText)
                     .lineLimit(1)
                     .layoutPriority(1)
-                Text(reply.preview.isEmpty ? "Original message" : reply.preview)
+                Text(quoteText)
                     .font(.caption)
+                    .italic(isOriginalDeleted)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -45,7 +53,7 @@ struct ReplyQuoteHeader: View {
         .buttonStyle(PressableStyle())
         .disabled(!canJump)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Reply to \(reply.authorUsername): \(reply.preview)")
+        .accessibilityLabel("Reply to \(reply.authorUsername): \(quoteText)")
         .accessibilityHint(canJump ? "Shows the original message" : "")
     }
 }

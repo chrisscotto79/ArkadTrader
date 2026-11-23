@@ -5,11 +5,17 @@ import SwiftUI
 
 struct CommentsView: View {
     let postId: String
-    let onCommentCountChanged: (Int) -> Void
+    /// Called with the new number of top-level comments after one is added or deleted
+    /// (PostStore is updated either way, so every post card shows it).
+    var onCommentCountChanged: ((Int) -> Void)? = nil
     @State private var comments: [Comment] = []
     @State private var newCommentText = ""
     @State private var isLoading = false
+    @State private var isSending = false
     @State private var hasLoaded = false
+    @State private var loadError: String?
+    /// Shown above the composer when a comment couldn't be sent or deleted
+    @State private var sendError: String?
     @State private var likedComments: Set<String> = []
     @State private var reportTarget: ReportTarget?
     @ObservedObject private var blockStore = BlockStore.shared
@@ -95,6 +101,15 @@ struct CommentsView: View {
     private var commentsList: some View {
         if isLoading && !hasLoaded && comments.isEmpty {
             HomeFeedLoadingView(message: "Loading comments…")
+        } else if let loadError, comments.isEmpty {
+            EmptyStateView(
+                systemImage: "wifi.exclamationmark",
+                title: "Couldn't load comments",
+                message: loadError,
+                actionTitle: "Try again"
+            ) {
+                Task { await loadComments() }
+            }
         } else if visibleComments.isEmpty {
             EmptyStateView(
                 systemImage: "bubble.left.and.bubble.right.fill",
@@ -119,6 +134,7 @@ struct CommentsView: View {
         VStack(spacing: 0) {
             CommentRowView(
                 comment: comment,
+                postId: postId,
                 isInitiallyLiked: likedComments.contains(comment.id),
                 isReply: false,
                 onReply: { startReply(to: comment) },
@@ -130,6 +146,7 @@ struct CommentsView: View {
             ForEach(getReplies(for: comment.id)) { reply in
                 CommentRowView(
                     comment: reply,
+                    postId: postId,
                     isInitiallyLiked: likedComments.contains(reply.id),
                     isReply: true,
                     onReply: { startReply(to: reply) },
@@ -172,6 +189,16 @@ struct CommentsView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            if let sendError {
+                Label(sendError, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.marketRed)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DS.pageMargin)
+                    .padding(.vertical, DS.Spacing.s)
+                    .transition(.opacity)
+            }
+
             Divider().overlay(Color.hairline)
 
             HStack(spacing: DS.Spacing.s) {
@@ -191,6 +218,15 @@ struct CommentsView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background(Capsule().fill(Color.surfaceRaised))
+                .onChange(of: newCommentText) { _, text in limitLength(&newCommentText, text) }
+                .onChange(of: replyText) { _, text in limitLength(&replyText, text) }
+
+                if currentText.count >= Comment.maxLength - 100 {
+                    Text("\(Comment.maxLength - currentText.count)")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(currentText.count >= Comment.maxLength ? Color.marketRed : Color.warning)
+                        .accessibilityLabel("\(Comment.maxLength - currentText.count) characters left")
+                }
 
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -200,7 +236,7 @@ struct CommentsView: View {
                         .background(Circle().fill(canSendMessage ? Color.arkadGold : Color.surfaceRaised))
                 }
                 .buttonStyle(PressableStyle())
-                .disabled(!canSendMessage || isLoading)
+                .disabled(!canSendMessage || isSending)
                 .accessibilityLabel(replyingToComment != nil ? "Send reply" : "Send comment")
             }
             .padding(.horizontal, DS.pageMargin)
@@ -209,13 +245,22 @@ struct CommentsView: View {
         .background(Color.surface)
         .animation(.snappy(duration: 0.25), value: replyingToComment?.id)
         .animation(.snappy(duration: 0.2), value: canSendMessage)
+        .animation(.snappy(duration: 0.2), value: sendError)
+    }
+
+    private var currentText: String {
+        replyingToComment != nil ? replyText : newCommentText
     }
 
     private var canSendMessage: Bool {
-        if replyingToComment != nil {
-            return !replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        } else {
-            return !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty && text.count <= Comment.maxLength
+    }
+
+    /// Keeps a comment within the length the database accepts.
+    private func limitLength(_ text: inout String, _ newValue: String) {
+        if newValue.count > Comment.maxLength {
+            text = String(newValue.prefix(Comment.maxLength))
         }
     }
 
@@ -253,44 +298,56 @@ struct CommentsView: View {
     }
 
     private func addReply() async {
-        guard let replyingTo = replyingToComment,
-              let currentUser = authService.currentUser,
-              !replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-
-        isLoading = true
-
-        do {
-            // Always reply to the root parent
-            let rootParentId = replyingTo.parentCommentId ?? replyingTo.id
-
-            try await authService.addComment(
-                postId: postId,
-                content: replyText,
-                authorId: currentUser.id,
-                authorUsername: currentUser.username,
-                parentCommentId: rootParentId
-            )
-
+        guard let replyingTo = replyingToComment else { return }
+        // Always reply to the root comment of the thread
+        let rootParentId = replyingTo.parentCommentId ?? replyingTo.id
+        if await send(replyText, parentCommentId: rootParentId) {
             cancelReply()
-            await loadComments()
-        } catch {
-            print("❌ ERROR adding reply: \(error)")
         }
-
-        isLoading = false
     }
 
-    // MARK: - Loading, adding, deleting
+    private func addComment() async {
+        if await send(newCommentText, parentCommentId: nil) {
+            newCommentText = ""
+        }
+    }
+
+    /// Saves a comment or reply, then reloads the thread. On failure the text stays in the
+    /// box and the error shows above it.
+    private func send(_ text: String, parentCommentId: String?) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isSending, let currentUser = authService.currentUser else { return false }
+
+        isSending = true
+        sendError = nil
+        defer { isSending = false }
+
+        do {
+            try await FirebaseServices.shared.addComment(
+                postId: postId,
+                content: trimmed,
+                authorId: currentUser.id,
+                authorUsername: currentUser.username,
+                parentCommentId: parentCommentId
+            )
+        } catch {
+            sendError = parentCommentId == nil
+                ? "Couldn't post your comment. Check your connection and try again."
+                : "Couldn't post your reply. Check your connection and try again."
+            return false
+        }
+
+        await loadComments()
+        if parentCommentId == nil { reportCommentCount() }
+        return true
+    }
+
+    // MARK: - Loading and deleting
 
     private func loadLikedComments() async {
         guard let userId = authService.currentUser?.id else { return }
-
-        do {
-            likedComments = try await authService.getUserLikedComments(userId: userId)
-        } catch {
-            print("❌ Error loading liked comments: \(error)")
+        if let liked = try? await FirebaseServices.shared.getLikedCommentIds(postId: postId, userId: userId) {
+            likedComments = liked
         }
     }
 
@@ -301,52 +358,30 @@ struct CommentsView: View {
             withAnimation(.snappy(duration: 0.25)) {
                 comments = loaded
             }
+            loadError = nil
         } catch {
-            print("❌ ERROR loading comments: \(error)")
+            loadError = "Check your connection and try again."
         }
         isLoading = false
         hasLoaded = true
     }
 
     private func deleteComment(_ comment: Comment) async {
+        sendError = nil
         do {
             try await authService.deleteComment(commentId: comment.id, postId: postId)
             await loadComments()
-
-            // Update comment count (only count top-level comments)
-            onCommentCountChanged(comments.filter { $0.parentCommentId == nil }.count)
+            if comment.parentCommentId == nil { reportCommentCount() }
         } catch {
-            print("❌ Error deleting comment: \(error)")
+            sendError = "Couldn't delete that comment. Try again."
         }
     }
 
-    private func addComment() async {
-        guard !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let currentUser = authService.currentUser else {
-            return
-        }
-
-        isLoading = true
-
-        do {
-            try await authService.addComment(
-                postId: postId,
-                content: newCommentText,
-                authorId: currentUser.id,
-                authorUsername: currentUser.username,
-                parentCommentId: nil  // top-level comment
-            )
-
-            newCommentText = ""
-            await loadComments()
-
-            // Update the comment count in the feed (only top-level comments)
-            onCommentCountChanged(comments.filter { $0.parentCommentId == nil }.count)
-        } catch {
-            print("❌ ERROR adding comment: \(error)")
-        }
-
-        isLoading = false
+    /// The post's comment count is its top-level comments.
+    private func reportCommentCount() {
+        let count = comments.filter { $0.parentCommentId == nil }.count
+        PostStore.shared.setCommentsCount(count, for: postId)
+        onCommentCountChanged?(count)
     }
 }
 
@@ -354,20 +389,24 @@ struct CommentsView: View {
 
 private struct CommentRowView: View {
     let comment: Comment
+    let postId: String
     let isInitiallyLiked: Bool
     let isReply: Bool
     @EnvironmentObject var authService: FirebaseAuthService
     @State private var isLiked = false
     @State private var likesCount: Int
+    /// A like or unlike is being saved; taps wait for it
+    @State private var isSavingLike = false
     @State private var showDeleteConfirmation = false
 
     let onReply: () -> Void
     let onReport: () -> Void
     let onDelete: () -> Void
 
-    init(comment: Comment, isInitiallyLiked: Bool, isReply: Bool = false, onReply: @escaping () -> Void,
-         onReport: @escaping () -> Void, onDelete: @escaping () -> Void) {
+    init(comment: Comment, postId: String, isInitiallyLiked: Bool, isReply: Bool = false,
+         onReply: @escaping () -> Void, onReport: @escaping () -> Void, onDelete: @escaping () -> Void) {
         self.comment = comment
+        self.postId = postId
         self.isInitiallyLiked = isInitiallyLiked
         self.isReply = isReply
         self.onReply = onReply
@@ -400,7 +439,7 @@ private struct CommentRowView: View {
         .padding(.horizontal, DS.pageMargin)
         .padding(.vertical, DS.Spacing.m)
         .onChange(of: isInitiallyLiked) {
-            isLiked = isInitiallyLiked
+            if !isSavingLike { isLiked = isInitiallyLiked }
         }
         .confirmationDialog("Delete this comment?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive, action: onDelete)
@@ -476,29 +515,28 @@ private struct CommentRowView: View {
     }
 
     private func toggleLike() async {
-        guard let userId = authService.currentUser?.id else { return }
-
+        guard let userId = authService.currentUser?.id, !isSavingLike else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
-        // Update UI immediately
+        let wasLiked = isLiked
+        isSavingLike = true
         withAnimation(.snappy(duration: 0.25)) {
-            isLiked.toggle()
-            likesCount += isLiked ? 1 : -1
+            isLiked = !wasLiked
+            likesCount = max(0, likesCount + (wasLiked ? -1 : 1))
         }
 
         do {
-            if isLiked {
-                try await authService.likeComment(commentId: comment.id, userId: userId)
+            if wasLiked {
+                try await FirebaseServices.shared.unlikeComment(postId: postId, commentId: comment.id, userId: userId)
             } else {
-                try await authService.unlikeComment(commentId: comment.id, userId: userId)
+                try await FirebaseServices.shared.likeComment(postId: postId, commentId: comment.id, userId: userId)
             }
         } catch {
-            // Revert on error
             withAnimation(.snappy(duration: 0.25)) {
-                isLiked.toggle()
-                likesCount += isLiked ? 1 : -1
+                isLiked = wasLiked
+                likesCount = max(0, likesCount + (wasLiked ? 1 : -1))
             }
-            print("❌ Error toggling comment like: \(error)")
         }
+        isSavingLike = false
     }
 }

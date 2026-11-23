@@ -8,3 +8,15 @@ DerivedData/
 
 # Secrets (copy App/Secrets.example.plist to App/Secrets.plist)
 App/Secrets.plist
+
+# Firebase CLI / emulators
+.firebase/
+firebase-debug*.log
+firestore-debug*.log
+ui-debug*.log
+database-debug*.log
+pubsub-debug*.log
+
+# Local environment files
+.env*
+!.env.example

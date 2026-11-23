@@ -6,7 +6,9 @@
 // - Screens sit on `Color.appBackground`; content sits on `.cardStyle()` surfaces.
 // - Gold is an accent: filled buttons (with black text), selected states, small highlights.
 //   For gold *text or icons* on a surface use `Color.goldText` so it stays readable in light mode.
-// - Numbers use `.arkadNumber(...)` (rounded, monospaced digits).
+// - Numbers use `.arkadNumber(...)` (rounded, monospaced digits; scales with Dynamic Type).
+// - Controls use a minimum height plus vertical padding (never a fixed height) so they grow
+//   with larger text sizes instead of clipping.
 // - Gains/losses use `Color.marketGreen` / `Color.marketRed` (adaptive).
 
 import SwiftUI
@@ -91,10 +93,49 @@ extension Color {
 
 // MARK: - Typography
 
+/// A system font at a given point size that still follows Dynamic Type. `size` is the size at
+/// the default text setting; it scales with the text style closest to it, so big display
+/// numbers grow more gently than body-sized ones.
+struct ScaledSystemFont: ViewModifier {
+    @ScaledMetric private var size: CGFloat
+    private let weight: Font.Weight
+    private let design: Font.Design
+    private let monospacedDigits: Bool
+
+    init(size: CGFloat, weight: Font.Weight, design: Font.Design = .default, monospacedDigits: Bool = false) {
+        _size = ScaledMetric(wrappedValue: size, relativeTo: Self.textStyle(near: size))
+        self.weight = weight
+        self.design = design
+        self.monospacedDigits = monospacedDigits
+    }
+
+    func body(content: Content) -> some View {
+        let font = Font.system(size: size, weight: weight, design: design)
+        return content.font(monospacedDigits ? font.monospacedDigit() : font)
+    }
+
+    /// The built-in text style whose default size is closest to `size`.
+    static func textStyle(near size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case ..<11.5: return .caption2
+        case ..<12.5: return .caption
+        case ..<14: return .footnote
+        case ..<15.5: return .subheadline
+        case ..<16.5: return .callout
+        case ..<18.5: return .body
+        case ..<21: return .title3
+        case ..<25: return .title2
+        case ..<31: return .title
+        default: return .largeTitle
+        }
+    }
+}
+
 extension View {
     /// Rounded, monospaced-digit number style for prices, P&L and stats.
+    /// `size` is the point size at the default text setting; it scales with Dynamic Type.
     func arkadNumber(_ size: CGFloat, weight: Font.Weight = .bold) -> some View {
-        font(.system(size: size, weight: weight, design: .rounded).monospacedDigit())
+        modifier(ScaledSystemFont(size: size, weight: weight, design: .rounded, monospacedDigits: true))
     }
 }
 
@@ -128,6 +169,19 @@ extension View {
     func screenBackground() -> some View {
         background(Color.appBackground.ignoresSafeArea())
     }
+
+    /// Paints the status-bar area with the screen background so scrolling content slides
+    /// under it instead of showing behind the clock. Invisible at rest (same colour as
+    /// `screenBackground()`). Use on tab roots that hide the navigation bar and draw their
+    /// own header; screens with a navigation bar already get this from the bar.
+    func statusBarBackground() -> some View {
+        safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .background(Color.appBackground, ignoresSafeAreaEdges: .top)
+                .accessibilityHidden(true)
+        }
+    }
 }
 
 // MARK: - Buttons
@@ -143,7 +197,8 @@ struct PrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.onGold)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.horizontal, fullWidth ? 0 : 20)
-            .frame(height: 52)
+            .padding(.vertical, DS.Spacing.s)
+            .frame(minHeight: 52)
             .background(Capsule().fill(Color.arkadGold))
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -162,7 +217,8 @@ struct SecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.primary)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.horizontal, fullWidth ? 0 : 20)
-            .frame(height: 52)
+            .padding(.vertical, DS.Spacing.s)
+            .frame(minHeight: 52)
             .background(Capsule().fill(Color.surfaceRaised))
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -181,7 +237,8 @@ struct PillButtonStyle: ButtonStyle {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(foreground)
             .padding(.horizontal, 14)
-            .frame(height: 34)
+            .padding(.vertical, 6)
+            .frame(minHeight: 34)
             .background(
                 Capsule().fill(background)
             )
@@ -252,7 +309,7 @@ struct ScreenHeader<Trailing: View>: View {
         HStack(alignment: .center, spacing: DS.Spacing.m) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 30, weight: .bold))
+                    .modifier(ScaledSystemFont(size: 30, weight: .bold))
                     .foregroundStyle(Color.primary)
                     .accessibilityAddTraits(.isHeader)
                 if let subtitle {
@@ -325,7 +382,8 @@ struct SegmentedPicker<Option: Hashable>: View {
                         .foregroundStyle(isSelected ? Color.inverseText : Color.secondary)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 34)
+                        .padding(.vertical, 6)
+                        .frame(minHeight: 34)
                         .background {
                             if isSelected {
                                 Capsule()
@@ -365,7 +423,8 @@ struct Chip: View {
             }
             .foregroundStyle(isSelected ? Color.inverseText : Color.primary)
             .padding(.horizontal, 14)
-            .frame(height: 34)
+            .padding(.vertical, 6)
+            .frame(minHeight: 34)
             .background(Capsule().fill(isSelected ? Color.inverseFill : Color.surfaceRaised))
         }
         .buttonStyle(PressableStyle())

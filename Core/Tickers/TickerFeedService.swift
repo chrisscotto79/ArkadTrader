@@ -6,8 +6,11 @@
 // - Ticker feed and sentiment: `tickers` array-contains SYMBOL, ordered by `createdAt` desc.
 //   Needs the composite index (tickers CONTAINS, createdAt DESC) in firestore.indexes.json.
 // - Trending: `createdAt >= now - window`, ordered desc. Single-field, so no composite index.
+// One person can't swing the numbers: sentiment counts each author's latest tagged post about
+// the ticker (posts tagging several tickers don't vote), and trending counts each author once
+// per ticker.
 // Hidden posts (isHidden == true) and posts by people you've blocked are skipped everywhere.
-// Prices come from WatchlistQuotes (Finnhub, stocks only).
+// Prices come from QuoteClient via WatchlistQuotes (Finnhub, stocks only).
 
 import Foundation
 import FirebaseFirestore
@@ -16,12 +19,13 @@ import FirebaseFirestore
 
 /// Bullish/Bearish split over a ticker's recent posts.
 struct TickerSentimentSummary: Hashable, Sendable {
+    /// People whose latest tagged post about the ticker is Bullish / Bearish.
     let bullishCount: Int
     let bearishCount: Int
     /// How many recent posts were looked at (tagged or not).
     let postsConsidered: Int
 
-    /// Fewer tagged posts than this and there's no summary.
+    /// Fewer people tagging than this and there's no summary.
     static let minimumTaggedPosts = 3
 
     var taggedCount: Int { bullishCount + bearishCount }
@@ -45,7 +49,7 @@ struct TickerSentimentSummary: Hashable, Sendable {
 /// A ticker that people are posting about.
 struct TrendingTicker: Identifiable, Hashable, Sendable {
     let symbol: String
-    /// Posts in the window that mention the ticker (each post counts once).
+    /// People who posted about the ticker in the window (each person counts once).
     let mentionCount: Int
     let bullishCount: Int
     let bearishCount: Int
@@ -65,6 +69,27 @@ struct TrendingTicker: Identifiable, Hashable, Sendable {
     var bullishPercent: Double? { sentiment?.bullishPercent }
 }
 
+/// Bullish/Bearish votes for one ticker: one per author (their first post seen, so feed posts
+/// newest first), and only from posts that tag that one ticker.
+struct SentimentVotes {
+    private var voted = Set<String>()
+    private(set) var bullish = 0
+    private(set) var bearish = 0
+
+    mutating func add(_ data: [String: Any], for symbol: String) {
+        guard let sentiment = PostSentiment(firestoreValue: data[PostSentiment.firestoreField]),
+              let authorId = data["authorId"] as? String, !authorId.isEmpty,
+              !voted.contains(authorId) else { return }
+        let symbols = Set((data["tickers"] as? [String] ?? []).map(Cashtag.normalize).filter(Cashtag.isValid))
+        guard symbols == [symbol] else { return }
+        voted.insert(authorId)
+        switch sentiment {
+        case .bullish: bullish += 1
+        case .bearish: bearish += 1
+        }
+    }
+}
+
 // MARK: - Service
 
 @MainActor
@@ -75,13 +100,12 @@ final class TickerFeedService {
     nonisolated static let sentimentSampleSize = 100
     /// Upper bound on posts read for trending, to keep Firestore reads (free plan) in check.
     nonisolated static let trendingDocumentCap = 300
-    /// The trending window is widened to 7 days when the last day has fewer tickers than this.
+    /// The trending list uses 7 days when the last day has fewer tickers than this.
     nonisolated static let trendingMinimumTickers = 5
     nonisolated static let trendingWideWindow: TimeInterval = 7 * 24 * 3600
 
     private let trendingCacheLifetime: TimeInterval = 5 * 60
     private let sentimentCacheLifetime: TimeInterval = 2 * 60
-    private let quoteCacheLifetime: TimeInterval = 60
 
     private var db: Firestore { FirebaseServices.shared.db }
     private let blockStore = BlockStore.shared
@@ -97,7 +121,6 @@ final class TickerFeedService {
     private var trendingTaskKey: String?
 
     private var sentimentCache: [String: (summary: TickerSentimentSummary?, fetchedAt: Date)] = [:]
-    private var quoteCache: [String: (quote: WatchlistQuote?, fetchedAt: Date)] = [:]
 
     private init() {}
 
@@ -122,7 +145,7 @@ final class TickerFeedService {
 
         let snapshot = try await query.getDocuments()
         let posts = snapshot.documents
-            .compactMap { try? Post.fromFirestore(data: $0.data(), id: $0.documentID) }
+            .compactMap(Post.fromDocument)
             .filter(isVisible)
         let cursor: DocumentSnapshot? = snapshot.documents.count < limit ? nil : snapshot.documents.last
         return (posts, cursor)
@@ -147,19 +170,17 @@ final class TickerFeedService {
             .limit(to: Self.sentimentSampleSize)
             .getDocuments()
 
-        var bullish = 0
-        var bearish = 0
+        var votes = SentimentVotes()
         var considered = 0
+        // Newest first, so each author's first tagged post here is their latest
         for document in snapshot.documents {
-            let data = document.data()
+            let data = document.data(with: .estimate)
             guard isVisible(data) else { continue }
             considered += 1
-            switch PostSentiment(firestoreValue: data[PostSentiment.firestoreField]) {
-            case .bullish: bullish += 1
-            case .bearish: bearish += 1
-            case nil: break
-            }
+            votes.add(data, for: symbol)
         }
+        let bullish = votes.bullish
+        let bearish = votes.bearish
 
         let summary = TickerSentimentSummary.make(bullish: bullish, bearish: bearish, postsConsidered: considered)
         sentimentCache[symbol] = (summary, Date())
@@ -186,9 +207,12 @@ final class TickerFeedService {
 
         let task = Task { () throws -> [TrendingTicker] in
             await blockStore.loadIfNeeded()
-            var tickers = try await countMentions(window: window, limit: limit)
+            let recent = try await recentPostData(since: Date().addingTimeInterval(-window))
+            var tickers = countMentions(in: recent, window: window, limit: limit)
+            // A quiet day: the last 7 days instead (a quiet app reads few posts either way)
             if tickers.count < Self.trendingMinimumTickers, window < Self.trendingWideWindow {
-                let wider = try await countMentions(window: Self.trendingWideWindow, limit: limit)
+                let week = try await recentPostData(since: Date().addingTimeInterval(-Self.trendingWideWindow))
+                let wider = countMentions(in: week, window: Self.trendingWideWindow, limit: limit)
                 if wider.count > tickers.count { tickers = wider }
             }
             return tickers
@@ -213,34 +237,37 @@ final class TickerFeedService {
         sentimentCache = [:]
     }
 
-    private func countMentions(window: TimeInterval, limit: Int) async throws -> [TrendingTicker] {
-        let since = Date().addingTimeInterval(-window)
+    /// Visible posts since `since`, newest first, at most `trendingDocumentCap`.
+    private func recentPostData(since: Date) async throws -> [[String: Any]] {
         let snapshot = try await db.collection("posts")
             .whereField("createdAt", isGreaterThanOrEqualTo: Timestamp(date: since))
             .order(by: "createdAt", descending: true)
             .limit(to: Self.trendingDocumentCap)
             .getDocuments()
+        return snapshot.documents.map { $0.data(with: .estimate) }.filter { isVisible($0) }
+    }
+
+    /// Tickers mentioned in the posts from the last `window`, counting each author once per
+    /// ticker, with each author's latest single-ticker Bullish/Bearish tag. `documents` is
+    /// newest first.
+    private func countMentions(in documents: [[String: Any]], window: TimeInterval, limit: Int) -> [TrendingTicker] {
+        let since = Date().addingTimeInterval(-window)
 
         struct Tally {
-            var mentions = 0
-            var bullish = 0
-            var bearish = 0
+            var authors = Set<String>()
+            var votes = SentimentVotes()
             var lastMentionAt = Date.distantPast
         }
         var tallies: [String: Tally] = [:]
 
-        for document in snapshot.documents {
-            let data = document.data()
-            guard isVisible(data), let rawTickers = data["tickers"] as? [String] else { continue }
-            let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
-            let sentiment = PostSentiment(firestoreValue: data[PostSentiment.firestoreField])
-            // Each post counts once per ticker
-            let symbols = Set(rawTickers.map(Self.normalize).filter(Self.isTickerSymbol))
-            for symbol in symbols {
+        for data in documents {
+            let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+            guard createdAt >= since, let rawTickers = data["tickers"] as? [String] else { continue }
+            let authorId = data["authorId"] as? String ?? ""
+            for symbol in Set(rawTickers.map(Self.normalize).filter(Self.isTickerSymbol)) {
                 var tally = tallies[symbol, default: Tally()]
-                tally.mentions += 1
-                if sentiment == .bullish { tally.bullish += 1 }
-                if sentiment == .bearish { tally.bearish += 1 }
+                tally.authors.insert(authorId)
+                tally.votes.add(data, for: symbol)
                 tally.lastMentionAt = max(tally.lastMentionAt, createdAt)
                 tallies[symbol] = tally
             }
@@ -248,8 +275,8 @@ final class TickerFeedService {
 
         return tallies
             .map { symbol, tally in
-                TrendingTicker(symbol: symbol, mentionCount: tally.mentions,
-                               bullishCount: tally.bullish, bearishCount: tally.bearish,
+                TrendingTicker(symbol: symbol, mentionCount: tally.authors.count,
+                               bullishCount: tally.votes.bullish, bearishCount: tally.votes.bearish,
                                lastMentionAt: tally.lastMentionAt, window: window)
             }
             .sorted {
@@ -263,43 +290,24 @@ final class TickerFeedService {
 
     // MARK: - Quotes
 
-    /// Day quotes for stock symbols, through `WatchlistQuotes.fetch(symbols:)`. Symbols with
-    /// no quote (crypto, unknown, no API key) are left out. Answers are cached for a minute.
+    /// Day quotes for stock symbols, through QuoteClient (shared Finnhub budget and 30 s cache).
+    /// Symbols with no quote (crypto, unknown, rate limited, no API key) are left out.
     func quotes(for symbols: [String]) async -> [String: WatchlistQuote] {
-        let now = Date()
         let wanted = Set(symbols.map(Self.normalize).filter { Self.assetType(for: $0) == .stock })
         guard !wanted.isEmpty, WatchlistQuotes.isConfigured else { return [:] }
-
-        let stale = wanted.filter { symbol in
-            guard let cached = quoteCache[symbol] else { return true }
-            return now.timeIntervalSince(cached.fetchedAt) >= quoteCacheLifetime
-        }
-        if !stale.isEmpty {
-            let fresh = await WatchlistQuotes.fetch(symbols: stale)
-            for symbol in stale {
-                quoteCache[symbol] = (fresh[symbol], Date())
-            }
-        }
-
-        var result: [String: WatchlistQuote] = [:]
-        for symbol in wanted {
-            if let quote = quoteCache[symbol]?.quote { result[symbol] = quote }
-        }
-        return result
+        return await WatchlistQuotes.fetch(symbols: wanted)
     }
 
     // MARK: - Helpers
 
     /// "$aapl " -> "AAPL"
     nonisolated static func normalize(_ ticker: String) -> String {
-        var symbol = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        while symbol.hasPrefix("$") { symbol.removeFirst() }
-        return symbol
+        Cashtag.normalize(ticker)
     }
 
-    /// Cashtag symbols are 1–5 letters (see `extractTickers(from:)` in Post.swift).
+    /// Cashtag symbols: 1-5 letters plus an optional class, like "BRK.B" (see `Cashtag`).
     nonisolated static func isTickerSymbol(_ symbol: String) -> Bool {
-        (1...5).contains(symbol.count) && symbol.allSatisfy { $0.isASCII && $0.isUppercase && $0.isLetter }
+        Cashtag.isValid(symbol)
     }
 
     /// Common crypto cashtags are watched as crypto; everything else as a stock.
@@ -327,14 +335,12 @@ final class TickerFeedService {
 
 enum TickerFeedError {
     /// Plain-language load error, in the style of `TraderStats.friendlyLoadMessage(for:)`.
-    /// A missing index (failed precondition) or unpublished rules (permission denied) mean the
-    /// database update hasn't been published yet.
-    static func friendlyMessage(for error: Error, feature: String = "This page") -> String {
+    static func friendlyMessage(for error: Error, feature: String = "posts") -> String {
         let nsError = error as NSError
         if nsError.domain == "FIRFirestoreErrorDomain" {
             switch nsError.code {
-            case 9, 7:   // failedPrecondition (missing index), permissionDenied
-                return "\(feature) will work once the database update is published."
+            case 9:      // failedPrecondition: an index that's still building
+                return "Still setting up. Try again in a minute."
             case 14:     // unavailable
                 return "You seem to be offline. Check your connection and try again."
             case 16:     // unauthenticated
@@ -343,7 +349,7 @@ enum TickerFeedError {
                 break
             }
         }
-        return "Check your connection and try again."
+        return "Couldn't load \(feature). Pull to refresh or try again."
     }
 }
 

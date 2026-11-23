@@ -256,7 +256,7 @@ struct FAQTopic: Identifiable {
             ),
             FAQItem(
                 question: "How do I delete my account?",
-                answer: "Open Settings and tap Delete Account at the bottom. This permanently deletes your sign-in and your profile and cannot be undone. Trades, posts and messages you created are not removed by this step; email us if you want them removed too. If you are asked to sign in again first, sign out, sign back in, and try again right away."
+                answer: "Open Settings, tap Delete account at the bottom and enter your password. This permanently deletes your profile, posts, comments, likes, trades and the rest of your account, and cannot be undone. Messages you sent in community chats stay. If anything couldn't be removed, the app tells you; email us and we'll remove it."
             ),
             FAQItem(
                 question: "Who can see my information?",

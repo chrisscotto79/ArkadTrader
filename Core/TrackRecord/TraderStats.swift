@@ -22,6 +22,7 @@ struct TraderStats: Identifiable, Equatable {
     /// 0–1, from wins / calloutsClosed
     var winRate: Double
     var avgReturnPercent: Double
+    /// The closed results added up (not compounded). Shown as "Sum of results".
     var totalReturnPercent: Double
     var bestCalloutPercent: Double?
     var worstCalloutPercent: Double?
@@ -39,6 +40,15 @@ struct TraderStats: Identifiable, Equatable {
     var winRatePercent: Double { winRate <= 1 ? winRate * 100 : winRate }
 
     var displayName: String { username.isEmpty ? "trader" : username }
+
+    /// Where records come from, for record cards and leaderboards. In free mode each author's
+    /// app keeps its own record, so it isn't called verified.
+    static var sourceNote: String {
+        AppConfig.serverFunctionsEnabled ? "Verified from posted callouts" : "Tracked by the app from posted callouts"
+    }
+
+    /// Label for `totalReturnPercent`.
+    static let sumOfResultsTitle = "Sum of results"
 
     // MARK: - Firestore
 

@@ -6,6 +6,7 @@
 // only reads them and marks them read.
 
 import Foundation
+import FirebaseAuth
 import FirebaseFirestore
 
 /// A notification plus who caused it. `fromUserId` is set on notifications the app creates
@@ -114,6 +115,11 @@ extension FirebaseServices {
         return snapshot.count.intValue
     }
 
+    /// Deletes one of your notifications (swipe to delete in the inbox).
+    func deleteNotification(notificationId: String) async throws {
+        try await db.collection("notifications").document(notificationId).delete()
+    }
+
     func markNotificationAsRead(notificationId: String) async throws {
         try await db.collection("notifications").document(notificationId)
             .updateData(["isRead": true])
@@ -172,9 +178,10 @@ extension FirebaseServices {
     // background and never throws, so a missed notification can't break the action.
     // With Cloud Functions deployed the server creates these and the calls do nothing.
 
-    /// "<username> liked your post", to the post's author.
+    /// "<username> liked your post", to the post's author. Sent once per post and person: the
+    /// id is like_{postId}_{me}, so liking again after unliking doesn't notify again.
     func notifyPostLiked(postId: String) {
-        guard !AppConfig.serverFunctionsEnabled else { return }
+        guard !AppConfig.serverFunctionsEnabled, let me = Auth.auth().currentUser?.uid else { return }
         Task {
             guard let post = await postSummary(postId: postId) else { return }
             let username = await currentUsername()
@@ -183,27 +190,60 @@ extension FirebaseServices {
                 type: "like",
                 title: "\(username) liked your post",
                 body: Self.snippet(post.content),
-                data: ["route": "post", "postId": postId]
+                data: ["route": "post", "postId": postId],
+                documentId: "like_\(postId)_\(me)"
             )
         }
     }
 
-    /// "<username> commented: <first 80 characters>", to the post's author.
-    func notifyPostCommented(postId: String, commenterUsername: String, content: String) {
+    /// After a comment or reply is saved: the parent comment's author ("replied to your
+    /// comment"), the post's author ("commented"), then anyone @mentioned ("mentioned you").
+    /// Each person gets one of these. All carry postId and commentId (the rules check that the
+    /// comment exists and is yours).
+    func notifyCommented(postId: String, commentId: String, parentCommentId: String?,
+                         commenterUsername: String, content: String) {
         guard !AppConfig.serverFunctionsEnabled else { return }
         Task {
-            guard let post = await postSummary(postId: postId) else { return }
-            await createNotification(
-                to: post.authorId,
-                type: "reply",
-                title: "\(commenterUsername) commented: \(Self.snippet(content))",
-                body: "",
-                data: ["route": "post", "postId": postId]
+            let data = ["route": "post", "postId": postId, "commentId": commentId]
+            var notified = Set<String>()
+
+            if let parentCommentId, let parentAuthor = await commentAuthor(postId: postId, commentId: parentCommentId) {
+                notified.insert(parentAuthor)
+                await createNotification(
+                    to: parentAuthor,
+                    type: "reply",
+                    title: "\(commenterUsername) replied to your comment",
+                    body: Self.snippet(content),
+                    data: data
+                )
+            }
+
+            if let post = await postSummary(postId: postId), !notified.contains(post.authorId) {
+                notified.insert(post.authorId)
+                await createNotification(
+                    to: post.authorId,
+                    type: "reply",
+                    title: "\(commenterUsername) commented: \(Self.snippet(content))",
+                    body: "",
+                    data: data
+                )
+            }
+
+            guard content.contains("@") else { return }
+            let mentioned = await userIdsMentioned(in: content).filter { !notified.contains($0) }
+            guard !mentioned.isEmpty else { return }
+            await createNotifications(
+                to: mentioned,
+                type: "mention",
+                title: "\(commenterUsername) mentioned you in a comment",
+                body: Self.snippet(content),
+                data: data
             )
         }
     }
 
-    /// "<username> started following you", to the person followed.
+    /// "<username> started following you", to the person followed. Once per person: the id is
+    /// follow_{userId}_{me}.
     func notifyFollowed(userId: String, followerId: String) {
         guard !AppConfig.serverFunctionsEnabled else { return }
         Task {
@@ -213,7 +253,8 @@ extension FirebaseServices {
                 type: "follow",
                 title: "\(username) started following you",
                 body: "",
-                data: ["route": "profile", "userId": followerId]
+                data: ["route": "profile", "userId": followerId],
+                documentId: "follow_\(userId)_\(followerId)"
             )
         }
     }
@@ -232,6 +273,13 @@ extension FirebaseServices {
                 data: ["route": "post", "postId": postId]
             )
         }
+    }
+
+    private func commentAuthor(postId: String, commentId: String) async -> String? {
+        let document = try? await db.collection("posts").document(postId)
+            .collection("comments").document(commentId).getDocument()
+        guard let authorId = document?.data()?["authorId"] as? String, !authorId.isEmpty else { return nil }
+        return authorId
     }
 
     /// The signed-in user's username, for notification text.

@@ -38,7 +38,8 @@ final class CalloutTrackingService {
 
     /// Close an open callout at `exitPrice`. Only the author may do this.
     /// - Parameter authorId: the message's author, used when the callout predates `callout.authorId`.
-    /// - Parameter exitCheck: `.live` when the exit was within 2% of a live quote. In free mode it's
+    /// - Parameter exitCheck: `.live` when the exit passed the check against a live quote
+    ///   (TradeCallout.exitCheckError). In free mode it's
     ///   stored on the mirror doc only (never the message); unchecked closes don't count in stats.
     /// - Returns: the callout as it now reads, so callers can show the result straight away.
     @discardableResult
@@ -84,7 +85,7 @@ final class CalloutTrackingService {
                                               exitCheck: exitCheck)
             } catch {
                 // The message is closed; CalloutAutoTracker syncs the mirror on its next run.
-                print("⚠️ CalloutTrackingService: couldn't update callout mirror: \(error.localizedDescription)")
+                TrackRecordWriter.log("couldn't update callout mirror: \(error.localizedDescription)")
             }
         }
 

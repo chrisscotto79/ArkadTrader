@@ -4,18 +4,10 @@
 import SwiftUI
 
 extension Color {
-    // MARK: - Brand Colors
+    // MARK: - Brand
     static let arkadGold = Color(red: 254/255, green: 186/255, blue: 23/255)
-    static let arkadBlack = Color.black
-    static let arkadWhite = Color.white
-    
-    // MARK: - Brand Color Variations
-    static let arkadGoldLight = Color(red: 255/255, green: 206/255, blue: 84/255)
-    /// Gold for text and icons; darker in light mode so it stays readable.
-    static let arkadGoldDark = Color.goldText
-    static let arkadGoldMuted = Color(red: 254/255, green: 186/255, blue: 23/255).opacity(0.6)
-    
-    // MARK: - Market Colors
+
+    // MARK: - Market (adaptive)
     static let marketGreen = Color.dynamic(
         light: UIColor(red: 22/255, green: 163/255, blue: 74/255, alpha: 1),   // #16A34A
         dark: UIColor(red: 52/255, green: 211/255, blue: 110/255, alpha: 1)    // #34D36E
@@ -24,241 +16,15 @@ extension Color {
         light: UIColor(red: 220/255, green: 38/255, blue: 38/255, alpha: 1),   // #DC2626
         dark: UIColor(red: 248/255, green: 92/255, blue: 92/255, alpha: 1)     // #F85C5C
     )
-    static let marketGreenLight = Color(red: 134/255, green: 239/255, blue: 172/255)
-    static let marketRedLight = Color(red: 252/255, green: 165/255, blue: 165/255)
-    static let marketGreenDark = Color(red: 21/255, green: 128/255, blue: 61/255)
-    static let marketRedDark = Color(red: 153/255, green: 27/255, blue: 27/255)
-    
-    // MARK: - Semantic Colors
+
+    // MARK: - Semantic
     static let success = Color.marketGreen
     static let error = Color.marketRed
     static let warning = Color(red: 245/255, green: 158/255, blue: 11/255)
     static let info = Color(red: 59/255, green: 130/255, blue: 246/255)
-    
-    // MARK: - Background Colors
-    static let backgroundPrimary = Color(UIColor.systemBackground)
-    static let backgroundSecondary = Color(UIColor.secondarySystemBackground)
-    static let backgroundTertiary = Color(UIColor.tertiarySystemBackground)
-    static let backgroundGrouped = Color(UIColor.systemGroupedBackground)
-    
-    // MARK: - Text Colors
-    static let textPrimary = Color(UIColor.label)
-    static let textSecondary = Color(UIColor.secondaryLabel)
-    static let textTertiary = Color(UIColor.tertiaryLabel)
-    static let textQuaternary = Color(UIColor.quaternaryLabel)
-    
-    // MARK: - Border Colors
-    static let borderPrimary = Color(UIColor.separator)
-    static let borderSecondary = Color(UIColor.opaqueSeparator)
-    
-    // MARK: - Trading Category Colors
+
+    // MARK: - Market categories
     static let stockColor = Color.blue
     static let optionColor = Color.purple
     static let cryptoColor = Color.orange
-    static let forexColor = Color.green
-    static let etfColor = Color.indigo      // New color for ETF
-    static let futureColor = Color.brown 
-    
-    // MARK: - Social Media Colors
-    static let twitterBlue = Color(red: 29/255, green: 161/255, blue: 242/255)
-    static let linkedInBlue = Color(red: 0/255, green: 119/255, blue: 181/255)
-    static let facebookBlue = Color(red: 24/255, green: 119/255, blue: 242/255)
-    static let discordPurple = Color(red: 88/255, green: 101/255, blue: 242/255)
-    
-    // MARK: - Chart Colors
-    static let chartBlue = Color(red: 54/255, green: 162/255, blue: 235/255)
-    static let chartPurple = Color(red: 153/255, green: 102/255, blue: 255/255)
-    static let chartOrange = Color(red: 255/255, green: 159/255, blue: 64/255)
-    static let chartYellow = Color(red: 255/255, green: 205/255, blue: 86/255)
-    static let chartTeal = Color(red: 75/255, green: 192/255, blue: 192/255)
-    
-    // MARK: - Gradient Definitions
-    static let arkadGradient = LinearGradient(
-        gradient: Gradient(colors: [arkadGold, arkadGoldLight]),
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-    
-    static let successGradient = LinearGradient(
-        gradient: Gradient(colors: [marketGreen, marketGreenLight]),
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-    
-    static let errorGradient = LinearGradient(
-        gradient: Gradient(colors: [marketRed, marketRedLight]),
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-    
-    static let backgroundGradient = LinearGradient(
-        gradient: Gradient(colors: [arkadGold.opacity(0.1), Color.appBackground]),
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-    
-    static let premiumGradient = LinearGradient(
-        gradient: Gradient(colors: [
-            Color(red: 167/255, green: 139/255, blue: 250/255),
-            Color(red: 224/255, green: 231/255, blue: 255/255)
-        ]),
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-    
-    // MARK: - Performance Colors
-    static func performanceColor(for value: Double) -> Color {
-        switch value {
-        case let x where x > 10: return marketGreen
-        case let x where x > 0: return marketGreenLight
-        case 0: return textSecondary
-        case let x where x > -10: return marketRedLight
-        default: return marketRed
-        }
-    }
-    
-    static func performanceGradient(for value: Double) -> LinearGradient {
-        if value > 0 {
-            return successGradient
-        } else if value < 0 {
-            return errorGradient
-        } else {
-            return LinearGradient(
-                gradient: Gradient(colors: [textSecondary, textSecondary.opacity(0.5)]),
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        }
-    }
-    
-    // MARK: - Trading Status Colors (using simplified approach)
-    static func tradeStatusColor(for status: String) -> Color {
-        switch status.lowercased() {
-        case "open": return info
-        case "closed": return textSecondary
-        case "profitable": return marketGreen
-        case "loss": return marketRed
-        default: return textSecondary
-        }
-    }
-    
-    // MARK: - Dynamic Color Creation
-    static func colorFromString(_ string: String) -> Color {
-        let hash = string.hashValue
-        let hue = Double(abs(hash % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.7, brightness: 0.8)
-    }
-    
-    static func colorForTradeType(_ type: TradeType) -> Color {
-        switch type {
-        case .stock: return stockColor
-        case .option: return optionColor
-        case .crypto: return cryptoColor
-        case .forex: return forexColor
-        }
-    }
-    
-    // MARK: - Accessibility Colors
-    static func accessibleColor(for backgroundColor: Color) -> Color {
-        // Simplified contrast calculation - in production, use proper contrast ratio calculation
-        return textPrimary
-    }
-    
-    // MARK: - Theme Support
-    static func adaptiveColor(light: Color, dark: Color) -> Color {
-        return Color(UIColor { traitCollection in
-            traitCollection.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
-        })
-    }
-    
-    // MARK: - Color Manipulation (simplified to avoid blend mode issues)
-    func lighten(by percentage: Double = 0.1) -> Color {
-        return self.opacity(1.0 - percentage)
-    }
-    
-    func darken(by percentage: Double = 0.1) -> Color {
-        // Simplified darkening - overlay with black
-        return Color.black.opacity(percentage)
-    }
-    
-    // MARK: - Hex Color Support
-    init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let a, r, g, b: UInt64
-        switch hex.count {
-        case 3: // RGB (12-bit)
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6: // RGB (24-bit)
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8: // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            (a, r, g, b) = (1, 1, 1, 0)
-        }
-        
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue:  Double(b) / 255,
-            opacity: Double(a) / 255
-        )
-    }
-    
-    // MARK: - Color to Hex
-    var hexString: String {
-        guard let components = UIColor(self).cgColor.components,
-              components.count >= 3 else {
-            return "#000000"
-        }
-        
-        let r = Float(components[0])
-        let g = Float(components[1])
-        let b = Float(components[2])
-        
-        return String(format: "#%02lX%02lX%02lX",
-                     lroundf(r * 255),
-                     lroundf(g * 255),
-                     lroundf(b * 255))
-    }
-}
-
-// MARK: - Color Scheme Extensions
-extension ColorScheme {
-    var isDark: Bool {
-        return self == .dark
-    }
-    
-    var isLight: Bool {
-        return self == .light
-    }
-}
-
-// MARK: - SwiftUI Environment Extensions
-extension EnvironmentValues {
-    var brandColors: BrandColors {
-        BrandColors()
-    }
-}
-
-struct BrandColors {
-    let primary = Color.arkadGold
-    let secondary = Color.arkadBlack
-    let accent = Color.arkadGoldLight
-    let background = Color.backgroundPrimary
-    let surface = Color.backgroundSecondary
-    let onPrimary = Color.arkadBlack
-    let onSecondary = Color.arkadWhite
-    let onBackground = Color.textPrimary
-    let onSurface = Color.textPrimary
-}
-
-extension Color {
-    // MARK: - Additional Colors Needed for Follow Feature
-    static let arkadDark = Color(red: 20/255, green: 20/255, blue: 30/255)
-    static let arkadGreen = Color.marketGreen  // Reuse your existing marketGreen
-    static let arkadRed = Color.marketRed      // Reuse your existing marketRed
-    static let cardBackground = Color.surface
 }

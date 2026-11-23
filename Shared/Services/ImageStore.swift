@@ -52,7 +52,7 @@ final class ImageStore: @unchecked Sendable {
     /// The rules allow up to 700 × 1024 bytes of `data`; stay well under that.
     static let maxBytes = 600 * 1024
 
-    private let db = Firestore.firestore()
+    private var db: Firestore { FirebaseServices.shared.db }
 
     private init() {}
 
@@ -112,6 +112,7 @@ final class ImageStore: @unchecked Sendable {
 
         let urlString = "\(ArkadImageLoader.firestoreScheme)\(id)?v=\(Int(Date().timeIntervalSince1970))"
         // Show the new photo straight away, without reading it back.
+        ArkadImageDiskCache.store(encoded.data, for: urlString)
         if let decoded = UIImage(data: encoded.data) {
             ArkadImageCache.shared.insert(decoded, for: urlString)
         }

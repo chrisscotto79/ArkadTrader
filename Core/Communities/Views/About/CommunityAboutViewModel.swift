@@ -1,14 +1,14 @@
 // File: Core/Communities/Views/About/CommunityAboutViewModel.swift
 // Loads the Whop-style landing page (docs/backend-contracts.md, section 11, "Community
-// landing page"): the leader's checked track record from traderStats/{ownerId}, what's
-// inside (channels, courses, the next event, members) and the latest callout results.
+// landing page"): the leader's track record from traderStats/{ownerId}, what's inside
+// (channels, courses, the next event, members) and the leader's latest callout results.
 // Each part loads on its own and hides itself when it can't be read (for example a paid
 // community before subscribing).
 
 import Foundation
 import FirebaseFirestore
 
-/// A `calloutResult` message from a callouts channel.
+/// A `calloutResult` message from a callouts channel, checked against its parent callout.
 struct CalloutResultSummary: Identifiable, Equatable {
     let id: String
     let channelId: String
@@ -17,35 +17,58 @@ struct CalloutResultSummary: Identifiable, Equatable {
     let status: TradeCallout.Status?
     let exitPrice: Double?
     let resultPercent: Double
-    /// "live" when the exit was checked against a live quote
-    let exitCheck: String?
+    /// True only when the parent callout's entry and the result's exit were both checked
+    /// against a live quote (`priceCheck == "live"` and `exitCheck == "live"`).
+    let isPriceChecked: Bool
     let postedAt: Date
 
-    /// true for a live-checked exit, false for "unchecked", nil when the message doesn't say
-    var isPriceChecked: Bool? {
-        switch exitCheck {
-        case "live": return true
-        case "unchecked": return false
-        default: return nil
-        }
+    /// A result message, before its parent is checked: the fields it claims.
+    struct Candidate {
+        let id: String
+        let channelId: String
+        let authorId: String
+        let parentMessageId: String
+        let result: CalloutResult
+        let postedAt: Date
     }
 
-    static func from(_ document: QueryDocumentSnapshot) -> CalloutResultSummary? {
+    static func candidate(_ document: QueryDocumentSnapshot) -> Candidate? {
         let data = document.data()
         guard (data["isDeleted"] as? Bool ?? false) == false,
-              let result = data["calloutResult"] as? [String: Any],
-              let ticker = result["ticker"] as? String,
-              let percent = CommunityContentDecode.double(result["resultPercent"]) else { return nil }
-        return CalloutResultSummary(
+              let raw = data["calloutResult"] as? [String: Any],
+              let result = CalloutResult.fromFirestore(raw),
+              let authorId = data["authorId"] as? String,
+              // Result messages have the fixed id "<parentId>_result"
+              document.documentID == CalloutFollowUps.resultMessageId(for: result.parentMessageId) else { return nil }
+        return Candidate(
             id: document.documentID,
             channelId: data["channelId"] as? String ?? "",
-            ticker: ticker,
-            direction: (result["direction"] as? String).flatMap(TradeCallout.Direction.init(rawValue:)),
-            status: (result["status"] as? String).flatMap(TradeCallout.Status.init(rawValue:)),
-            exitPrice: CommunityContentDecode.double(result["exitPrice"]),
-            resultPercent: percent,
-            exitCheck: result["exitCheck"] as? String,
+            authorId: authorId,
+            parentMessageId: result.parentMessageId,
+            result: result,
             postedAt: CommunityContentDecode.date(data["createdAt"]) ?? Date.distantPast
+        )
+    }
+
+    /// The summary, when the parent message is the same author's callout on the same ticker and
+    /// direction. Nil otherwise (a result that doesn't match its callout isn't shown).
+    static func verify(_ candidate: Candidate, parentData: [String: Any]?) -> CalloutResultSummary? {
+        guard let parentData,
+              (parentData["authorId"] as? String) == candidate.authorId,
+              let callout = (parentData["callout"] as? [String: Any]).flatMap(TradeCallout.fromFirestore),
+              callout.ticker == candidate.result.ticker,
+              callout.direction == candidate.result.direction else { return nil }
+        let result = candidate.result
+        return CalloutResultSummary(
+            id: candidate.id,
+            channelId: candidate.channelId,
+            ticker: result.ticker,
+            direction: result.direction,
+            status: result.status,
+            exitPrice: result.exitPrice,
+            resultPercent: result.resultPercent,
+            isPriceChecked: callout.isPriceChecked && result.isPriceChecked,
+            postedAt: candidate.postedAt
         )
     }
 }
@@ -61,6 +84,7 @@ final class CommunityAboutViewModel: ObservableObject {
     struct Leader: Equatable {
         let username: String
         let imageURL: String?
+        var fullName: String? = nil
     }
 
     @Published private(set) var leader: Leader?
@@ -83,7 +107,7 @@ final class CommunityAboutViewModel: ObservableObject {
     func load(community: Community) async {
         async let leaderTask: Void = loadLeader(ownerId: community.createdBy)
         async let statsTask: Void = loadStats(ownerId: community.createdBy)
-        async let channelsTask: Void = loadChannelsAndResults(communityId: community.id)
+        async let channelsTask: Void = loadChannelsAndResults(communityId: community.id, leaderId: community.createdBy)
         async let coursesTask: Void = loadCourseCount(communityId: community.id)
         async let eventTask: Void = loadNextEvent(communityId: community.id)
         _ = await (leaderTask, statsTask, channelsTask, coursesTask, eventTask)
@@ -95,7 +119,7 @@ final class CommunityAboutViewModel: ObservableObject {
     private func loadLeader(ownerId: String) async {
         guard !ownerId.isEmpty,
               let user = try? await FirebaseServices.shared.getUserById(userId: ownerId) else { return }
-        leader = Leader(username: user.username, imageURL: user.profileImageUrl)
+        leader = Leader(username: user.username, imageURL: user.profileImageUrl, fullName: user.fullName)
     }
 
     private func loadStats(ownerId: String) async {
@@ -121,7 +145,7 @@ final class CommunityAboutViewModel: ObservableObject {
         }
     }
 
-    private func loadChannelsAndResults(communityId: String) async {
+    private func loadChannelsAndResults(communityId: String, leaderId: String) async {
         guard let loaded = try? await FirebaseServices.shared.getCommunityChannels(communityId: communityId) else {
             channels = nil
             recentResults = []
@@ -132,8 +156,10 @@ final class CommunityAboutViewModel: ObservableObject {
             return lhs.name < rhs.name
         }
 
+        // The leader's result messages, each checked against its parent callout.
         let calloutChannels = loaded.filter { $0.type == .callouts }
-        var results: [CalloutResultSummary] = []
+        var candidates: [CalloutResultSummary.Candidate] = []
+        var messagesById: [String: [String: Any]] = [:]
         for channel in calloutChannels {
             guard let snapshot = try? await db.collection("communities").document(communityId)
                 .collection("channels").document(channel.id)
@@ -141,8 +167,28 @@ final class CommunityAboutViewModel: ObservableObject {
                 .order(by: "createdAt", descending: true)
                 .limit(to: messagesPerChannel)
                 .getDocuments() else { continue }
-            results += snapshot.documents.compactMap { CalloutResultSummary.from($0) }
+            for document in snapshot.documents {
+                messagesById["\(channel.id)/\(document.documentID)"] = document.data()
+                if let candidate = CalloutResultSummary.candidate(document), candidate.authorId == leaderId {
+                    candidates.append(candidate)
+                }
+            }
         }
-        recentResults = Array(results.sorted { $0.postedAt > $1.postedAt }.prefix(resultLimit))
+
+        var results: [CalloutResultSummary] = []
+        for candidate in candidates.sorted(by: { $0.postedAt > $1.postedAt }) {
+            guard results.count < resultLimit else { break }
+            let key = "\(candidate.channelId)/\(candidate.parentMessageId)"
+            var parent = messagesById[key]
+            if parent == nil {
+                parent = try? await FirebaseServices.shared.channelMessageRef(
+                    communityId: communityId, channelId: candidate.channelId, messageId: candidate.parentMessageId
+                ).getDocument().data()
+            }
+            if let summary = CalloutResultSummary.verify(candidate, parentData: parent) {
+                results.append(summary)
+            }
+        }
+        recentResults = results
     }
 }

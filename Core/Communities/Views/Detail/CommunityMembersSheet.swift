@@ -1,7 +1,10 @@
 // File: Core/Communities/Views/Detail/CommunityMembersSheet.swift
-// Community member list sheet, its rows and view model.
+// Community member list sheet, its rows and view model. Members load a page at a time
+// (user profiles in `in` queries of 30). The owner changes roles here; staff mute, remove and ban
+// members they outrank.
 
 import SwiftUI
+import FirebaseFirestore
 
 // MARK: - Role tag
 
@@ -19,6 +22,8 @@ struct CommunityRoleTag: View {
 // MARK: - Enhanced Members List Sheet
 struct EnhancedMembersListSheet: View {
     let community: Community
+    /// The viewer's role, when the caller knows it (their own row may not be on the first page)
+    var viewerRole: CommunityRole? = nil
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = MembersListViewModel()
     @State private var searchText = ""
@@ -36,9 +41,10 @@ struct EnhancedMembersListSheet: View {
     private var currentUserId: String? { FirebaseAuthService.shared.currentUser?.id }
 
     /// The viewer's own role here
-    private var viewerRole: CommunityRole {
+    private var myRole: CommunityRole {
         guard let currentUserId else { return .member }
         if community.createdBy == currentUserId { return .owner }
+        if let viewerRole { return viewerRole }
         return viewModel.members.first { $0.userId == currentUserId }?.role ?? .member
     }
 
@@ -151,7 +157,7 @@ struct EnhancedMembersListSheet: View {
             .cardStyle(padding: 0)
         } else {
             VStack(alignment: .leading, spacing: DS.Spacing.m) {
-                Text(CommunityFormat.members(viewModel.members.count))
+                Text(CommunityFormat.members(max(community.memberCount, viewModel.members.count)))
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.leading, DS.Spacing.xs)
@@ -161,16 +167,33 @@ struct EnhancedMembersListSheet: View {
                         member: member,
                         community: community,
                         mutedUntil: viewModel.activeMute(for: member.userId),
-                        isWorking: viewModel.workingIds.contains(member.userId)
+                        isWorking: viewModel.workingIds.contains(member.userId),
+                        showsMenu: member.userId != currentUserId
                     ) {
                         memberMenu(for: member)
                     }
+                }
+
+                if viewModel.hasMore {
+                    Button {
+                        Task { await viewModel.loadMore(for: community) }
+                    } label: {
+                        HStack(spacing: DS.Spacing.s) {
+                            if viewModel.isLoadingMore { ProgressView().controlSize(.small) }
+                            Text(searchText.isEmpty ? "Load more members" : "Search more members")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.goldText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, DS.Spacing.s)
+                    }
+                    .disabled(viewModel.isLoadingMore)
                 }
             }
         }
     }
 
-    /// Report for anyone else; mute, remove and ban for members the viewer outranks
+    /// Report for anyone else; roles for the owner; mute, remove and ban for members the viewer outranks
     @ViewBuilder
     private func memberMenu(for member: CommunityMemberWithRole) -> some View {
         if member.userId != currentUserId {
@@ -178,6 +201,20 @@ struct EnhancedMembersListSheet: View {
                 reportTarget = .user(id: member.userId)
             } label: {
                 Label("Report", systemImage: "flag")
+            }
+
+            if myRole == .owner && member.role != .owner {
+                Menu {
+                    ForEach([CommunityRole.admin, .moderator, .member].filter { $0 != member.role }, id: \.self) { role in
+                        Button {
+                            Task { await viewModel.setRole(role, for: member, in: community) }
+                        } label: {
+                            Label("Make \(role.displayName)", systemImage: role.icon)
+                        }
+                    }
+                } label: {
+                    Label("Change role", systemImage: "person.badge.key")
+                }
             }
 
             if canModerate(member) {
@@ -218,7 +255,7 @@ struct EnhancedMembersListSheet: View {
 
     private func canModerate(_ member: CommunityMemberWithRole) -> Bool {
         guard member.userId != currentUserId, member.userId != community.createdBy else { return false }
-        let role = viewerRole
+        let role = myRole
         guard role == .owner || role == .admin || role == .moderator else { return false }
         return role.canManage(member.role)
     }
@@ -267,11 +304,14 @@ struct MembersListRow<MenuItems: View>: View {
     let community: Community
     var mutedUntil: Date? = nil
     var isWorking = false
+    /// False hides the options button (your own row has no options)
+    var showsMenu = true
     @ViewBuilder var menuItems: () -> MenuItems
 
     var body: some View {
         HStack(spacing: DS.Spacing.m) {
-            UserAvatar(username: member.username.isEmpty ? member.displayName : member.username,
+            UserAvatar(username: member.username,
+                       fullName: member.fullName,
                        imageURL: member.profileImageUrl,
                        size: 44)
 
@@ -307,7 +347,7 @@ struct MembersListRow<MenuItems: View>: View {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 32, height: 32)
-            } else {
+            } else if showsMenu {
                 Menu {
                     menuItems()
                 } label: {
@@ -334,7 +374,7 @@ struct MembersListRow<MenuItems: View>: View {
 extension MembersListRow where MenuItems == EmptyView {
     /// A row with no options menu
     init(member: CommunityMemberWithRole, community: Community) {
-        self.init(member: member, community: community, menuItems: { EmptyView() })
+        self.init(member: member, community: community, showsMenu: false, menuItems: { EmptyView() })
     }
 }
 
@@ -343,25 +383,66 @@ extension MembersListRow where MenuItems == EmptyView {
 final class MembersListViewModel: ObservableObject {
     @Published var members: [CommunityMemberWithRole] = []
     @Published var isLoading = false
+    @Published private(set) var isLoadingMore = false
+    @Published private(set) var hasMore = false
     @Published var errorMessage = ""
     /// Mute end times, keyed by user id
     @Published var mutedUntil: [String: Date] = [:]
     /// Members with a moderation action in flight
     @Published var workingIds: Set<String> = []
     @Published var actionError: String?
+    private var cursor: DocumentSnapshot?
 
+    /// The first page of members (and who's muted)
     func loadMembers(for community: Community) async {
         isLoading = true
         errorMessage = ""
 
         do {
-            members = try await CommunityFirebaseService.shared.getCommunityMembersWithRoles(communityId: community.id)
+            let page = try await CommunityFirebaseService.shared.getMembersPage(
+                communityId: community.id, createdBy: community.createdBy
+            )
+            members = page.members
+            cursor = page.cursor
+            hasMore = page.hasMore
             // Mutes are extra; the list still shows if they can't be read
             mutedUntil = (try? await FirebaseServices.shared.getMutedMembers(communityId: community.id)) ?? [:]
         } catch {
-            errorMessage = "Failed to load members: \(error.localizedDescription)"
+            errorMessage = "Couldn't load members. Check your connection and try again."
         }
         isLoading = false
+    }
+
+    func loadMore(for community: Community) async {
+        guard hasMore, !isLoadingMore, let cursor else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let page = try await CommunityFirebaseService.shared.getMembersPage(
+                communityId: community.id, createdBy: community.createdBy, after: cursor
+            )
+            let known = Set(members.map(\.userId))
+            members += page.members.filter { !known.contains($0.userId) }
+            self.cursor = page.cursor
+            hasMore = page.hasMore
+        } catch {
+            actionError = "Couldn't load more members. Try again."
+        }
+    }
+
+    /// Owner only: make a member an admin, moderator or plain member
+    func setRole(_ role: CommunityRole, for member: CommunityMemberWithRole, in community: Community) async {
+        await perform(on: member, failure: "Couldn't change \(member.displayName)'s role. Try again.") {
+            try await CommunityFirebaseService.shared.updateMemberRole(
+                communityId: community.id, createdBy: community.createdBy,
+                userId: member.userId, newRole: role
+            )
+            if let index = self.members.firstIndex(where: { $0.userId == member.userId }) {
+                var updated = self.members[index]
+                updated.role = role
+                self.members[index] = updated
+            }
+        }
     }
 
     func activeMute(for userId: String) -> Date? {
@@ -404,69 +485,5 @@ final class MembersListViewModel: ObservableObject {
             actionError = failure
         }
         workingIds.remove(member.userId)
-    }
-}
-
-// MARK: - Member Row Component (settings sheet)
-struct MemberRow: View {
-    let member: CommunityMemberWithRole
-    let isOwner: Bool
-    let onRoleChange: (CommunityRole) -> Void
-    let onRemove: () -> Void
-
-    private var assignableRoles: [CommunityRole] {
-        [.admin, .moderator, .member].filter { $0 != member.role }
-    }
-
-    var body: some View {
-        HStack(spacing: DS.Spacing.m) {
-            UserAvatar(username: member.username.isEmpty ? member.displayName : member.username,
-                       imageURL: member.profileImageUrl,
-                       size: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(member.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(1)
-                if !member.username.isEmpty {
-                    Text("@\(member.username)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: DS.Spacing.s)
-
-            CommunityRoleTag(role: member.role)
-
-            // Actions (owner managing anyone but themselves)
-            if member.role != .owner && isOwner {
-                Menu {
-                    ForEach(assignableRoles, id: \.self) { role in
-                        Button {
-                            onRoleChange(role)
-                        } label: {
-                            Label("Make \(role.displayName)", systemImage: role.icon)
-                        }
-                    }
-
-                    Divider()
-
-                    Button(role: .destructive, action: onRemove) {
-                        Label("Remove Member", systemImage: "person.badge.minus")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.surfaceRaised))
-                }
-                .accessibilityLabel("Manage \(member.displayName)")
-            }
-        }
-        .padding(.vertical, 2)
     }
 }

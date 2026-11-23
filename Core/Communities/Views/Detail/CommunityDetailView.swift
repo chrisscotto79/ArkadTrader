@@ -9,6 +9,9 @@ import SwiftUI
 
 struct CommunityDetailView: View {
     let community: Community
+    /// A channel to open once loaded (from a notification), and the message to show in it
+    var initialChannelId: String? = nil
+    var initialMessageId: String? = nil
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = CommunityDetailViewModel()
 
@@ -25,6 +28,12 @@ struct CommunityDetailView: View {
     @State private var showDashboard = false
     @State private var showReport = false
     @State private var showWelcome = false
+    @State private var showJoinWithCode = false
+    @State private var didLoad = false
+    @State private var didDeleteCommunity = false
+    /// The open channel, and the message to scroll to in it
+    @State private var openChannel: Channel?
+    @State private var openMessageId: String?
     @StateObject private var subscription = CommunitySubscriptionController()
 
     // Sections
@@ -56,7 +65,9 @@ struct CommunityDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                     heroCard
-                    if showsPaidPreview {
+                    if viewModel.isLockedPrivate {
+                        privateLockedCard
+                    } else if showsPaidPreview {
                         paidPreview
                     } else {
                         CommunitySectionBar(selection: sectionBinding)
@@ -95,8 +106,11 @@ struct CommunityDetailView: View {
         }
         .screenBackground()
         .navigationBarHidden(true)
-        .onAppear {
-            viewModel.loadCommunityData(community: community)
+        .task {
+            guard !didLoad else { return }
+            didLoad = true
+            await viewModel.loadCommunityData(community: community)
+            await openInitialChannel()
         }
         .onChange(of: viewModel.isLoading) { _, isLoading in
             // People who haven't joined land on About, the community's pitch
@@ -105,22 +119,45 @@ struct CommunityDetailView: View {
             }
         }
         .sheet(isPresented: $showMembersList) {
-            EnhancedMembersListSheet(community: community)
+            EnhancedMembersListSheet(community: current, viewerRole: CommunityRole(rawValue: viewModel.userRole))
         }
         .sheet(isPresented: $showCommunitySettings, onDismiss: {
-            Task { await viewModel.reloadCommunity() }
+            if didDeleteCommunity {
+                dismiss()
+            } else {
+                Task { await viewModel.reloadCommunity() }
+            }
         }) {
-            EnhancedCommunitySettingsSheet(community: current)
+            EnhancedCommunitySettingsSheet(community: current, onDeleted: { didDeleteCommunity = true })
         }
         .sheet(isPresented: $showCreateChannel, onDismiss: {
             Task { await viewModel.reloadChannels() }
         }) {
-            CreateChannelSheet(community: current)
+            CreateChannelSheet(community: current, existingChannels: viewModel.channels)
         }
         .sheet(item: $channelToEdit, onDismiss: {
             Task { await viewModel.reloadChannels() }
         }) { channel in
-            CreateChannelSheet(community: current, editing: channel)
+            CreateChannelSheet(community: current, editing: channel, existingChannels: viewModel.channels)
+        }
+        .sheet(isPresented: $showJoinWithCode) {
+            JoinWithInviteCodeSheet(join: { code in
+                try await viewModel.joinWithInviteCode(code)
+                return current
+            })
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { openChannel != nil },
+            set: { if !$0 { openChannel = nil; openMessageId = nil } }
+        )) {
+            if let channel = openChannel {
+                ChannelChatView(
+                    community: current,
+                    channel: channel,
+                    isMember: viewModel.isUserMember,
+                    initialMessageId: openMessageId
+                )
+            }
         }
         .sheet(item: $channelForInfo) { channel in
             ChannelInfoSheet(community: current, channel: channel)
@@ -206,7 +243,7 @@ extension CommunityDetailView {
             Spacer()
 
             Menu {
-                if !showsPaidPreview {
+                if !showsPaidPreview && !viewModel.isLockedPrivate {
                     Button(action: { showMembersList = true }) {
                         Label("View Members", systemImage: "person.2")
                     }
@@ -343,14 +380,25 @@ extension CommunityDetailView {
             } else if current.requiresSubscription {
                 CommunitySubscribeButton(community: current, controller: subscription)
                     .disabled(viewModel.isLoading)
-            } else {
+            } else if current.isPrivate {
                 Button {
-                    HapticManager.shared.notification(type: .success)
-                    viewModel.joinCommunity()
+                    showJoinWithCode = true
                 } label: {
-                    Label("Join free", systemImage: "person.badge.plus")
+                    Label("Join with invite code", systemImage: "ticket")
                 }
                 .buttonStyle(PrimaryButtonStyle())
+            } else {
+                Button {
+                    viewModel.joinCommunity()
+                } label: {
+                    if viewModel.isJoining {
+                        ProgressView()
+                    } else {
+                        Label("Join free", systemImage: "person.badge.plus")
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(viewModel.isJoining || viewModel.isLoading)
             }
         } else if isOwner {
             HStack(spacing: DS.Spacing.s) {
@@ -435,6 +483,35 @@ extension CommunityDetailView {
         case "moderator": return .blue
         default: return .secondary
         }
+    }
+}
+
+// MARK: - Private (non-members)
+extension CommunityDetailView {
+    private var privateLockedCard: some View {
+        HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: "lock.fill", tint: .secondary, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This community is private")
+                    .font(.subheadline.weight(.semibold))
+                Text("Only members can see its channels. If someone sent you an invite code, you can join with it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .cardStyle()
+    }
+
+    /// Opens the channel a notification pointed at, at its message
+    private func openInitialChannel() async {
+        guard let channelId = initialChannelId, viewModel.canViewChannels,
+              let channel = await viewModel.channel(withId: channelId) else { return }
+        section = .chat
+        didPickSection = true
+        openMessageId = initialMessageId
+        openChannel = channel
     }
 }
 
@@ -730,8 +807,11 @@ extension CommunityDetailView {
                 .foregroundStyle(.secondary)
                 .padding(.leading, DS.Spacing.xs)
 
-            CommunityCardList(items: channels.sorted { $0.name < $1.name }, dividerInset: 64) { channel in
-                NavigationLink(destination: ChannelChatView(community: current, channel: channel)) {
+            CommunityCardList(items: channels, dividerInset: 64) { channel in
+                Button {
+                    openMessageId = nil
+                    openChannel = channel
+                } label: {
                     EnhancedChannelRow(channel: channel, canManage: viewModel.canManageChannels) {
                         selectedChannel = channel
                         showChannelOptions = true

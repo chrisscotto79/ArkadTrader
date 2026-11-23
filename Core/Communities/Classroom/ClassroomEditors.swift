@@ -26,6 +26,10 @@ struct CourseEditorSheet: View {
             && trimmedSummary.count <= ClassroomLimits.summaryLength
     }
 
+    private var hasChanges: Bool {
+        trimmedTitle != (course?.title ?? "") || trimmedSummary != (course?.summary ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -63,7 +67,7 @@ struct CourseEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    EditorCancelButton(hasChanges: hasChanges && !isSaving) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
@@ -75,7 +79,7 @@ struct CourseEditorSheet: View {
                     }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || hasChanges)
             .onAppear {
                 guard let course, title.isEmpty else { return }
                 title = course.title
@@ -125,6 +129,12 @@ struct LessonEditorSheet: View {
             && trimmedTitle.count <= ClassroomLimits.titleLength
             && bodyText.count <= ClassroomLimits.lessonBodyLength
             && isVideoValid
+    }
+
+    private var hasChanges: Bool {
+        trimmedTitle != (lesson?.title ?? "")
+            || trimmedVideo != (lesson?.videoURL ?? "")
+            || bodyText != (lesson?.body ?? "")
     }
 
     var body: some View {
@@ -204,7 +214,7 @@ struct LessonEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    EditorCancelButton(hasChanges: hasChanges && !isSaving) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
@@ -216,7 +226,7 @@ struct LessonEditorSheet: View {
                     }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || hasChanges)
             .onAppear {
                 guard let lesson, title.isEmpty else { return }
                 title = lesson.title
@@ -304,7 +314,7 @@ struct ClassroomReorderSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    EditorCancelButton(hasChanges: items != original && !isSaving) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
@@ -316,7 +326,7 @@ struct ClassroomReorderSheet: View {
                     }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || items != original)
         }
     }
 
@@ -345,5 +355,26 @@ struct ClassroomCharacterCount: View {
         Text("\(count.formatted()) / \(limit.formatted())")
             .font(.caption.monospacedDigit())
             .foregroundStyle(count > limit ? Color.marketRed : .secondary)
+    }
+}
+
+// MARK: - Cancel with unsaved changes
+
+/// Cancel for an editor sheet: asks before throwing away changes. Pair it with
+/// `.interactiveDismissDisabled(hasChanges)` so a swipe can't discard them either.
+struct EditorCancelButton: View {
+    let hasChanges: Bool
+    let onDiscard: () -> Void
+
+    @State private var isConfirming = false
+
+    var body: some View {
+        Button("Cancel") {
+            if hasChanges { isConfirming = true } else { onDiscard() }
+        }
+        .confirmationDialog("Discard your changes?", isPresented: $isConfirming, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive, action: onDiscard)
+            Button("Keep editing", role: .cancel) {}
+        }
     }
 }

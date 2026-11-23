@@ -20,15 +20,18 @@ The data contract both the app and the functions follow is `docs/backend-contrac
 
 Arkad currently runs entirely on Firebase's free Spark plan. The switches in `Shared/Config/AppConfig.swift` (`serverFunctionsEnabled`, `paidCommunitiesEnabled`, `brokerageLinkingEnabled`, `mediaUploadsEnabled`) are all `false`, so the app does the server's work itself (see section 0 of `docs/backend-contracts.md`). Sections 2 onward of this guide are for later.
 
-The only setup step is publishing the free-mode security rules and indexes. Without it, the new features (inbox, track records, photos, price checks, report counting) get "permission denied" or "needs an index".
+The only setup step is publishing the free-mode security rules and indexes. Without it, the new features (inbox, track records, photos, price checks, report counting) get "permission denied" or "needs an index". The rules were first published on 2026-11-23; publish again whenever `firestore.rules` or `firestore.indexes.json` changes.
+
+The Firebase CLI needs Node.js 20 or later (check with `node -v`). The simplest way to run an up-to-date CLI without installing it globally is `npx`:
 
 ```bash
-npm install -g firebase-tools
-firebase login
-firebase deploy --only firestore,hosting
+npx firebase-tools@latest login
+npx firebase-tools@latest deploy --only firestore,hosting
 ```
 
-That publishes `firestore.rules`, `firestore.indexes.json` and the legal pages. All three are free. Don't deploy `functions` or `storage` on the free plan; both need Blaze.
+(With a global install, `npm install -g firebase-tools` and then `firebase login` / `firebase deploy --only firestore,hosting` do the same.)
+
+That publishes `firestore.rules`, `firestore.indexes.json` and the legal pages. All three are free. Always pass `--only firestore,hosting` on the free plan: a plain `firebase deploy` also tries `functions` and `storage`, which both need Blaze and fail.
 
 No terminal? In the Firebase console, open Firestore Database → Rules, paste the contents of `firestore.rules`, and click Publish. Indexes can be created from the link in the app's error message the first time each query runs.
 
@@ -36,6 +39,8 @@ What's different in free mode:
 - Checks such as price-checked trades, the 2% callout check and track-record stats run in the app, and the rules double-check what they can. That stops casual faking, but a determined person with a modified app could still write their own stats. The server version (functions plus `firestore.server.rules`) closes that gap.
 - Price alerts only fire while Arkad is open. There's no remote push.
 - Photos are small JPEGs stored in Firestore (`images/`), not Cloud Storage. Photos attached to posts and chat are off.
+- Notifications are written by the sender's app (the rules check the evidence); there's no remote push. Section 12 below describes the server-mode rules, not the free-mode ones.
+- Spark quotas apply: 50,000 document reads and 20,000 writes a day. Watch Firestore → Usage in the console.
 
 When you move to Blaze later: deploy the functions (section 8), copy `firestore.server.rules` over `firestore.rules`, and set the switches in `AppConfig.swift` to `true`.
 
@@ -43,8 +48,8 @@ When you move to Blaze later: deploy the functions (section 8), copy `firestore.
 
 ## 1. Tools and login
 
-1. Install Node.js 22 (the Cloud Functions runtime) from https://nodejs.org or with a version manager such as `nvm install 22`.
-2. Install the Firebase CLI: `npm install -g firebase-tools`
+1. Install Node.js 22 (the Cloud Functions runtime) from https://nodejs.org or with a version manager such as `nvm install 22`. The Firebase CLI itself needs Node.js 20 or later.
+2. Install the Firebase CLI: `npm install -g firebase-tools` (or run it without installing as `npx firebase-tools@latest <command>`)
 3. Log in: `firebase login`
 4. From the repo root, check that the CLI sees the project: `firebase projects:list`. `arkad-ios-app` should be listed. `.firebaserc` already selects it.
 5. Install the function dependencies and build once:
@@ -299,7 +304,9 @@ What drives the bill at Arkad's scale:
 
 ## 12. Rules and the app
 
-`firestore.rules` follows `docs/backend-contracts.md`. Writes it deliberately denies, which older app code made:
+This section describes the **server-mode** rules (`firestore.server.rules`, copied over `firestore.rules` once the functions are deployed). In free mode some of these writes are allowed from the app instead (for example creating `notifications` and report counting); see section 0 of `docs/backend-contracts.md`.
+
+Writes the server-mode rules deliberately deny, which older app code made:
 
 - Any client create of `notifications` (Cloud Functions create them; the app only sets `isRead`).
 - Writing `reportCount` or `isHidden` on someone else's post (`onReportCreated` does it now).

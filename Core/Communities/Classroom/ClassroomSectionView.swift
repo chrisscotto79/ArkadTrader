@@ -24,6 +24,12 @@ struct ClassroomSectionView: View {
                 )
             }
 
+            if viewModel.hasLoaded, let message = viewModel.errorMessage {
+                CommunityRefreshBanner(message: message) {
+                    Task { await viewModel.reload() }
+                }
+            }
+
             if !viewModel.hasLoaded && viewModel.isLoading {
                 placeholders
             } else if !viewModel.hasLoaded, let message = viewModel.errorMessage {
@@ -190,5 +196,32 @@ struct ClassroomCourseCard: View {
             return course.lessonCount == 1 ? "1 lesson" : "\(course.lessonCount) lessons"
         }
         return "\(completed) of \(course.lessonCount) lessons"
+    }
+}
+
+// MARK: - Refresh banner
+
+/// Shown above content that's still on screen when refreshing it failed.
+struct CommunityRefreshBanner: View {
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: DS.Spacing.m) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.marketRed)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: DS.Spacing.s)
+            Button("Retry", action: onRetry)
+                .buttonStyle(PillButtonStyle(kind: .neutral))
+        }
+        .padding(DS.Spacing.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle(padding: 0)
+        .accessibilityElement(children: .combine)
     }
 }

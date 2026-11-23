@@ -67,7 +67,7 @@ struct TradeCardView: View {
             Button {
                 if trader != nil { showProfile = true }
             } label: {
-                UserAvatar(username: traderName, imageURL: trader?.profileImageUrl, size: 42)
+                UserAvatar(username: traderName, fullName: trader?.fullName, imageURL: trader?.profileImageUrl, size: 42)
             }
             .buttonStyle(PressableStyle())
             .disabled(trader == nil)

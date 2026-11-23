@@ -91,26 +91,61 @@ struct NotificationsInboxView: View {
             )
             .frame(maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVStack(spacing: DS.Spacing.s) {
-                    ForEach(viewModel.notifications) { notification in
-                        NotificationRow(notification: notification) {
-                            open(notification)
-                        }
-                        .contextMenu {
-                            if !notification.isRead {
-                                Button {
-                                    viewModel.markRead(notification)
-                                } label: {
-                                    Label("Mark as read", systemImage: "checkmark.circle")
-                                }
+            // A List, for swipe to delete; styled like the card list it replaced
+            List {
+                ForEach(viewModel.notifications) { notification in
+                    NotificationRow(notification: notification) {
+                        open(notification)
+                    }
+                    .contextMenu {
+                        if !notification.isRead {
+                            Button {
+                                viewModel.markRead(notification)
+                            } label: {
+                                Label("Mark as read", systemImage: "checkmark.circle")
                             }
                         }
+                        Button(role: .destructive) {
+                            viewModel.delete(notification)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            viewModel.delete(notification)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: DS.Spacing.xs, leading: DS.pageMargin,
+                                              bottom: DS.Spacing.xs, trailing: DS.pageMargin))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
-                .padding(.horizontal, DS.pageMargin)
-                .padding(.vertical, DS.Spacing.m)
+
+                if viewModel.canLoadOlder {
+                    Button {
+                        viewModel.loadOlder()
+                    } label: {
+                        if viewModel.isLoadingOlder {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Label("Show older", systemImage: "arrow.down")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(viewModel.isLoadingOlder)
+                    .listRowInsets(EdgeInsets(top: DS.Spacing.m, leading: DS.pageMargin,
+                                              bottom: DS.Spacing.l, trailing: DS.pageMargin))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .contentMargins(.vertical, DS.Spacing.s, for: .scrollContent)
         }
     }
 

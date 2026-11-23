@@ -1,19 +1,25 @@
 // File: Core/Communities/Views/Detail/CommunitySettingsSheet.swift
-// Community settings sheet for owners and admins, including custom rules and pricing (free or paid).
-// Pricing only appears when AppConfig.paidCommunitiesEnabled is on.
+// Community settings sheet: rules for everyone; details, images, the invite code (private
+// communities), members and deleting for the owner. Pricing only appears when
+// AppConfig.paidCommunitiesEnabled is on.
 
 import SwiftUI
 import PhotosUI
 
 struct EnhancedCommunitySettingsSheet: View {
     let community: Community
+    /// Called after the community is deleted, so the page behind can close too
+    var onDeleted: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CommunitySettingsViewModel
     @State private var showingDeleteAlert = false
     @State private var showPayouts = false
+    @State private var showMembers = false
+    @State private var didCopyInvite = false
 
-    init(community: Community) {
+    init(community: Community, onDeleted: @escaping () -> Void = {}) {
         self.community = community
+        self.onDeleted = onDeleted
         self._viewModel = StateObject(wrappedValue: CommunitySettingsViewModel(community: community))
     }
 
@@ -27,6 +33,9 @@ struct EnhancedCommunitySettingsSheet: View {
                     detailsSection
                     imagesSection
                     saveSection
+                    if viewModel.savedSettings.isPrivate {
+                        inviteSection
+                    }
                     if AppConfig.paidCommunitiesEnabled {
                         membershipSection
                     }
@@ -61,58 +70,43 @@ struct EnhancedCommunitySettingsSheet: View {
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
-                        .disabled(viewModel.isLoading)
+                    Button("Done") {
+                        // Unsaved edits are saved, not lost
+                        guard viewModel.isOwner && viewModel.hasChanges else {
+                            dismiss()
+                            return
+                        }
+                        Task {
+                            if await viewModel.updateCommunity() { dismiss() }
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(viewModel.isLoading)
                 }
             }
             .alert("Delete Community", isPresented: $showingDeleteAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
                     Task {
-                        await viewModel.deleteCommunity()
-                        if viewModel.errorMessage.isEmpty {
+                        if await viewModel.deleteCommunity() {
+                            HapticManager.shared.notification(type: .success)
                             dismiss()
+                            onDeleted()
                         }
                     }
                 }
             } message: {
-                Text("Are you sure you want to delete \"\(community.name)\"? This action cannot be undone and will remove all channels and messages.")
+                Text("This deletes the community and its messages. This can't be undone.")
             }
-            .alert("Remove Member",
-                   isPresented: Binding(
-                    get: { viewModel.selectedMemberForRemoval != nil },
-                    set: { if !$0 { viewModel.selectedMemberForRemoval = nil } }
-                   ),
-                   presenting: viewModel.selectedMemberForRemoval) { member in
-                Button("Cancel", role: .cancel) {
-                    viewModel.selectedMemberForRemoval = nil
-                }
-                Button("Remove", role: .destructive) {
-                    Task {
-                        await viewModel.removeMember(member)
-                        viewModel.selectedMemberForRemoval = nil
-                    }
-                }
-            } message: { member in
-                Text("Are you sure you want to remove \(member.displayName) from the community?")
-            }
-        }
-        .onAppear {
-            // Load members (owners) and rules when the sheet appears
-            if viewModel.isOwner && viewModel.members.isEmpty {
-                Task {
-                    await viewModel.loadMembers()
-                }
-            }
-
-            if viewModel.communityRules.isEmpty {
-                Task {
-                    await viewModel.loadCommunityRules()
-                }
+            .sheet(isPresented: $showMembers) {
+                EnhancedMembersListSheet(community: community, viewerRole: .owner)
             }
         }
         .task {
+            if viewModel.communityRules.isEmpty {
+                await viewModel.loadCommunityRules()
+            }
+            await viewModel.loadInvite()
             await viewModel.loadPayoutStatus()
         }
         .sheet(isPresented: $showPayouts, onDismiss: {
@@ -134,10 +128,10 @@ struct EnhancedCommunitySettingsSheet: View {
     private var headerSection: some View {
         Section {
             HStack(spacing: DS.Spacing.m) {
-                CommunityAvatar(name: community.name, imageURL: viewModel.settings.avatarURL, size: 52)
+                CommunityAvatar(name: viewModel.savedSettings.name, imageURL: viewModel.settings.avatarURL, size: 52)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(community.name)
+                    Text(viewModel.savedSettings.name)
                         .font(.headline)
                         .lineLimit(1)
                     Text(CommunityFormat.summary(community))
@@ -237,7 +231,7 @@ struct EnhancedCommunitySettingsSheet: View {
         } header: {
             Text("Details")
         } footer: {
-            Text("Private communities are hidden from Discover and search for anyone who isn't a member.")
+            Text("Private communities don't show in Discover or search. People join with an invite code.")
         }
         .listRowBackground(Color.surface)
     }
@@ -407,10 +401,7 @@ struct EnhancedCommunitySettingsSheet: View {
         Section {
             Button {
                 Task {
-                    await viewModel.updateCommunity()
-                    if viewModel.errorMessage.isEmpty {
-                        dismiss()
-                    }
+                    if await viewModel.updateCommunity() { dismiss() }
                 }
             } label: {
                 HStack {
@@ -530,46 +521,86 @@ struct EnhancedCommunitySettingsSheet: View {
         }
     }
 
+    // MARK: - Invite code (owner, private communities)
+
+    private var inviteSection: some View {
+        Section {
+            if let code = viewModel.inviteCode {
+                HStack {
+                    Text(code)
+                        .font(.title3.monospaced().weight(.semibold))
+                        .textSelection(.enabled)
+                    Spacer(minLength: DS.Spacing.s)
+                    Button(didCopyInvite ? "Copied" : "Copy") {
+                        UIPasteboard.general.string = code
+                        HapticManager.shared.notification(type: .success)
+                        didCopyInvite = true
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .neutral))
+                }
+                .padding(.vertical, DS.Spacing.xs)
+
+                ShareLink(item: CommunityInvite.shareText(code: code, communityName: viewModel.savedSettings.name)) {
+                    Label("Share invite", systemImage: "square.and.arrow.up")
+                        .font(.subheadline.weight(.semibold))
+                }
+
+                Button {
+                    didCopyInvite = false
+                    Task { await viewModel.regenerateInvite() }
+                } label: {
+                    Label("Make a new code", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .disabled(viewModel.isLoadingInvite)
+            } else if viewModel.isLoadingInvite {
+                HStack(spacing: DS.Spacing.m) {
+                    ProgressView()
+                    Text("Getting your invite code…")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Button("Get an invite code") {
+                    Task { await viewModel.loadInvite() }
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+
+            if let error = viewModel.inviteError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.marketRed)
+            }
+        } header: {
+            Text("Invite code")
+        } footer: {
+            Text("Share this code with people you want to invite. A new code stops the old one working.")
+        }
+        .listRowBackground(Color.surface)
+    }
+
     // MARK: - Members (owner)
 
     private var membersSection: some View {
         Section {
-            if viewModel.isLoadingMembers {
-                HStack(spacing: DS.Spacing.m) {
-                    ProgressView()
-                    Text("Loading members…")
+            Button {
+                showMembers = true
+            } label: {
+                HStack {
+                    Label("Manage members", systemImage: "person.2")
+                        .foregroundStyle(Color.primary)
+                    Spacer()
+                    Text(community.memberCount.formatted())
                         .foregroundStyle(.secondary)
-                }
-            } else if viewModel.members.isEmpty {
-                VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                    Text("No members found")
-                        .foregroundStyle(.secondary)
-                    Button("Reload members") {
-                        Task {
-                            await viewModel.loadMembers()
-                        }
-                    }
-                    .font(.subheadline.weight(.semibold))
-                }
-                .padding(.vertical, DS.Spacing.xs)
-            } else {
-                ForEach(viewModel.members) { member in
-                    MemberRow(
-                        member: member,
-                        isOwner: viewModel.isOwner,
-                        onRoleChange: { newRole in
-                            Task {
-                                await viewModel.updateMemberRole(member, to: newRole)
-                            }
-                        },
-                        onRemove: {
-                            viewModel.selectedMemberForRemoval = member
-                        }
-                    )
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                 }
             }
         } header: {
-            Text("Members · \(viewModel.members.count)")
+            Text("Members")
+        } footer: {
+            Text("Change roles, mute, remove or ban members.")
         }
         .listRowBackground(Color.surface)
     }
@@ -588,7 +619,7 @@ struct EnhancedCommunitySettingsSheet: View {
         } header: {
             Text("Danger zone")
         } footer: {
-            Text("Deleting removes every channel and message for all members.")
+            Text("This deletes the community and its messages for everyone.")
         }
         .listRowBackground(Color.surface)
     }

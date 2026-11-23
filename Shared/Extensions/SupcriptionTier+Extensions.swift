@@ -1,9 +1,5 @@
-//
-//  SubscriptionTier+Extensions.swift
-//  ArkadTrader
-//
-//  CREATE THIS AS A NEW FILE in Shared/Extensions/
-//
+// File: Shared/Extensions/SupcriptionTier+Extensions.swift
+// Display colour for each subscription tier.
 
 import SwiftUI
 

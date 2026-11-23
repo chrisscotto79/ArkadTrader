@@ -95,10 +95,7 @@ extension FirebaseServices {
             .whereField("conversationId", isEqualTo: conversationId)
             .order(by: "timestamp", descending: false)
             .addSnapshotListener { snapshot, error in
-                guard let documents = snapshot?.documents else {
-                    print("Error fetching messages: \(error?.localizedDescription ?? "Unknown error")")
-                    return
-                }
+                guard let documents = snapshot?.documents else { return }
                 
                 let messages = documents.compactMap { document -> Message? in
                     let data = document.data()

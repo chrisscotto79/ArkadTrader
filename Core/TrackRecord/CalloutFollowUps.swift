@@ -2,13 +2,14 @@
 // The messages an author's app posts about their own callouts (docs/backend-contracts.md, section 11):
 // - `calloutUpdate`: trim, add, move stop, move target or note, while the callout is open.
 //   Moving the stop or target also changes `callout.stopPrice` / `callout.targetPrice` on the parent
-//   in the same batch, so CalloutAutoTracker (which reads the message) closes against the new level.
+//   and sets `callout.lastUpdateId` to the update's id, in the same batch, so CalloutAutoTracker
+//   (which reads the message) closes against the new level and the rules can check the move.
+//   Update messages have the fixed id "<parentMessageId>_u<epochMillis>" (`updateMessageId`).
 // - `calloutResult`: posted once, right after the callout closes, by hand (CalloutTrackingService)
 //   or by the tracker (CalloutAutoTracker), with exactly the numbers written to the callout.
 //
 // A result message has the fixed id "<parentMessageId>_result", so a second post can't create a
-// second message (an overwrite is an update, which the rules refuse). The mirror doc also records
-// `resultPosted: true`.
+// second message (an overwrite is an update, which the rules refuse).
 
 import Foundation
 import FirebaseAuth
@@ -41,6 +42,18 @@ final class CalloutFollowUps {
     /// The fixed id of a callout's result message.
     nonisolated static func resultMessageId(for parentMessageId: String) -> String {
         "\(parentMessageId)_result"
+    }
+
+    /// The id of an update message: "<parentMessageId>_u<epochMillis>".
+    nonisolated static func updateMessageId(for parentMessageId: String, at date: Date = Date()) -> String {
+        "\(parentMessageId)_u\(Int64((date.timeIntervalSince1970 * 1000).rounded()))"
+    }
+
+    /// When an update was posted, read back from its id (see `updateMessageId`).
+    nonisolated static func updateTime(fromUpdateId id: String?) -> Date? {
+        guard let id, let marker = id.range(of: "_u", options: .backwards),
+              let millis = Int64(id[marker.upperBound...]), millis > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(millis) / 1000)
     }
 
     /// Deep link for the new notification types: `{ route: "community", communityId, channelId, messageId }`.
@@ -144,6 +157,7 @@ final class CalloutFollowUps {
             communityId: communityId,
             authorAvatarURL: user.profileImageUrl
         )
+        message.id = Self.updateMessageId(for: clean.parentMessageId)
         message.calloutUpdate = clean
 
         let level: (field: String, value: Double)?
@@ -153,28 +167,20 @@ final class CalloutFollowUps {
         case .trim, .add, .note: level = nil
         }
 
+        // The update message and, for a stop or target move, the parent's new level and
+        // `callout.lastUpdateId` (= this message's id), in one batch.
         try await FirebaseServices.shared.sendCalloutUpdate(message, parentLevel: level)
 
-        let posted = message
-        let authorId = user.id
-        let username = user.username
-        let ticker = callout.ticker
-        let parentId = clean.parentMessageId
-        let notifies = clean.kind.notifiesMembers
-        Task {
-            if let level {
-                await TrackRecordWriter.shared.mirrorLevels(
-                    authorId: authorId,
-                    messageId: parentId,
-                    stopPrice: level.field == "stopPrice" ? level.value : nil,
-                    targetPrice: level.field == "targetPrice" ? level.value : nil
-                )
-            }
-            if notifies {
+        if clean.kind.notifiesMembers {
+            let posted = message
+            let authorId = user.id
+            let username = user.username
+            let ticker = callout.ticker
+            Task {
                 await self.notifyUpdate(posted, ticker: ticker, authorId: authorId, username: username)
             }
         }
-        return posted
+        return message
     }
 
     /// `callout_update` for the community's members (not the author), like new callouts.
@@ -187,7 +193,8 @@ final class CalloutFollowUps {
             type: "callout_update",
             title: ChatText.clip("\(username) updated $\(ticker)", max: 200),
             body: ChatText.clip(message.content, max: 1000),
-            data: Self.communityRoute(communityId: message.communityId, channelId: message.channelId, messageId: message.id)
+            data: Self.communityRoute(communityId: message.communityId, channelId: message.channelId, messageId: message.id),
+            communityId: message.communityId
         )
     }
 
@@ -215,16 +222,10 @@ final class CalloutFollowUps {
         postingResults.insert(parentMessageId)
         defer { postingResults.remove(parentMessageId) }
 
-        let writer = TrackRecordWriter.shared
-        if await writer.isResultPosted(authorId: userId, messageId: parentMessageId) { return }
-
         let resultId = Self.resultMessageId(for: parentMessageId)
         let ref = FirebaseServices.shared.channelMessageRef(communityId: communityId, channelId: channelId, messageId: resultId)
         // If this can't be read, post anyway: the fixed id means a duplicate is refused, not created.
-        if let existing = try? await ref.getDocument(), existing.exists {
-            await writer.markResultPosted(authorId: userId, messageId: parentMessageId)
-            return
-        }
+        if let existing = try? await ref.getDocument(), existing.exists { return }
 
         let profile = await authorProfile(userId: userId, username: authorUsername, avatarURL: authorAvatarURL)
         var message = CommunityMessage(
@@ -241,10 +242,8 @@ final class CalloutFollowUps {
         do {
             try await FirebaseServices.shared.sendCommunityMessage(message)
         } catch {
-            print("⚠️ CalloutFollowUps: couldn't post the callout result: \(error.localizedDescription)")
-            return
+            TrackRecordWriter.log("couldn't post the callout result: \(error.localizedDescription)")
         }
-        await writer.markResultPosted(authorId: userId, messageId: parentMessageId)
     }
 
     /// The author's username and photo: from the caller, the signed-in profile, or their user doc.

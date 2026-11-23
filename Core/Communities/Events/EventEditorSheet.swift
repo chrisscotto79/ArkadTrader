@@ -35,7 +35,20 @@ struct EventEditorSheet: View {
             && trimmedTitle.count <= EventLimits.titleLength
             && trimmedDetails.count <= EventLimits.detailsLength
             && isLinkValid
+            && EventLimits.durationRange.contains(durationMinutes)
             && (event != nil || startsAt > Date())
+    }
+
+    /// The values the form opened with, to tell whether anything was changed
+    @State private var initial: EventDraft?
+
+    private var hasChanges: Bool {
+        guard let initial else { return false }
+        return trimmedTitle != initial.title
+            || trimmedDetails != initial.details
+            || trimmedLink != initial.link
+            || startsAt != initial.startsAt
+            || durationMinutes != initial.durationMinutes
     }
 
     private var durationOptions: [Int] {
@@ -121,7 +134,7 @@ struct EventEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    EditorCancelButton(hasChanges: hasChanges && !isSaving) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
@@ -133,16 +146,24 @@ struct EventEditorSheet: View {
                     }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || hasChanges)
             .onAppear {
                 guard !didLoad else { return }
                 didLoad = true
-                guard let event else { return }
-                title = event.title
-                details = event.details
-                startsAt = event.startsAt
-                durationMinutes = event.durationMinutes
-                link = event.link ?? ""
+                if let event {
+                    title = event.title
+                    details = event.details
+                    startsAt = event.startsAt
+                    durationMinutes = event.durationMinutes
+                    link = event.link ?? ""
+                }
+                initial = EventDraft(
+                    title: event?.title ?? "",
+                    details: event?.details ?? "",
+                    startsAt: event?.startsAt ?? startsAt,
+                    durationMinutes: event?.durationMinutes ?? durationMinutes,
+                    link: event?.link ?? ""
+                )
             }
         }
     }

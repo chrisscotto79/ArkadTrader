@@ -19,6 +19,9 @@ struct ArkadTraderApp: App {
         if FirebaseApp.app() == nil {
             FirebaseApp.configure()
         }
+        // Before anything else uses Firestore: wipe the cache left by a signed-out account.
+        // Firestore keeps its default settings; they must not be changed after this point.
+        FirebaseServices.clearCacheIfRequested()
     }
 
     var body: some Scene {
@@ -43,6 +46,7 @@ struct ArkadTraderApp: App {
 
     /// Runs the on-phone checks while the app is open and signed in, and stops them in the background.
     private func handleScenePhase(_ phase: ScenePhase) {
+        if phase == .active, authService.isAuthenticated { Task { await EventReminderScheduler.reconcileAll() } }
         guard !AppConfig.serverFunctionsEnabled else { return }
         switch phase {
         case .active where authService.isAuthenticated:

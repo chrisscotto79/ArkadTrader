@@ -6,7 +6,8 @@ import SwiftUI
 
 struct UserPostCard: View {
     let post: Post
-    @ObservedObject var homeViewModel: HomeViewModel
+    /// Likes, bookmarks, counts, deletes and reports, shared by every screen
+    @ObservedObject private var store = PostStore.shared
     @State private var showOtherUserProfile = false
     @State private var profileUser: User?
     @State private var isLoadingUser = false
@@ -27,9 +28,8 @@ struct UserPostCard: View {
 
     @EnvironmentObject var authService: FirebaseAuthService
 
-    init(post: Post, homeViewModel: HomeViewModel) {
+    init(post: Post) {
         self.post = post
-        self.homeViewModel = homeViewModel
     }
 
     // MARK: - Main Body
@@ -85,7 +85,7 @@ struct UserPostCard: View {
             Button(action: handleProfileTap) {
                 HStack(spacing: DS.Spacing.m) {
                     ZStack {
-                        UserAvatar(username: post.authorUsername, imageURL: authorImageURL, size: 42)
+                        UserAvatar(username: post.authorUsername, fullName: post.authorFullName, imageURL: authorImageURL, size: 42)
                         if isLoadingUser {
                             Circle().fill(Color.surface.opacity(0.6)).frame(width: 42, height: 42)
                             ProgressView().controlSize(.small)
@@ -172,11 +172,11 @@ struct UserPostCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
-        if !post.tickers.isEmpty {
+        if !post.linkableTickers.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     // Each opens the ticker's page (needs a NavigationStack above the card)
-                    ForEach(post.tickers, id: \.self) { ticker in
+                    ForEach(post.linkableTickers, id: \.self) { ticker in
                         TickerLink(symbol: ticker)
                     }
                 }
@@ -234,27 +234,27 @@ struct UserPostCard: View {
 
     // MARK: - Actions
 
-    private var isLiked: Bool { homeViewModel.likedPosts.contains(post.id) }
-    private var isBookmarked: Bool { homeViewModel.bookmarkedPosts.contains(post.id) }
+    private var isLiked: Bool { store.isLiked(post.id) }
+    private var isBookmarked: Bool { store.isBookmarked(post.id) }
 
     private var actionRow: some View {
         HStack(spacing: DS.Spacing.xs) {
             PostActionButton(
                 systemImage: isLiked ? "heart.fill" : "heart",
-                count: post.likesCount,
+                count: store.likesCount(for: post),
                 tint: isLiked ? .red : .secondary,
                 accessibilityLabel: isLiked ? "Unlike" : "Like",
                 effectTrigger: isLiked
             ) {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 withAnimation(.snappy(duration: 0.25)) {
-                    homeViewModel.toggleLike(for: post.id)
+                    store.toggleLike(post)
                 }
             }
 
             PostActionButton(
                 systemImage: "bubble.right",
-                count: post.commentsCount,
+                count: store.commentsCount(for: post),
                 tint: .secondary,
                 accessibilityLabel: "Comments"
             ) {
@@ -270,7 +270,7 @@ struct UserPostCard: View {
                 effectTrigger: isBookmarked
             ) {
                 UISelectionFeedbackGenerator().selectionChanged()
-                homeViewModel.toggleBookmark(for: post.id)
+                store.toggleBookmark(post)
             }
 
             PostActionButton(
@@ -324,12 +324,7 @@ struct UserPostCard: View {
 
     @ViewBuilder
     private var commentsSheet: some View {
-        CommentsView(
-            postId: post.id,
-            onCommentCountChanged: { newCount in
-                homeViewModel.updatePostCommentCount(postId: post.id, newCount: newCount)
-            }
-        )
+        CommentsView(postId: post.id)
         .environmentObject(authService)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -343,11 +338,12 @@ struct UserPostCard: View {
         }
     }
 
-    /// Hides a reported post from the reporter's feeds (after the sheet has closed, since this card goes away)
+    /// Hides a reported post from the reporter's lists everywhere (after the sheet has closed,
+    /// since this card goes away)
     private func hideIfReported() {
-        guard didReport, let currentUserId = authService.currentUser?.id else { return }
+        guard didReport else { return }
         didReport = false
-        homeViewModel.hideReportedPost(postId: post.id, reportedBy: currentUserId)
+        store.markRemoved(post.id)
     }
 
     @ViewBuilder
@@ -405,17 +401,12 @@ struct UserPostCard: View {
         withAnimation { isDeleting = true }
 
         do {
-            try await authService.deletePost(postId: post.id)
-
-            await MainActor.run {
-                homeViewModel.posts.removeAll { $0.id == post.id }
-                homeViewModel.followingPosts.removeAll { $0.id == post.id }
-            }
-
-            showShareMessage("Post deleted")
+            // Removes the post from every list (PostStore); the toast is shown by the screen,
+            // since this card goes away
+            try await FirebaseServices.shared.deletePost(postId: post.id)
+            store.showToast("Post deleted")
         } catch {
-            print("❌ Error deleting post: \(error)")
-            showShareMessage("Couldn't delete post")
+            showShareMessage("Couldn't delete post. Try again.")
         }
 
         withAnimation { isDeleting = false }
@@ -558,7 +549,7 @@ private struct PostActionButton: View {
     let samplePost = Post(content: "Just made a great trade on $AAPL! Took profits into the close.", authorId: "1", authorUsername: "trader1")
 
     ScrollView {
-        UserPostCard(post: samplePost, homeViewModel: HomeViewModel())
+        UserPostCard(post: samplePost)
             .padding()
     }
     .screenBackground()

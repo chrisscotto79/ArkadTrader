@@ -1,6 +1,7 @@
 // File: Core/Tickers/TrendingTickersSection.swift
 // Discover's "Trending tickers": the most-mentioned tickers in recent posts, with post count,
 // the Bullish/Bearish split and the day's price change. Also TickerLink, a tappable "$AAPL".
+// Counts are people, not posts: each person counts once per ticker.
 
 import SwiftUI
 
@@ -219,14 +220,15 @@ struct TrendingTickersSection: View {
             Text("$AAPL").font(.headline)
             Text("$000.00").arkadNumber(15, weight: .semibold)
             SentimentMeterBar(bullishPercent: nil, height: 6)
-            Text("00 posts").font(.caption)
+            Text("00 people").font(.caption)
         }
         .frame(width: tileWidth, alignment: .leading)
         .cardStyle(padding: 14, radius: DS.Radius.m)
     }
 
+    /// Each person counts once per ticker.
     private func postCountText(_ count: Int) -> String {
-        "\(count.formatted(.number.notation(.compactName))) post\(count == 1 ? "" : "s")"
+        "\(count.formatted(.number.notation(.compactName))) \(count == 1 ? "person" : "people")"
     }
 
     private func accessibilityText(_ ticker: TrendingTicker, quote: WatchlistQuote?) -> String {
@@ -262,7 +264,7 @@ struct TrendingTickersSection: View {
             return
         } catch {
             if case .loaded = phase { return }
-            phase = .failed(TickerFeedError.friendlyMessage(for: error, feature: "Trending tickers"))
+            phase = .failed(TickerFeedError.friendlyMessage(for: error, feature: "trending tickers"))
         }
     }
 }
@@ -290,49 +292,16 @@ struct TickerLink: View {
     }
 }
 
-extension TickerLink {
-    /// Links in `linkedText` look like arkad://ticker/AAPL.
-    static func url(for symbol: String) -> URL? {
-        URL(string: "arkad://ticker/\(TickerFeedService.normalize(symbol))")
-    }
-
-    /// The symbol from a `url(for:)` link, or nil for any other URL.
-    static func symbol(from url: URL) -> String? {
-        guard url.scheme == "arkad", url.host == "ticker" else { return nil }
-        let symbol = TickerFeedService.normalize(url.lastPathComponent)
-        return TickerFeedService.isTickerSymbol(symbol) ? symbol : nil
-    }
-
-    /// `text` with every "$AAPL" cashtag turned into a gold `url(for:)` link. Handle taps with
-    /// `.environment(\.openURL, OpenURLAction { url in ... symbol(from: url) ... })`.
-    static func linkedText(_ text: String) -> AttributedString {
-        var attributed = AttributedString(text)
-        guard let regex = try? NSRegularExpression(pattern: #"\$([A-Za-z]{1,5})\b"#) else { return attributed }
-        let ns = text as NSString
-        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            guard let range = Range(match.range, in: text),
-                  let attributedRange = Range(range, in: attributed),
-                  let url = url(for: ns.substring(with: match.range(at: 1))) else { continue }
-            attributed[attributedRange].link = url
-            attributed[attributedRange].foregroundColor = Color.goldText
-            attributed[attributedRange].font = Font.body.weight(.semibold)
-        }
-        return attributed
-    }
-}
-
 #Preview {
     NavigationStack {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                TrendingTickersSection { symbol in print("Open \(symbol)") }
+                TrendingTickersSection { _ in }
                 HStack {
                     TickerLink(symbol: "AAPL")
                     TickerLink(symbol: "tsla")
                 }
                 .padding(.horizontal)
-                Text(TickerLink.linkedText("Loading up on $NVDA and $amd into earnings"))
-                    .padding(.horizontal)
             }
         }
         .screenBackground()

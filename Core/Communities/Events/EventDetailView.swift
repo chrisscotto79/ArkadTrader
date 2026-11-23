@@ -100,13 +100,13 @@ struct EventDetailView: View {
         .alert(
             "Something went wrong",
             isPresented: Binding(
-                get: { actionError != nil || viewModel.errorMessage != nil },
-                set: { if !$0 { actionError = nil; viewModel.errorMessage = nil } }
+                get: { actionError != nil || viewModel.actionError != nil },
+                set: { if !$0 { actionError = nil; viewModel.actionError = nil } }
             )
         ) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(actionError ?? viewModel.errorMessage ?? "")
+            Text(actionError ?? viewModel.actionError ?? "")
         }
     }
 

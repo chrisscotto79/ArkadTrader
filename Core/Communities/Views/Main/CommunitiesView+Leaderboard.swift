@@ -123,7 +123,10 @@ extension CommunitiesView {
     }
 
     func openGlobalProfile(userId: String) {
-        guard userId != authService.currentUser?.id else { return }
+        guard userId != authService.currentUser?.id else {
+            TabRouter.shared.open(.profile(userId: nil))
+            return
+        }
         Task { globalProfileUser = try? await authService.getUserById(userId: userId) }
     }
 }

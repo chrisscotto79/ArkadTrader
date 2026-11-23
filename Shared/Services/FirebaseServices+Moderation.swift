@@ -214,15 +214,20 @@ extension FirebaseServices {
             .collection("messages").document(messageId)
     }
 
-    /// Soft delete: every listener sees the message turn into "Message deleted".
+    /// Soft delete: every listener sees the message turn into "Message deleted". The text and every
+    /// structured field (callout, updates, results, trade shares, game plans, reply quote, media,
+    /// reactions) are removed from the doc, so nothing of it can still be read.
     func softDeleteCommunityMessage(messageId: String, channelId: String, communityId: String, deletedBy: String) async throws {
-        try await messageRef(messageId: messageId, channelId: channelId, communityId: communityId).updateData([
+        var fields: [String: Any] = [
             "isDeleted": true,
             "content": "",
             "deletedBy": deletedBy,
-            "deletedAt": Timestamp(date: Date()),
-            "callout": FieldValue.delete()
-        ])
+            "deletedAt": FieldValue.serverTimestamp()
+        ]
+        for field in CommunityMessage.structuredFields {
+            fields[field] = FieldValue.delete()
+        }
+        try await messageRef(messageId: messageId, channelId: channelId, communityId: communityId).updateData(fields)
     }
 
     func setCommunityMessagePinned(messageId: String, channelId: String, communityId: String, isPinned: Bool, by userId: String) async throws {

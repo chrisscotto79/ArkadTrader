@@ -19,6 +19,11 @@ struct CommunitiesView: View {
     // Navigation state
     @State var selectedCommunity: Community?
     @State var navigateToCommunity = false
+    /// Channel (and message) a notification points at, opened by the community page
+    @State var linkedChannel: (channelId: String, messageId: String?)?
+    @State var showJoinWithCode = false
+    /// A linked community that can't be opened (private, or deleted)
+    @State var showUnavailableCommunity = false
 
     @State var selectedLeaderboardCommunity: Community?
     @State var navigateToLeaderboard = false
@@ -35,6 +40,7 @@ struct CommunitiesView: View {
                 contentSection
             }
             .screenBackground()
+            .statusBarBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $navigateToLeaderboard) {
                 if let community = selectedLeaderboardCommunity {
@@ -46,8 +52,30 @@ struct CommunitiesView: View {
             .onChange(of: tabRouter.pendingDeepLink) { _, link in openLinkedCommunity(link) }
             .navigationDestination(isPresented: $navigateToCommunity) {
                 if let community = selectedCommunity {
-                    CommunityDetailView(community: community)
+                    CommunityDetailView(
+                        community: community,
+                        initialChannelId: linkedChannel?.channelId,
+                        initialMessageId: linkedChannel?.messageId
+                    )
                 }
+            }
+            .onChange(of: navigateToCommunity) { _, isShowing in
+                // Back from a community: joins, leaves and deletes made there show up here
+                if !isShowing {
+                    linkedChannel = nil
+                    Task { await viewModel.loadUserCommunities() }
+                }
+            }
+            .sheet(isPresented: $showJoinWithCode) {
+                JoinWithInviteCodeSheet(join: viewModel.joinWithInviteCode) { community in
+                    navigateToCommunitDetail(community)
+                }
+            }
+            .alert("This community is private", isPresented: $showUnavailableCommunity) {
+                Button("Join with invite code") { showJoinWithCode = true }
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Only members can open it. If someone sent you an invite code, you can join with it.")
             }
             .sheet(isPresented: $showCreateCommunity, onDismiss: {
                 Task { await viewModel.loadUserCommunities() }
@@ -61,7 +89,6 @@ struct CommunitiesView: View {
                         isUserMember: viewModel.isUserMember(of: community),
                         onJoin: {
                             viewModel.joinCommunity(community)
-                            HapticManager.shared.notification(type: .success)
                         },
                         onEnterCommunity: {
                             selectedCommunityForPreview = nil
@@ -92,8 +119,8 @@ struct CommunitiesView: View {
             } message: {
                 Text(viewModel.joinErrorMessage ?? "")
             }
-            .onAppear {
-                viewModel.loadInitialData()
+            .task {
+                await viewModel.loadInitialDataIfNeeded()
             }
             .onChange(of: viewModel.userCommunities.isEmpty) { _, isEmpty in
                 // New users land on Discover rather than an empty list
@@ -140,16 +167,29 @@ struct CommunitiesView: View {
 
     // MARK: - Navigation Helpers
     /// Opens the community a notification points at. Paid-community gating happens in the detail screen.
+    /// A `.channel` link opens the community page, which then opens the channel at the message.
     func openLinkedCommunity(_ link: DeepLink?) {
         let communityId: String
+        var channel: (channelId: String, messageId: String?)?
         switch link {
         case .community(let id): communityId = id
-        case .channel(let id, _, _): communityId = id
+        case .channel(let id, let channelId, let messageId):
+            communityId = id
+            channel = (channelId, messageId)
         default: return
         }
         tabRouter.pendingDeepLink = nil
         Task {
-            guard let community = try? await CommunityFirebaseService.shared.getSingleCommunity(communityId: communityId) else { return }
+            guard let community = try? await CommunityFirebaseService.shared.getSingleCommunity(communityId: communityId) else {
+                showUnavailableCommunity = true
+                return
+            }
+            // Pop anything open first, so the link always lands on a fresh community page
+            if navigateToCommunity {
+                navigateToCommunity = false
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            linkedChannel = channel
             navigateToCommunitDetail(community)
         }
     }
@@ -203,7 +243,7 @@ extension CommunitiesView {
         }
         .scrollDismissesKeyboard(.immediately)
         .refreshable {
-            viewModel.refreshData()
+            await viewModel.refresh()
         }
     }
 }
@@ -219,6 +259,81 @@ extension CommunitiesView {
     }
 }
 
+
+// MARK: - Join with invite code
+
+/// Enter a private community's invite code to join it.
+struct JoinWithInviteCodeSheet: View {
+    /// Joins with the code and returns the community it opens
+    let join: (String) async throws -> Community
+    var onJoined: (Community) -> Void = { _ in }
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+    @State private var isJoining = false
+    @State private var errorMessage: String?
+    @FocusState private var isFocused: Bool
+
+    private var cleanCode: String { CommunityInvite.normalize(code) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("8-character code", text: $code)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                        .focused($isFocused)
+                        .submitLabel(.join)
+                        .onSubmit(submit)
+                } footer: {
+                    Text(errorMessage ?? "Private communities share a code with the people they invite.")
+                        .foregroundStyle(errorMessage == nil ? Color.secondary : Color.marketRed)
+                }
+                .listRowBackground(Color.surface)
+            }
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .tint(Color.goldText)
+            .navigationTitle("Join with invite code")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isJoining {
+                        ProgressView()
+                    } else {
+                        Button("Join", action: submit)
+                            .fontWeight(.semibold)
+                            .disabled(!CommunityInvite.isWellFormed(cleanCode))
+                    }
+                }
+            }
+            .onAppear { isFocused = true }
+            .onChange(of: code) { errorMessage = nil }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func submit() {
+        guard CommunityInvite.isWellFormed(cleanCode), !isJoining else { return }
+        isJoining = true
+        Task {
+            do {
+                let community = try await join(cleanCode)
+                dismiss()
+                onJoined(community)
+            } catch let error as CommunityJoinError {
+                errorMessage = error.errorDescription
+            } catch {
+                errorMessage = "Couldn't join. Check your connection and try again."
+            }
+            isJoining = false
+        }
+    }
+}
 
 #Preview {
     CommunitiesView()

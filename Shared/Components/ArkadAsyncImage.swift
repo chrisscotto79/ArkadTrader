@@ -2,12 +2,15 @@
 // The one shared, cached image view. It resolves two kinds of image string:
 //   https://…                      loaded with URLSession (HTTP cache on disk)
 //   arkad-image://{imageId}?v=123  the JPEG bytes in Firestore `images/{imageId}` (field `data`)
-// Decoded images are kept in memory, keyed by the full string, so a new `v` loads a fresh copy.
-// Concurrent loads of the same string share one request. Nil, empty and failed strings show
-// the placeholder.
+// Decoded images are kept in memory, and Firestore images also on disk (Caches), keyed by the
+// full string, so a new `v` (set on every upload) loads a fresh copy. A Firestore image is read
+// from Firestore's own cache first and only fetched from the server when that's missing or
+// older than `v`. Concurrent loads of the same string share one request. Nil, empty and failed
+// strings show the placeholder.
 
 import SwiftUI
 import UIKit
+import CryptoKit
 import FirebaseFirestore
 
 struct ArkadAsyncImage<Content: View, Placeholder: View>: View {
@@ -155,8 +158,7 @@ final class ArkadImageLoader {
         do {
             let data: Data?
             if let imageId = firestoreImageId(from: key) {
-                let snapshot = try await Firestore.firestore().collection("images").document(imageId).getDocument()
-                data = snapshot.data()?["data"] as? Data
+                data = try await firestoreImageData(imageId: imageId, key: key)
             } else if let url = URL(string: key), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" {
                 let (body, response) = try await session.data(from: url)
                 if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -172,9 +174,89 @@ final class ArkadImageLoader {
             return await image.byPreparingForDisplay() ?? image
         } catch {
             #if DEBUG
-            print("⚠️ ArkadAsyncImage: couldn't load \(key): \(error.localizedDescription)")
+            print("ArkadAsyncImage: couldn't load \(key): \(error.localizedDescription)")
             #endif
             return nil
+        }
+    }
+
+    /// JPEG bytes for `images/{imageId}`: from the disk cache, else Firestore's local cache
+    /// (when it's at least as new as the string's `v`), else the server. Saved to disk after.
+    private nonisolated static func firestoreImageData(imageId: String, key: String) async throws -> Data? {
+        if let cached = ArkadImageDiskCache.data(for: key) {
+            return cached
+        }
+
+        let reference = FirebaseServices.shared.db.collection("images").document(imageId)
+        if let snapshot = try? await reference.getDocument(source: .cache),
+           let data = snapshot.get("data") as? Data,
+           isCurrent(snapshot, for: key) {
+            ArkadImageDiskCache.store(data, for: key)
+            return data
+        }
+
+        let snapshot = try await reference.getDocument()
+        guard let data = snapshot.get("data") as? Data else { return nil }
+        ArkadImageDiskCache.store(data, for: key)
+        return data
+    }
+
+    /// Whether a cached `images/{id}` doc is the upload `key` points at: its `updatedAt` is no
+    /// older than the `v` seconds in the string (a minute of clock slack). No `v` means any copy.
+    private nonisolated static func isCurrent(_ snapshot: DocumentSnapshot, for key: String) -> Bool {
+        guard let version = URLComponents(string: key)?.queryItems?.first(where: { $0.name == "v" })?.value,
+              let seconds = TimeInterval(version) else { return true }
+        guard let updatedAt = snapshot.get("updatedAt") as? Timestamp else { return false }
+        return updatedAt.dateValue().timeIntervalSince1970 >= seconds - 60
+    }
+}
+
+// MARK: - Disk cache
+
+/// Firestore image bytes on disk (Caches/ArkadImages), one file per full image string. The
+/// system may clear Caches when space is low; files unused for 30 days are removed at launch.
+enum ArkadImageDiskCache {
+    private static let maxAge: TimeInterval = 30 * 24 * 60 * 60
+
+    private static let directory: URL? = {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let url = caches.appendingPathComponent("ArkadImages", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        pruneOldFiles(in: url)
+        return url
+    }()
+
+    static func data(for key: String) -> Data? {
+        guard let url = fileURL(for: key), let data = try? Data(contentsOf: url) else { return nil }
+        // Mark as recently used
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        return data
+    }
+
+    static func store(_ data: Data, for key: String) {
+        guard let url = fileURL(for: key) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private static func fileURL(for key: String) -> URL? {
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory?.appendingPathComponent(digest + ".jpg")
+    }
+
+    private static func pruneOldFiles(in directory: URL) {
+        let fileManager = FileManager.default
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return }
+        let cutoff = Date().addingTimeInterval(-maxAge)
+        for file in files {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let modified, modified < cutoff {
+                try? fileManager.removeItem(at: file)
+            }
         }
     }
 }

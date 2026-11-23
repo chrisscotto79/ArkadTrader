@@ -52,10 +52,19 @@ final class LearnProgressStore: ObservableObject {
         track.lessons.filter { isCompleted($0.id) }.count
     }
 
-    /// Lessons plus the quiz, 0...1.
+    /// The share of quiz answers needed for the quiz to count toward the track.
+    static let quizPassMark = 0.6
+
+    /// True once the best quiz score reaches the pass mark (60%).
+    func quizPassed(for track: LearnTrack) -> Bool {
+        guard let result = quizResult(for: track) else { return false }
+        return Double(result.score) / Double(result.total) >= Self.quizPassMark
+    }
+
+    /// Lessons plus a passed quiz, 0...1.
     func progress(for track: LearnTrack) -> Double {
         let steps = track.lessons.count + 1
-        let done = completedLessonCount(in: track) + (quizResult(for: track) == nil ? 0 : 1)
+        let done = completedLessonCount(in: track) + (quizPassed(for: track) ? 1 : 0)
         return Double(done) / Double(steps)
     }
 

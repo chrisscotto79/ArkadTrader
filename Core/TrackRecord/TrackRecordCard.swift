@@ -1,5 +1,5 @@
 // File: Core/TrackRecord/TrackRecordCard.swift
-// A trader's verified callout record: win rate, returns and counts, read from `traderStats`.
+// A trader's callout record: win rate, returns and counts, read from `traderStats`.
 // Self-loading, so any screen can drop it in with just a user id.
 
 import SwiftUI
@@ -34,9 +34,10 @@ struct TrackRecordCard: View {
     // MARK: - Header
 
     private var subtitle: String {
-        if communityId != nil { return "Callouts in this community" }
-        // Free mode records are kept by the author's app, so don't call them verified.
-        return AppConfig.serverFunctionsEnabled ? "Verified from posted callouts" : "From price-checked callouts"
+        if communityId != nil {
+            return AppConfig.serverFunctionsEnabled ? "Callouts in this community" : "Callouts in this community, tracked by the app"
+        }
+        return TraderStats.sourceNote
     }
 
     private var header: some View {
@@ -102,7 +103,7 @@ struct TrackRecordCard: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("No callouts yet")
                 .font(.subheadline.weight(.semibold))
-            Text("Results from trade callouts posted in communities show up here. Only callouts with an entry near the live price count.")
+            Text("Results from trade callouts posted in communities show up here. Only callouts whose entry was checked against a live price count.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -167,7 +168,7 @@ struct TrackRecordCard: View {
                            stats.bestCalloutPercent.map(TraderStats.color(for:)) ?? .secondary)
                     metric("Worst call", stats.worstCalloutPercent.map(TraderStats.formatPercent) ?? "—",
                            stats.worstCalloutPercent.map(TraderStats.color(for:)) ?? .secondary)
-                    metric("Total return", TraderStats.formatPercent(stats.totalReturnPercent),
+                    metric(TraderStats.sumOfResultsTitle, TraderStats.formatPercent(stats.totalReturnPercent),
                            TraderStats.color(for: stats.totalReturnPercent))
                 }
             }

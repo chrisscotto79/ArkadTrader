@@ -13,7 +13,7 @@ enum LeaderboardCategory: String, CaseIterable {
         switch self {
         case .winRate: return "Win rate"
         case .avgReturn: return "Average return"
-        case .totalReturn: return "Total return"
+        case .totalReturn: return TraderStats.sumOfResultsTitle
         case .mostCallouts: return "Most callouts"
         }
     }

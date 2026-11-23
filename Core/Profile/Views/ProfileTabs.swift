@@ -155,6 +155,8 @@ struct ProfileStatsCard: View {
 
 struct ProfilePerformanceCard: View {
     let summary: PortfolioSummary
+    /// False until there's a price-checked or verified trade; the P&L then shows "–"
+    var hasCheckedTrades: Bool = true
     let bestTrade: Trade?
     let action: () -> Void
 
@@ -181,15 +183,16 @@ struct ProfilePerformanceCard: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                    Text(summary.totalProfitLoss.asCurrencyWithSign)
+                    Text(hasCheckedTrades ? summary.totalProfitLoss.asCurrencyWithSign : "–")
                         .arkadNumber(32)
-                        .foregroundStyle(Self.color(for: summary.totalProfitLoss))
+                        .foregroundStyle(hasCheckedTrades ? Self.color(for: summary.totalProfitLoss) : .secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
 
                 HStack(alignment: .top, spacing: DS.Spacing.m) {
-                    metric("Today", summary.dayProfitLoss.asCurrencyWithSign, Self.color(for: summary.dayProfitLoss))
+                    metric("Today", hasCheckedTrades ? summary.dayProfitLoss.asCurrencyWithSign : "–",
+                           hasCheckedTrades ? Self.color(for: summary.dayProfitLoss) : .secondary)
                     metric("Open positions", "\(summary.openPositions)", .primary)
                     metric("Best trade", bestTrade?.profitLoss.asCurrencyWithSign ?? "—",
                            bestTrade.map { Self.color(for: $0.profitLoss) } ?? .secondary)

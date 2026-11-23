@@ -1,19 +1,37 @@
 // File: Shared/Services/FirebaseServices+Posts.swift
+// Posts, post likes, bookmarks, comments and comment likes.
+//
+// Write shapes (firestore.rules checks these):
+// - posts/{id}: created with createdAt = server time, likesCount/commentsCount 0, content <= 2000,
+//   tickers <= 10 uppercased symbols, hashtags <= 10, authorUsername = the stored username.
+// - Like: posts/{p}/likes/{uid} + users/{uid}/likedPosts/{p} + posts/{p}.likesCount ±1, one batch.
+// - Top-level comment: posts/{p}/comments/{c} + posts/{p}.commentsCount ±1 + lastCommentId = c,
+//   one batch. Replies don't change the post.
+// - Comment like: posts/{p}/comments/{c}/likes/{uid} + comments/{c}.likesCount ±1
+//   + users/{uid}/commentLikes/{c} (an index with postId), one batch.
 
 import Foundation
-import Firebase
-import FirebaseAuth
 import FirebaseFirestore
 import FirebaseStorage
-import SwiftUI
 
 extension FirebaseServices {
+    /// Firestore allows 500 writes per batch; stay well under it.
+    private static let batchLimit = 450
+
     // MARK: - Post Management
-    
+
     /// Creates a post. A trade-result post (`tradeId` set) gets its `tradeSnapshot` copied from the
     /// trade document as stored, so it matches what firestore.rules compare (snapshotMatches).
     func createPost(_ post: Post) async throws {
+        guard post.content.count <= Post.maxContentLength else {
+            throw NSError(domain: "Post", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Posts can be up to \(Post.maxContentLength.formatted()) characters."
+            ])
+        }
         var data = post.toFirestore()
+        data["createdAt"] = FieldValue.serverTimestamp()
+        data["likesCount"] = 0
+        data["commentsCount"] = 0
         if let tradeId = post.tradeId {
             data["tradeId"] = tradeId
             data["tradeSnapshot"] = try await tradeSnapshotData(tradeId: tradeId, authorId: post.authorId)
@@ -37,640 +55,367 @@ extension FirebaseServices {
         }
         return snapshot
     }
-    
-    /// Never rewrites `tradeId` / `tradeSnapshot`: the rules fix them once posted.
+
+    /// Updates only the fields an author may edit. Counts, dates, the author, the post type and
+    /// the trade snapshot are fixed once posted.
     func updatePost(_ post: Post) async throws {
-        var data = post.toFirestore()
-        data.removeValue(forKey: "tradeId")
-        data.removeValue(forKey: "tradeSnapshot")
-        try await db.collection("posts").document(post.id).setData(data, merge: true)
+        var data: [String: Any] = [
+            "content": post.content,
+            "tickers": Cashtag.cleaned(post.tickers),
+            "hashtags": Array(post.hashtags.prefix(Post.maxHashtags)),
+            "mentions": post.mentions
+        ]
+        data[PostSentiment.firestoreField] = post.sentiment?.rawValue ?? FieldValue.delete()
+        try await db.collection("posts").document(post.id).updateData(data)
     }
-    
+
+    /// Deletes a post with its comments and likes, in batches of 450. The post itself goes last,
+    /// so the rules can still read it while its comments and likes are removed, and a failure
+    /// part-way leaves a post that can be deleted again. Every screen drops it (PostStore).
     func deletePost(postId: String) async throws {
+        let postRef = db.collection("posts").document(postId)
+        let comments = try await postRef.collection("comments").getDocuments()
+        let likes = try await postRef.collection("likes").getDocuments()
+
+        var refs = comments.documents.map(\.reference) + likes.documents.map(\.reference)
+        while refs.count >= Self.batchLimit {
+            let batch = db.batch()
+            for ref in refs.prefix(Self.batchLimit) { batch.deleteDocument(ref) }
+            try await batch.commit()
+            refs.removeFirst(Self.batchLimit)
+        }
+
         let batch = db.batch()
-        
-        // Delete the post
-        batch.deleteDocument(db.collection("posts").document(postId))
-        
-        // Delete all comments
-        let comments = try await db.collection("posts").document(postId)
-            .collection("comments").getDocuments()
-        for comment in comments.documents {
-            batch.deleteDocument(comment.reference)
-        }
-        
-        // Delete all likes
-        let likes = try await db.collection("posts").document(postId)
-            .collection("likes").getDocuments()
-        for like in likes.documents {
-            batch.deleteDocument(like.reference)
-        }
-        
+        for ref in refs { batch.deleteDocument(ref) }
+        batch.deleteDocument(postRef)
         try await batch.commit()
+
+        await MainActor.run { PostStore.shared.markRemoved(postId) }
     }
-    
+
+    /// The newest posts (first page). Kept for callers that don't page.
     func getFeedPosts(limit: Int = 50) async throws -> [Post] {
-        let snapshot = try await db.collection("posts")
+        try await getFeedPage(limit: limit, after: nil).posts
+    }
+
+    /// One page of the newest posts. Pass the returned cursor as `after` for the next page;
+    /// it's nil when there are no more.
+    func getFeedPage(limit: Int = 30, after cursor: DocumentSnapshot?) async throws -> (posts: [Post], cursor: DocumentSnapshot?) {
+        var query = db.collection("posts")
             .order(by: "createdAt", descending: true)
             .limit(to: limit)
-            .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        if let cursor {
+            query = query.start(afterDocument: cursor)
         }
+        let snapshot = try await query.getDocuments()
+        let posts = snapshot.documents.compactMap(Post.fromDocument)
+        let next = snapshot.documents.count < limit ? nil : snapshot.documents.last
+        return (posts, next)
     }
-    
+
     func getUserPosts(userId: String) async throws -> [Post] {
         let snapshot = try await db.collection("posts")
             .whereField("authorId", isEqualTo: userId)
             .order(by: "createdAt", descending: true)
             .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Post.fromFirestore(data: document.data(), id: document.documentID)
-        }
+        return snapshot.documents.compactMap(Post.fromDocument)
     }
-    
+
+    /// Discover's post search. Firestore has no full-text search, so:
+    /// - "$TSLA" (or a bare symbol like "tsla"): posts tagged with that ticker, newest first;
+    /// - "#tag": posts with that hashtag;
+    /// - anything else: the newest 50 posts, matched on text and username.
+    /// Hidden posts are left out (blocked authors are filtered by the caller).
     func searchPosts(query: String, limit: Int = 20) async throws -> [Post] {
-        let firebaseServices = FirebaseServices.shared
-        let searchQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !searchQuery.isEmpty else { return [] }
-        
-        // Note: Firestore doesn't support full-text search natively
-        // This is a basic implementation - for production, consider using Algolia or similar
-        
-        let snapshot = try await firebaseServices.db.collection("posts")
-            .order(by: "createdAt", descending: true)
-            .limit(to: 100) // Get more posts to filter client-side
-            .getDocuments()
-        
-        let posts = snapshot.documents.compactMap { document in
-            try? Post.fromFirestore(data: document.data(), id: document.documentID)
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [] }
+        let posts = db.collection("posts")
+
+        var found: [Post] = []
+        if text.hasPrefix("#") {
+            let tag = String(text.dropFirst())
+            guard !tag.isEmpty, tag.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return [] }
+            // Hashtags are stored as typed ("#Trading"), so try the usual spellings
+            let variants = Array(Set(["#" + tag, "#" + tag.lowercased(), "#" + tag.uppercased(),
+                                      "#" + tag.prefix(1).uppercased() + tag.dropFirst().lowercased()]))
+            let snapshot = try await posts
+                .whereField("hashtags", arrayContainsAny: variants)
+                .limit(to: 50)
+                .getDocuments()
+            found = snapshot.documents.compactMap(Post.fromDocument)
+                .sorted { $0.createdAt > $1.createdAt }
+        } else {
+            let symbol = Cashtag.normalize(text)
+            let looksLikeTicker = Cashtag.isValid(symbol)
+            if looksLikeTicker {
+                let snapshot = try await posts
+                    .whereField("tickers", arrayContains: symbol)
+                    .order(by: "createdAt", descending: true)
+                    .limit(to: limit)
+                    .getDocuments()
+                found = snapshot.documents.compactMap(Post.fromDocument)
+            }
+            // "$TSLA" is clearly a ticker; a plain word also searches recent post text
+            if !text.hasPrefix("$") {
+                let lowered = text.lowercased()
+                let snapshot = try await posts
+                    .order(by: "createdAt", descending: true)
+                    .limit(to: 50)
+                    .getDocuments()
+                let shown = Set(found.map(\.id))
+                found += snapshot.documents.compactMap(Post.fromDocument).filter { post in
+                    !shown.contains(post.id)
+                        && (post.content.lowercased().contains(lowered)
+                            || post.authorUsername.lowercased().contains(lowered))
+                }
+            }
         }
-        
-        // Filter posts that contain the search query
-        let filteredPosts = posts.filter { post in
-            post.content.lowercased().contains(searchQuery) ||
-            post.authorUsername.lowercased().contains(searchQuery)
-        }
-        
-        return Array(filteredPosts.prefix(limit))
+        return Array(found.filter { !$0.isHidden }.prefix(limit))
     }
-    
-    // MARK: - Like/Unlike Methods
-    
+
+    // MARK: - Likes
+
+    /// Likes a post once. If you've already liked it (like document exists), nothing changes.
     func likePost(postId: String, userId: String) async throws {
-        print("💾 === LIKING POST (ROBUST VERSION) ===")
-        print("📝 Post ID: \(postId)")
-        print("👤 User ID: \(userId)")
-        
-        // Check if user has already liked this post
-        let isAlreadyLiked = try await checkIfUserLikedPost(postId: postId, userId: userId)
-        if isAlreadyLiked {
-            print("⚠️ User has already liked this post - skipping")
+        let postRef = db.collection("posts").document(postId)
+        let likeRef = postRef.collection("likes").document(userId)
+        let userLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
+
+        if try await likeRef.getDocument().exists {
+            // Already counted; make sure your own index has it
+            try? await userLikeRef.setData(["postId": postId, "likedAt": FieldValue.serverTimestamp()])
             return
         }
-        
+
         let batch = db.batch()
-        
-        // 1. Add like document in POST's likes subcollection
-        let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
-        batch.setData([
-            "userId": userId,
-            "likedAt": Timestamp(date: Date())
-        ], forDocument: postLikeRef)
-        print("✅ Will write to: posts/\(postId)/likes/\(userId)")
-        
-        // 2. Add like document in USER's likedPosts subcollection
-        let userLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
-        batch.setData([
-            "postId": postId,
-            "likedAt": Timestamp(date: Date())
-        ], forDocument: userLikeRef)
-        print("✅ Will write to: users/\(userId)/likedPosts/\(postId)")
-        
-        // 3. Update post's like count
-        let postRef = db.collection("posts").document(postId)
+        batch.setData(["userId": userId, "likedAt": FieldValue.serverTimestamp()], forDocument: likeRef)
+        batch.setData(["postId": postId, "likedAt": FieldValue.serverTimestamp()], forDocument: userLikeRef)
         batch.updateData(["likesCount": FieldValue.increment(Int64(1))], forDocument: postRef)
-        print("✅ Will increment likesCount on post")
-        
         try await batch.commit()
-        print("✅ Like batch committed successfully!")
         notifyPostLiked(postId: postId)
     }
-    
+
+    /// Removes your like. The count only goes down when posts/{id}/likes/{you} exists, so an
+    /// older like that lives only in your own lists can't push the count below the real number.
     func unlikePost(postId: String, userId: String) async throws {
-        print("🗑️ === UNLIKING POST (ROBUST VERSION) ===")
-        print("📝 Post ID: \(postId)")
-        print("👤 User ID: \(userId)")
-        
-        // Check what like documents actually exist before deleting
-        let likeLocations = try await checkLikeLocations(postId: postId, userId: userId)
-        
-        if likeLocations.isEmpty {
-            print("⚠️ No like documents found - user hasn't liked this post")
-            return
-        }
-        
-        print("📍 Found likes in locations: \(likeLocations)")
-        
-        let batch = db.batch()
-        var shouldDecrementCount = false
-        
-        // Remove from POST's likes collection if it exists there
-        if likeLocations.contains("post") {
-            let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
-            batch.deleteDocument(postLikeRef)
-            shouldDecrementCount = true
-            print("✅ Will delete: posts/\(postId)/likes/\(userId)")
-        }
-        
-        // Remove from USER's new likes collection if it exists there
-        if likeLocations.contains("userNew") {
-            let userNewLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
-            batch.deleteDocument(userNewLikeRef)
-            if !shouldDecrementCount {
-                shouldDecrementCount = true
-            }
-            print("✅ Will delete: users/\(userId)/likedPosts/\(postId)")
-        }
-        
-        // Remove from USER's old likes collection if it exists there (cleanup)
-        if likeLocations.contains("userOld") {
-            let userOldLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
-            batch.deleteDocument(userOldLikeRef)
-            if !shouldDecrementCount {
-                shouldDecrementCount = true
-            }
-            print("✅ Will delete OLD: users/\(userId)/likes/\(postId)")
-        }
-        
-        // Only decrement count once, regardless of how many locations had the like
-        if shouldDecrementCount {
-            let postRef = db.collection("posts").document(postId)
+        let postRef = db.collection("posts").document(postId)
+        let likeRef = postRef.collection("likes").document(userId)
+        let userRef = db.collection("users").document(userId)
+        let userLikeRef = userRef.collection("likedPosts").document(postId)
+
+        if try await likeRef.getDocument().exists {
+            let batch = db.batch()
+            batch.deleteDocument(likeRef)
+            batch.deleteDocument(userLikeRef)
             batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
-            print("✅ Will decrement likesCount on post")
+            try await batch.commit()
+        } else {
+            try await userLikeRef.delete()
         }
-        
-        try await batch.commit()
-        print("✅ Unlike completed successfully!")
-    }
-    
-    func uploadProfileImage(_ image: UIImage, userId: String) async throws -> String {
-        print("🔄 Starting profile image upload for user: \(userId)")
-        
-        // Compress image
-        guard let imageData = image.jpegData(compressionQuality: 0.7) else {
-            print("❌ Failed to convert image to data")
-            throw FirestoreError.invalidData
-        }
-        
-        print("📊 Image data size: \(imageData.count) bytes")
-        
-        // Simple file naming convention
-        let fileName = "\(userId).jpg"
-        let storageRef = Storage.storage().reference().child("profile_images").child(fileName)
-        
-        print("🔍 Upload path: profile_images/\(fileName)")
-        
-        do {
-            print("🔄 Uploading image to Firebase Storage...")
-            
-            // Upload the image data using proper async/await pattern
-            _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StorageMetadata, Error>) in
-                storageRef.putData(imageData, metadata: nil) { metadata, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else if let metadata = metadata {
-                        continuation.resume(returning: metadata)
-                    } else {
-                        continuation.resume(throwing: FirestoreError.uploadFailed)
-                    }
-                }
-            }
-            print("✅ Image uploaded successfully")
-            print("📍 Upload path confirmed: \(storageRef.fullPath)")
-            
-            // Get the download URL
-            let downloadURL = try await storageRef.downloadURL()
-            print("✅ Download URL obtained: \(downloadURL.absoluteString)")
-            return downloadURL.absoluteString
-            
-        } catch let storageError {
-            print("❌ Storage operation failed: \(storageError)")
-            
-            // If getting download URL fails, try constructing a public URL as fallback
-            if storageError.localizedDescription.contains("download") ||
-               storageError.localizedDescription.contains("url") {
-                print("🔄 Attempting fallback with constructed public URL")
-                let publicURL = "https://firebasestorage.googleapis.com/v0/b/arkad-ios-app.firebasestorage.app/o/profile_images%2F\(fileName)?alt=media"
-                print("🔄 Constructed public URL: \(publicURL)")
-                return publicURL
-            }
-            
-            // For any other errors, rethrow as FirestoreError
-            print("❌ Profile image upload failed: \(storageError)")
-            throw FirestoreError.uploadFailed
-        }
+        // The oldest app versions kept likes at users/{uid}/likes/{postId}; tidy up separately
+        try? await userRef.collection("likes").document(postId).delete()
     }
 
-
-    func deleteProfileImage(imageUrl: String) async throws {
-        print("🔄 Deleting profile image: \(imageUrl)")
-        
-        guard let url = URL(string: imageUrl) else {
-            print("❌ Invalid image URL")
-            return
-        }
-        
-        // Extract the file path from the URL
-        let pathComponents = url.pathComponents
-        if let index = pathComponents.firstIndex(of: "profile_images"),
-           index + 1 < pathComponents.count {
-            let fileName = pathComponents[index + 1]
-            let storageRef = Storage.storage().reference().child("profile_images/\(fileName)")
-            
-            do {
-                try await storageRef.delete()
-                print("✅ Profile image deleted successfully")
-            } catch {
-                print("⚠️ Failed to delete profile image: \(error)")
-                // Don't throw error here - we still want to update the user record
-            }
-        }
-    }
+    /// The ids of posts you've liked: users/{uid}/likedPosts plus the oldest location,
+    /// users/{uid}/likes (moved to the new layout in the background).
     func getUserLikedPosts(userId: String) async throws -> Set<String> {
-        print("🔍 === LOADING USER LIKED POSTS (ROBUST VERSION) ===")
-        print("👤 User ID: \(userId)")
-        
-        var allLikedPosts: Set<String> = []
-        
-        // Load from NEW location (likedPosts)
-        do {
-            print("🔄 Checking NEW location: users/\(userId)/likedPosts")
-            let newLikesSnapshot = try await db.collection("users").document(userId)
-                .collection("likedPosts").getDocuments()
-            
-            let newLikes = Set(newLikesSnapshot.documents.map { $0.documentID })
-            allLikedPosts.formUnion(newLikes)
-            print("✅ Found \(newLikes.count) likes in NEW location")
-        } catch {
-            print("⚠️ Could not read from likedPosts: \(error)")
-        }
-        
-        // Load from OLD location (likes) - but don't duplicate
-        do {
-            print("🔄 Checking OLD location: users/\(userId)/likes")
-            let oldLikesSnapshot = try await db.collection("users").document(userId)
-                .collection("likes").getDocuments()
-            
-            let oldLikes = Set(oldLikesSnapshot.documents.map { $0.documentID })
-            
-            // Only add old likes that aren't already in new location
-            let newOldLikes = oldLikes.subtracting(allLikedPosts)
-            allLikedPosts.formUnion(newOldLikes)
-            
-            print("✅ Found \(oldLikes.count) total in OLD location, \(newOldLikes.count) new ones")
-            
-            // Auto-migrate old likes if found
-            if !newOldLikes.isEmpty {
-                print("🔄 Auto-migrating \(newOldLikes.count) old likes")
-                Task {
-                    await migrateSpecificLikes(userId: userId, postIds: newOldLikes)
-                }
+        let userRef = db.collection("users").document(userId)
+        let current = try await userRef.collection("likedPosts").getDocuments()
+        var liked = Set(current.documents.map(\.documentID))
+
+        if let legacy = try? await userRef.collection("likes").getDocuments() {
+            let unmigrated = Set(legacy.documents.map(\.documentID)).subtracting(liked)
+            liked.formUnion(unmigrated)
+            if !unmigrated.isEmpty {
+                Task { await migrateLegacyLikes(userId: userId, postIds: unmigrated) }
             }
-        } catch {
-            print("⚠️ Could not read from likes: \(error)")
         }
-        
-        print("✅ Total unique liked posts: \(allLikedPosts.count)")
-        return allLikedPosts
+        return liked
     }
-    
-    
-    // MARK: - Like Helper Methods
-    
-    func checkIfUserLikedPost(postId: String, userId: String) async throws -> Bool {
-        // Check both locations
-        let postLikeDoc = try await db.collection("posts").document(postId)
-            .collection("likes").document(userId).getDocument()
-        
-        let userNewLikeDoc = try await db.collection("users").document(userId)
-            .collection("likedPosts").document(postId).getDocument()
-        
-        let userOldLikeDoc = try await db.collection("users").document(userId)
-            .collection("likes").document(postId).getDocument()
-        
-        return postLikeDoc.exists || userNewLikeDoc.exists || userOldLikeDoc.exists
-    }
-    
-    func checkLikeLocations(postId: String, userId: String) async throws -> Set<String> {
-        var locations: Set<String> = []
-        
-        // Check post likes collection
-        do {
-            let postLikeDoc = try await db.collection("posts").document(postId)
-                .collection("likes").document(userId).getDocument()
-            if postLikeDoc.exists {
-                locations.insert("post")
+
+    /// Moves likes from users/{uid}/likes into the current layout (posts/{p}/likes/{uid} and
+    /// users/{uid}/likedPosts/{p}) and deletes the old documents. Those likes were already
+    /// counted in likesCount, so the counts don't change. 3 writes per like, so 150 per batch,
+    /// each batch a new one. Failures are left for the next session.
+    private func migrateLegacyLikes(userId: String, postIds: Set<String>) async {
+        let userRef = db.collection("users").document(userId)
+        for chunk in Array(postIds).chunked(into: Self.batchLimit / 3) {
+            let batch = db.batch()
+            for postId in chunk {
+                batch.setData(["postId": postId, "likedAt": FieldValue.serverTimestamp(), "migratedFromOldFormat": true],
+                              forDocument: userRef.collection("likedPosts").document(postId))
+                batch.setData(["userId": userId, "likedAt": FieldValue.serverTimestamp(), "migratedFromOldFormat": true],
+                              forDocument: db.collection("posts").document(postId).collection("likes").document(userId))
+                batch.deleteDocument(userRef.collection("likes").document(postId))
             }
-        } catch {
-            print("⚠️ Error checking post like: \(error)")
-        }
-        
-        // Check user new likes collection
-        do {
-            let userNewLikeDoc = try await db.collection("users").document(userId)
-                .collection("likedPosts").document(postId).getDocument()
-            if userNewLikeDoc.exists {
-                locations.insert("userNew")
-            }
-        } catch {
-            print("⚠️ Error checking user new like: \(error)")
-        }
-        
-        // Check user old likes collection
-        do {
-            let userOldLikeDoc = try await db.collection("users").document(userId)
-                .collection("likes").document(postId).getDocument()
-            if userOldLikeDoc.exists {
-                locations.insert("userOld")
-            }
-        } catch {
-            print("⚠️ Error checking user old like: \(error)")
-        }
-        
-        return locations
-    }
-    
-    func ensureLikeMigration(postId: String, userId: String) async {
-        print("🔄 Ensuring migration for post: \(postId), user: \(userId)")
-        
-        // Check if the like exists in old location but not new location
-        do {
-            let oldLikeRef = db.collection("users").document(userId).collection("likes").document(postId)
-            let oldLikeDoc = try await oldLikeRef.getDocument()
-            
-            let newLikeRef = db.collection("users").document(userId).collection("likedPosts").document(postId)
-            let newLikeDoc = try await newLikeRef.getDocument()
-            
-            let postLikeRef = db.collection("posts").document(postId).collection("likes").document(userId)
-            let postLikeDoc = try await postLikeRef.getDocument()
-            
-            // If we have old like but missing new ones, migrate this specific like
-            if oldLikeDoc.exists && (!newLikeDoc.exists || !postLikeDoc.exists) {
-                print("🔄 Migrating single like: \(postId)")
-                
-                let batch = db.batch()
-                
-                // Add to new user location
-                if !newLikeDoc.exists {
-                    batch.setData([
-                        "postId": postId,
-                        "likedAt": Timestamp(date: Date()),
-                        "migratedFromOldFormat": true
-                    ], forDocument: newLikeRef)
-                }
-                
-                // Add to post location
-                if !postLikeDoc.exists {
-                    batch.setData([
-                        "userId": userId,
-                        "likedAt": Timestamp(date: Date()),
-                        "migratedFromOldFormat": true
-                    ], forDocument: postLikeRef)
-                }
-                
-                try await batch.commit()
-                print("✅ Single like migration completed")
-            }
-        } catch {
-            print("⚠️ Error during single like migration: \(error)")
-        }
-    }
-    
-    func migrateSpecificLikes(userId: String, postIds: Set<String>) async {
-        print("🔄 Migrating \(postIds.count) specific likes for user \(userId)")
-        
-        let batch = db.batch()
-        var batchCount = 0
-        
-        for postId in postIds {
-            // Add to new user location
-            let newUserLikeRef = db.collection("users").document(userId)
-                .collection("likedPosts").document(postId)
-            batch.setData([
-                "postId": postId,
-                "likedAt": Timestamp(date: Date()),
-                "migratedFromOldFormat": true
-            ], forDocument: newUserLikeRef)
-            
-            // Add to post's likes collection
-            let postLikeRef = db.collection("posts").document(postId)
-                .collection("likes").document(userId)
-            batch.setData([
-                "userId": userId,
-                "likedAt": Timestamp(date: Date()),
-                "migratedFromOldFormat": true
-            ], forDocument: postLikeRef)
-            
-            batchCount += 2
-            
-            // Commit in batches to avoid hitting Firestore limits
-            if batchCount >= 400 {
-                do {
-                    try await batch.commit()
-                    print("✅ Migrated batch of likes")
-                    batchCount = 0
-                } catch {
-                    print("❌ Error migrating batch: \(error)")
-                }
-            }
-        }
-        
-        // Commit remaining operations
-        if batchCount > 0 {
             do {
                 try await batch.commit()
-                print("✅ Migration completed")
             } catch {
-                print("❌ Error in final migration: \(error)")
+                return
             }
         }
     }
-    
-    func migrateOldLikes(userId: String, oldLikes: Set<String>) async throws {
-        print("🔄 === MIGRATING OLD LIKES ===")
-        
-        let batch = db.batch()
-        var batchCount = 0
-        
-        for postId in oldLikes {
-            // 1. Add to new user location (likedPosts)
-            let newUserLikeRef = db.collection("users").document(userId)
-                .collection("likedPosts").document(postId)
-            batch.setData([
-                "postId": postId,
-                "likedAt": Timestamp(date: Date()),
-                "migratedFromOldFormat": true
-            ], forDocument: newUserLikeRef)
-            
-            // 2. Add to post's likes subcollection
-            let postLikeRef = db.collection("posts").document(postId)
-                .collection("likes").document(userId)
-            batch.setData([
-                "userId": userId,
-                "likedAt": Timestamp(date: Date()),
-                "migratedFromOldFormat": true
-            ], forDocument: postLikeRef)
-            
-            // 3. Delete from old location
-            let oldLikeRef = db.collection("users").document(userId)
-                .collection("likes").document(postId)
-            batch.deleteDocument(oldLikeRef)
-            
-            batchCount += 3
-            
-            // Commit batch if getting close to limit
-            if batchCount >= 450 {
-                do {
-                    try await batch.commit()
-                    print("✅ Migrated batch of likes")
-                    batchCount = 0
-                } catch {
-                    print("❌ Error migrating batch: \(error)")
-                }
-            }
-        }
-        
-        // Commit remaining operations
-        if batchCount > 0 {
-            do {
-                try await batch.commit()
-                print("✅ Migration completed successfully")
-            } catch {
-                print("❌ Error in final migration batch: \(error)")
-            }
+
+    // MARK: - Profile photo
+
+    /// Deletes a profile photo uploaded by older versions (profile_images/{file}). Failures are
+    /// ignored so the profile update still goes through.
+    func deleteProfileImage(imageUrl: String) async throws {
+        guard let url = URL(string: imageUrl) else { return }
+        let pathComponents = url.pathComponents
+        if let index = pathComponents.firstIndex(of: "profile_images"), index + 1 < pathComponents.count {
+            let fileName = pathComponents[index + 1]
+            try? await Storage.storage().reference().child("profile_images/\(fileName)").delete()
         }
     }
-    
-    // MARK: - Bookmark Methods
-    
+
+    // MARK: - Bookmarks
+
     func bookmarkPost(postId: String, userId: String) async throws {
-        let bookmarkRef = db.collection("users").document(userId).collection("bookmarks").document(postId)
-        try await bookmarkRef.setData([
+        try await db.collection("users").document(userId).collection("bookmarks").document(postId).setData([
             "postId": postId,
-            "bookmarkedAt": Timestamp(date: Date())
+            "bookmarkedAt": FieldValue.serverTimestamp()
         ])
     }
-    
+
     func unbookmarkPost(postId: String, userId: String) async throws {
         try await db.collection("users").document(userId).collection("bookmarks").document(postId).delete()
     }
-    
+
     func getUserBookmarkedPosts(userId: String) async throws -> Set<String> {
         let snapshot = try await db.collection("users").document(userId).collection("bookmarks").getDocuments()
-        return Set(snapshot.documents.map { $0.documentID })
+        return Set(snapshot.documents.map(\.documentID))
     }
-    
-    // MARK: - Comment Methods
-    
-    func addComment(postId: String, content: String, authorId: String, authorUsername: String, parentCommentId: String? = nil) async throws {
+
+    // MARK: - Comments
+
+    /// Adds a comment, or a reply when `parentCommentId` is set, and returns it. A top-level
+    /// comment adds 1 to the post's commentsCount and sets its lastCommentId in the same batch;
+    /// replies leave the post alone. Notifies the post's author, the parent comment's author and
+    /// anyone @mentioned.
+    @discardableResult
+    func addComment(postId: String, content: String, authorId: String, authorUsername: String,
+                    parentCommentId: String? = nil) async throws -> Comment {
+        let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw FirestoreError.invalidData }
+        guard text.count <= Comment.maxLength else {
+            throw NSError(domain: "Comment", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Comments can be up to \(Comment.maxLength.formatted()) characters."
+            ])
+        }
+
+        let comment = Comment(postId: postId, content: text, authorId: authorId,
+                              authorUsername: authorUsername, parentCommentId: parentCommentId)
+        let postRef = db.collection("posts").document(postId)
+        let commentRef = postRef.collection("comments").document(comment.id)
+
         let batch = db.batch()
-        
-        let comment = Comment(
-            postId: postId,
-            content: content,
-            authorId: authorId,
-            authorUsername: authorUsername,
-            parentCommentId: parentCommentId
-        )
-        
-        // Add comment
-        let commentRef = db.collection("posts").document(postId)
-            .collection("comments").document(comment.id)
         batch.setData(comment.toFirestore(), forDocument: commentRef)
-        
-        // Update comment count (only increment for top-level comments)
         if parentCommentId == nil {
-            let postRef = db.collection("posts").document(postId)
-            batch.updateData(["commentsCount": FieldValue.increment(Int64(1))], forDocument: postRef)
+            batch.updateData([
+                "commentsCount": FieldValue.increment(Int64(1)),
+                "lastCommentId": comment.id
+            ], forDocument: postRef)
         }
-        
         try await batch.commit()
-        notifyPostCommented(postId: postId, commenterUsername: authorUsername, content: content)
+
+        notifyCommented(postId: postId, commentId: comment.id, parentCommentId: parentCommentId,
+                        commenterUsername: authorUsername, content: text)
+        return comment
     }
-    
-    func getComments(postId: String) async throws -> [Comment] {
-        let snapshot = try await db.collection("comments")
-            .whereField("postId", isEqualTo: postId)
-            .order(by: "createdAt", descending: false)
-            .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
-        }
-    }
-    
+
     func getCommentsForPost(postId: String) async throws -> [Comment] {
         let snapshot = try await db.collection("posts").document(postId)
             .collection("comments")
             .getDocuments()
-        
         let comments = snapshot.documents.compactMap { document in
-            try? Comment.fromFirestore(data: document.data(), id: document.documentID)
+            try? Comment.fromFirestore(data: document.data(with: .estimate), id: document.documentID)
         }
-        
-        // Sort in memory instead
         return comments.sorted { $0.createdAt < $1.createdAt }
     }
-    
+
+    /// Deletes a comment. A top-level comment takes 1 off the post's commentsCount (and sets
+    /// lastCommentId to it) in the same batch, and its replies go with it: in that batch and,
+    /// if there are many, in more batches after. Deleting a reply leaves the post alone.
     func deleteComment(commentId: String, postId: String) async throws {
-        let batch = db.batch()
-        
-        // Delete comment
-        let commentRef = db.collection("posts").document(postId)
-            .collection("comments").document(commentId)
-        batch.deleteDocument(commentRef)
-        
-        // Update comment count
         let postRef = db.collection("posts").document(postId)
-        batch.updateData(["commentsCount": FieldValue.increment(Int64(-1))], forDocument: postRef)
-        
+        let commentRef = postRef.collection("comments").document(commentId)
+        let document = try await commentRef.getDocument()
+        guard document.exists else { return }
+
+        guard document.data()?["parentCommentId"] as? String == nil else {
+            try await commentRef.delete()
+            return
+        }
+
+        let replies = try await postRef.collection("comments")
+            .whereField("parentCommentId", isEqualTo: commentId)
+            .getDocuments()
+        var replyRefs = replies.documents.map(\.reference)
+
+        let batch = db.batch()
+        batch.deleteDocument(commentRef)
+        batch.updateData([
+            "commentsCount": FieldValue.increment(Int64(-1)),
+            "lastCommentId": commentId
+        ], forDocument: postRef)
+        let firstReplies = replyRefs.prefix(Self.batchLimit - 2)
+        for ref in firstReplies { batch.deleteDocument(ref) }
+        try await batch.commit()
+        replyRefs.removeFirst(firstReplies.count)
+
+        for chunk in replyRefs.chunked(into: Self.batchLimit) {
+            let batch = db.batch()
+            for ref in chunk { batch.deleteDocument(ref) }
+            try await batch.commit()
+        }
+    }
+
+    // MARK: - Comment likes
+
+    /// Likes a comment once: posts/{p}/comments/{c}/likes/{uid}, likesCount +1 and your
+    /// users/{uid}/commentLikes/{c} index, in one batch.
+    func likeComment(postId: String, commentId: String, userId: String) async throws {
+        let commentRef = db.collection("posts").document(postId).collection("comments").document(commentId)
+        let likeRef = commentRef.collection("likes").document(userId)
+        let indexRef = db.collection("users").document(userId).collection("commentLikes").document(commentId)
+        let indexData: [String: Any] = ["commentId": commentId, "postId": postId, "likedAt": FieldValue.serverTimestamp()]
+
+        if try await likeRef.getDocument().exists {
+            try? await indexRef.setData(indexData)
+            return
+        }
+
+        let batch = db.batch()
+        batch.setData(["userId": userId, "likedAt": FieldValue.serverTimestamp()], forDocument: likeRef)
+        batch.updateData(["likesCount": FieldValue.increment(Int64(1))], forDocument: commentRef)
+        batch.setData(indexData, forDocument: indexRef)
         try await batch.commit()
     }
-    
-    // MARK: - Comment Like Methods
-    
-    func likeComment(commentId: String, userId: String) async throws {
-        print("💾 Saving comment like to Firebase...")
-        
-        let likeRef = db.collection("users").document(userId)
-            .collection("commentLikes").document(commentId)
-        
-        try await likeRef.setData([
-            "commentId": commentId,
-            "likedAt": Timestamp(date: Date())
-        ])
-        
-        print("✅ Comment like saved to Firebase")
+
+    /// Removes your like from a comment; the count only goes down when your like document exists.
+    func unlikeComment(postId: String, commentId: String, userId: String) async throws {
+        let commentRef = db.collection("posts").document(postId).collection("comments").document(commentId)
+        let likeRef = commentRef.collection("likes").document(userId)
+        let indexRef = db.collection("users").document(userId).collection("commentLikes").document(commentId)
+
+        if try await likeRef.getDocument().exists {
+            let batch = db.batch()
+            batch.deleteDocument(likeRef)
+            batch.updateData(["likesCount": FieldValue.increment(Int64(-1))], forDocument: commentRef)
+            batch.deleteDocument(indexRef)
+            try await batch.commit()
+        } else {
+            try await indexRef.delete()
+        }
     }
-    
-    func unlikeComment(commentId: String, userId: String) async throws {
-        print("🗑️ Removing comment like from Firebase...")
-        
-        let likeRef = db.collection("users").document(userId)
-            .collection("commentLikes").document(commentId)
-        
-        try await likeRef.delete()
-        
-        print("✅ Comment unlike saved to Firebase")
-    }
-    
-    func getUserLikedComments(userId: String) async throws -> Set<String> {
+
+    /// The comments on one post that you've liked (from your commentLikes index).
+    func getLikedCommentIds(postId: String, userId: String) async throws -> Set<String> {
         let snapshot = try await db.collection("users").document(userId)
-            .collection("commentLikes").getDocuments()
-        
-        return Set(snapshot.documents.map { $0.documentID })
+            .collection("commentLikes")
+            .whereField("postId", isEqualTo: postId)
+            .getDocuments()
+        return Set(snapshot.documents.map(\.documentID))
     }
 }

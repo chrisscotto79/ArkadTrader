@@ -1,9 +1,10 @@
 // File: Core/Portfolio/Views/AddTradeView.swift
 // Step-by-step flow for logging a stock, option, crypto or forex trade:
 // Asset -> Details -> Plan & notes -> Review. The primary button stays pinned to the bottom.
-// Before saving, the entry is checked against today's market range (TradePriceChecker): a trade
-// dated today at a price inside the range is saved as "price_checked", anything else "self_reported".
-// The Details and Review steps show which label the trade will get and why.
+// Before saving, the entry is checked against the live price (TradePriceChecker): a stock trade
+// logged "Just now" within 1% of the live price is saved as "price_checked", anything else
+// "self_reported". The Details and Review steps show which label the trade will get and why.
+// When live prices are unavailable, saving asks: try again, or save as self-reported.
 
 import SwiftUI
 
@@ -15,8 +16,11 @@ struct AddTradeView: View {
     // Basic trade info
     @State private var ticker = ""
     @State private var tradeType: TradeType = .stock
+    @State private var side: TradeSide = .long
     @State private var entryPrice = ""
     @State private var quantity = ""
+    /// "Just now" fills can be price-checked; earlier ones are self-reported
+    @State private var timing: FillTiming = .now
     @State private var entryDate = Date()
 
     // Risk plan & stock extras
@@ -42,6 +46,8 @@ struct AddTradeView: View {
     @State private var isLoading = false
     @State private var step: AddTradeStep = .asset
     @State private var movingForward = true
+    /// Live prices were unavailable at save: ask before saving as self-reported
+    @State private var showQuotesUnavailable = false
 
     /// Today's range for the symbol, for the proof label
     @StateObject private var priceChecker = TradePriceChecker()
@@ -69,6 +75,13 @@ struct AddTradeView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage)
+        }
+        .alert("Live prices are unavailable right now", isPresented: $showQuotesUnavailable) {
+            Button("Try again") { Task { await addTrade() } }
+            Button("Save as self-reported") { Task { await addTrade(allowSelfReported: true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This trade can't be price-checked without a live price. Try again in a minute, or save it as self-reported. Self-reported trades don't count toward your win rate or P&L.")
         }
         .onChange(of: ticker) { _, _ in refreshQuote() }
         .onChange(of: tradeType) { _, _ in refreshQuote() }
@@ -192,7 +205,7 @@ struct AddTradeView: View {
                 }
             }
 
-            Label("Stocks update with live prices. Options, crypto and forex are valued at your entry price until you close them.",
+            Label("Stocks and ETFs update with live prices and can be price-checked. Options, crypto and forex are valued at your entry price and are self-reported.",
                   systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -258,7 +271,7 @@ struct AddTradeView: View {
 
     /// The label the trade will get if saved now
     private var proofOutcome: PriceCheckOutcome {
-        priceChecker.outcome(price: parsedEntryPrice, date: entryDate, type: tradeType)
+        priceChecker.outcome(price: parsedEntryPrice, isNow: timing == .now, type: tradeType)
     }
 
     private var proofCard: some View {
@@ -269,13 +282,15 @@ struct AddTradeView: View {
             ),
             currentPriceText: priceChecker.quote.map { terms.price($0.current) },
             showsUseCurrentPrice: canUseCurrentPrice,
-            onUseCurrentPrice: useCurrentPrice
+            onUseCurrentPrice: useCurrentPrice,
+            onRetry: { priceChecker.retry(ticker: displayTicker, type: tradeType) }
         )
     }
 
-    /// Offered when there's a live quote for today and the typed price isn't it
+    /// Offered when there's a live quote, the fill is now, and the typed price isn't it
     private var canUseCurrentPrice: Bool {
-        guard let quote = priceChecker.quote, Calendar.current.isDateInToday(entryDate) else { return false }
+        guard let quote = priceChecker.quote, timing == .now,
+              TradePriceCheckRules.canQuote(tradeType) else { return false }
         return parsedEntryPrice.map { abs($0 - quote.current) > 0.000_001 } ?? true
     }
 
@@ -299,6 +314,13 @@ struct AddTradeView: View {
                 placeholder: terms.symbolPlaceholder,
                 isSymbol: true
             )
+
+            VStack(alignment: .leading, spacing: 6) {
+                TradeFieldLabel(text: "Direction")
+                SegmentedPicker(options: TradeSide.allCases, selection: $side) { side in
+                    side == .long ? "Long (buy)" : "Short (sell)"
+                }
+            }
 
             if tradeType == .option {
                 VStack(alignment: .leading, spacing: 6) {
@@ -379,11 +401,20 @@ struct AddTradeView: View {
 
     private var dateCard: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
-            DatePicker(selection: $entryDate, in: ...Date(), displayedComponents: .date) {
-                Label("Entry date", systemImage: "calendar")
-                    .font(.subheadline)
+            VStack(alignment: .leading, spacing: 6) {
+                TradeFieldLabel(text: "When did you \(side == .long ? "buy" : "sell")?")
+                SegmentedPicker(options: FillTiming.allCases, selection: $timing) { $0.title }
             }
-            .tint(Color.arkadGold)
+            if timing == .earlier {
+                DatePicker(selection: $entryDate, in: ...Date(), displayedComponents: [.date, .hourAndMinute]) {
+                    Label("Entry time", systemImage: "calendar")
+                        .font(.subheadline)
+                }
+                .tint(Color.arkadGold)
+                Text("Trades logged after the fact are self-reported.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if tradeType == .stock {
                 Divider().overlay(Color.hairline)
@@ -424,14 +455,14 @@ struct AddTradeView: View {
                 TradeInputField(
                     title: "Stop loss",
                     text: $stopLossPrice,
-                    placeholder: entryPriceHint(-5),
+                    placeholder: entryPriceHint(side == .long ? -5 : 5),
                     keyboard: .decimalPad,
                     prefix: terms.pricePrefix
                 )
                 TradeInputField(
                     title: "Take profit",
                     text: $takeProfitPrice,
-                    placeholder: entryPriceHint(10),
+                    placeholder: entryPriceHint(side == .long ? 10 : -10),
                     keyboard: .decimalPad,
                     prefix: terms.pricePrefix
                 )
@@ -518,7 +549,7 @@ struct AddTradeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayTicker)
                         .font(.title3.weight(.bold))
-                    Text(tradeType == .option ? "\(optionType.displayName) option" : tradeType.displayName)
+                    Text("\(side.displayName) · \(tradeType == .option ? "\(optionType.displayName) option" : tradeType.displayName)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -541,7 +572,10 @@ struct AddTradeView: View {
 
     private var reviewDetails: some View {
         VStack(spacing: 0) {
-            TradeInfoRow(title: "Entry date", value: entryDate.formatted(date: .abbreviated, time: .omitted))
+            TradeInfoRow(title: "Direction", value: side == .long ? "Long" : "Short")
+            TradeInfoRow(title: "Entry", value: timing == .now
+                         ? "Just now"
+                         : entryDate.formatted(date: .abbreviated, time: .shortened))
             if tradeType == .option {
                 if let strike = AssetTerms.parseNumber(strikePrice), strike > 0 {
                     TradeInfoRow(title: "Strike", value: AssetTerms(.stock).price(strike))
@@ -571,11 +605,24 @@ struct AddTradeView: View {
     private var positionSentence: String {
         let amount = parsedQuantity.map { terms.quantityText($0, symbol: displayTicker) } ?? "–"
         let price = parsedEntryPrice.map { terms.price($0) } ?? "–"
-        return tradeType == .forex ? "\(amount) at \(price)" : "\(amount) at \(price) each"
+        let action = side == .short ? "Short " : ""
+        return tradeType == .forex ? "\(action)\(amount) at \(price)" : "\(action)\(amount) at \(price) each"
     }
 }
 
 // MARK: - Steps
+
+/// When the fill happened. Only "Just now" can be price-checked.
+enum FillTiming: CaseIterable {
+    case now, earlier
+
+    var title: String {
+        switch self {
+        case .now: return "Just now"
+        case .earlier: return "Earlier"
+        }
+    }
+}
 
 private enum AddTradeStep: Int, CaseIterable {
     case asset = 1, details, extras, review
@@ -655,21 +702,31 @@ extension AddTradeView {
 
     /// Why the optional stop loss / take profit can't be saved, or nil.
     private var extrasValidationMessage: String? {
-        if !trimmed(stopLossPrice).isEmpty && (AssetTerms.parseNumber(stopLossPrice) ?? 0) <= 0 {
+        let stop = AssetTerms.parseNumber(stopLossPrice)
+        let target = AssetTerms.parseNumber(takeProfitPrice)
+        if !trimmed(stopLossPrice).isEmpty && (stop ?? 0) <= 0 {
             return "Stop loss must be a number above 0."
         }
-        if !trimmed(takeProfitPrice).isEmpty && (AssetTerms.parseNumber(takeProfitPrice) ?? 0) <= 0 {
+        if !trimmed(takeProfitPrice).isEmpty && (target ?? 0) <= 0 {
             return "Take profit must be a number above 0."
+        }
+        if let entry = parsedEntryPrice {
+            if let stop, stop > 0, let problem = side.stopLossProblem(stop: stop, entry: entry) { return problem }
+            if let target, target > 0, let problem = side.takeProfitProblem(target: target, entry: entry) { return problem }
         }
         return nil
     }
 
-    /// Total amount at risk and potential reward for the whole position.
+    /// Amount at risk (loss at the stop) and potential reward (gain at the target) for the whole
+    /// position, signed by the side.
     private var riskPlan: (risk: Double, reward: Double)? {
         guard let entry = parsedEntryPrice, let amount = parsedQuantity,
               let stop = AssetTerms.parseNumber(stopLossPrice), stop > 0,
               let target = AssetTerms.parseNumber(takeProfitPrice), target > 0 else { return nil }
-        return (abs(entry - stop) * amount, abs(target - entry) * amount)
+        let risk = -Trade.profitLoss(side: side, entry: entry, exit: stop, quantity: amount)
+        let reward = Trade.profitLoss(side: side, entry: entry, exit: target, quantity: amount)
+        guard risk > 0, reward > 0 else { return nil }
+        return (risk, reward)
     }
 
     private var displayTicker: String {
@@ -726,8 +783,9 @@ extension AddTradeView {
         return formatter.string(from: date)
     }
 
+    /// `allowSelfReported`: the user chose to save without a price check while quotes were unavailable.
     @MainActor
-    private func addTrade() async {
+    private func addTrade(allowSelfReported: Bool = false) async {
         guard !isLoading else { return }
         guard let userId = authService.currentUser?.id else {
             alertTitle = "Couldn't add trade"
@@ -758,7 +816,9 @@ extension AddTradeView {
             userId: userId
         )
 
-        newTrade.entryDate = entryDate
+        let isNow = timing == .now
+        newTrade.entryDate = isNow ? Date() : entryDate
+        newTrade.side = side
         newTrade.isPublic = isPublic
         if !trimmed(strategy).isEmpty { newTrade.strategy = trimmed(strategy) }
 
@@ -787,13 +847,19 @@ extension AddTradeView {
             newTrade.sector = trimmed(sector)
         }
 
-        // Proof label, from a quote at most two minutes old. If it changed since the user last
-        // saw it, show the new one instead of saving silently.
+        // Proof label, from a quote at most 30 seconds old. Never downgraded quietly: when quotes
+        // are unavailable the user picks retry or self-reported, and if the label changed since
+        // they last saw it, they see the new one first.
         let shownProof = proofOutcome.proof
         let outcome = await priceChecker.outcomeForSaving(
-            ticker: displayTicker, price: price, date: entryDate, type: tradeType
+            ticker: displayTicker, price: price, isNow: isNow, type: tradeType
         )
-        if outcome.proof != shownProof {
+        if outcome.isQuotesUnavailable && !allowSelfReported {
+            isLoading = false
+            showQuotesUnavailable = true
+            return
+        }
+        if outcome.proof != shownProof && !(allowSelfReported && outcome.isQuotesUnavailable) {
             isLoading = false
             alertTitle = "Proof label changed"
             alertMessage = TradePriceCheckRules.message(
@@ -806,9 +872,8 @@ extension AddTradeView {
         newTrade.priceCheck = outcome.priceCheck
 
         do {
-            try await authService.addTrade(newTrade)
+            try await portfolioViewModel.addTrade(newTrade)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            portfolioViewModel.loadPortfolioData()
             isLoading = false
             dismiss()
         } catch {
@@ -871,6 +936,7 @@ struct TradeInputField: View {
                         .foregroundStyle(.secondary)
                 }
                 TextField(placeholder, text: $text)
+                    .accessibilityLabel(title)
                     .keyboardType(keyboard)
                     .textInputAutocapitalization(capitalization)
                     .autocorrectionDisabled(isSymbol || keyboard != .default)
@@ -904,6 +970,7 @@ struct TradeNotesField: View {
         VStack(alignment: .leading, spacing: 6) {
             TradeFieldLabel(text: title)
             TextField(placeholder, text: $text, axis: .vertical)
+                .accessibilityLabel(title)
                 .lineLimit(3...8)
                 .font(.body)
                 .padding(14)

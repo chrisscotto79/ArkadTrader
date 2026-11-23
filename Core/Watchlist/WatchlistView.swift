@@ -155,6 +155,9 @@ struct WatchlistView: View {
         guard WatchlistQuotes.isConfigured else {
             return "Live prices aren't available right now. Swipe a row to set an alert or remove it."
         }
+        if store.quotesUnavailable {
+            return "Live prices are unavailable right now. Pull to refresh in a minute. Swipe a row to set an alert or remove it."
+        }
         var text = "Prices are for stocks only, from Finnhub, and may be delayed. Swipe a row to set an alert or remove it."
         if let updated = store.lastQuoteUpdate {
             text += " Updated \(updated.formatted(date: .omitted, time: .shortened))."

@@ -43,7 +43,7 @@ struct LearnTrackView: View {
         if let next = track.lessons.first(where: { !store.isCompleted($0.id) }) {
             return .lesson(next, isFirst: store.completedLessonCount(in: track) == 0)
         }
-        return store.quizResult(for: track) == nil ? .quiz : nil
+        return store.quizPassed(for: track) ? nil : .quiz
     }
 
     // MARK: - Header
@@ -207,6 +207,10 @@ struct LearnTrackView: View {
 
     private var quizCaption: String {
         if let result = store.quizResult(for: track) {
+            if !store.quizPassed(for: track) {
+                let needed = Int((Double(result.total) * LearnProgressStore.quizPassMark).rounded(.up))
+                return "Best score \(result.score) of \(result.total). Get \(needed) right to finish the track."
+            }
             return "Best score \(result.score) of \(result.total). Retake any time."
         }
         if nextStepLesson != nil {

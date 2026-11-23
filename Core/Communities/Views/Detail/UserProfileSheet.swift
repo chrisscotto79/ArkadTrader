@@ -149,7 +149,8 @@ struct UserProfileSheet: View {
 
     private var header: some View {
         VStack(spacing: DS.Spacing.m) {
-            UserAvatar(username: user.username.isEmpty ? displayName : user.username,
+            UserAvatar(username: user.username,
+                       fullName: user.fullName,
                        imageURL: user.profileImageUrl,
                        size: 88)
 
@@ -255,34 +256,7 @@ struct UserProfileSheet: View {
                     value: "\(user.communityIds.count)"
                 )
             }
-
-            if user.startingCapital > 0 {
-                let returnPct = user.totalProfitLoss / user.startingCapital * 100
-                VStack(spacing: 0) {
-                    detailRow("Starting capital") {
-                        Text(user.startingCapital.asCurrency)
-                            .arkadNumber(15, weight: .semibold)
-                    }
-                    Rectangle().fill(Color.hairline).frame(height: 1).padding(.leading, DS.Spacing.l)
-                    detailRow("Return on capital") {
-                        ChangePill(text: String(format: "%+.1f%%", returnPct), isPositive: returnPct >= 0)
-                    }
-                }
-                .cardStyle(padding: 0)
-            }
         }
-    }
-
-    private func detailRow<Value: View>(_ title: String, @ViewBuilder value: () -> Value) -> some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: DS.Spacing.s)
-            value()
-        }
-        .padding(.horizontal, DS.Spacing.l)
-        .frame(minHeight: 48)
     }
 
     // MARK: - Communities

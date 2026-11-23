@@ -45,10 +45,11 @@ final class ClassroomService {
         return CommunityCourse.sortedByOrder(snapshot.documents.compactMap { CommunityCourse.from($0) })
     }
 
-    /// How many courses the community has (for the landing page).
+    /// How many courses the community has (for the landing page). A count() aggregate: one read
+    /// per 1,000 courses rather than one per course.
     func courseCount(communityId: String) async throws -> Int {
-        let snapshot = try await courses(communityId).getDocuments()
-        return snapshot.documents.count
+        let snapshot = try await courses(communityId).count.getAggregation(source: .server)
+        return snapshot.count.intValue
     }
 
     /// A course's lessons, in `order`.

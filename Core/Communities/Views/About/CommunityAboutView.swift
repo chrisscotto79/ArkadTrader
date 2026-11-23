@@ -2,7 +2,7 @@
 // The community landing page (Whop-style), shared by the preview sheet that non-members
 // see and the "About" tab inside the community:
 // - CommunityLandingHeader: banner, avatar, name, tags and description
-// - CommunityAboutView: the leader's checked track record, what's inside and recent results
+// - CommunityAboutView: the leader's track record, what's inside and their recent results
 // Neither has its own scroll view.
 
 import SwiftUI
@@ -210,7 +210,8 @@ struct CommunityAboutView: View {
 // MARK: - Leader record
 
 /// The leader's record from traderStats/{ownerId}: win rate, average result and the number
-/// of closed callouts. Only price-checked callouts are in those stats.
+/// of closed callouts, once there are enough of them (TraderStats.isRanked). Only callouts
+/// whose entry and exit were checked against a live price are in those stats.
 struct LeaderRecordCard: View {
     let leader: CommunityAboutViewModel.Leader?
     let phase: CommunityAboutViewModel.StatsPhase
@@ -220,7 +221,7 @@ struct LeaderRecordCard: View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
             identity
             content
-            Label("Only price-checked callouts count: entry and exit checked against a live quote.", systemImage: "checkmark.seal.fill")
+            Label(footnote, systemImage: "checkmark.seal.fill")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -229,9 +230,14 @@ struct LeaderRecordCard: View {
         .cardStyle()
     }
 
+    private var footnote: String {
+        let rule = "Only callouts with entry and exit checked against a live price count."
+        return AppConfig.serverFunctionsEnabled ? rule : "\(rule) Tracked by the app."
+    }
+
     private var identity: some View {
         HStack(spacing: DS.Spacing.m) {
-            UserAvatar(username: leader?.username ?? "", imageURL: leader?.imageURL, size: 44)
+            UserAvatar(username: leader?.username ?? "", fullName: leader?.fullName, imageURL: leader?.imageURL, size: 44)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Led by")
                     .font(.caption)
@@ -270,8 +276,10 @@ struct LeaderRecordCard: View {
             }
 
         case .loaded(let stats):
-            if let stats, stats.calloutsClosed > 0 {
+            if let stats, stats.isRanked {
                 record(stats)
+            } else if let stats, stats.calloutsClosed > 0 {
+                building(stats)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No checked callouts yet")
@@ -288,18 +296,27 @@ struct LeaderRecordCard: View {
     }
 
     private func record(_ stats: TraderStats) -> some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            HStack(alignment: .top, spacing: DS.Spacing.m) {
-                metric("Win rate", TraderStats.formatWinRate(stats.winRatePercent), .primary)
-                metric("Avg result", TraderStats.formatPercent(stats.avgReturnPercent), TraderStats.color(for: stats.avgReturnPercent))
-                metric("Closed", "\(stats.calloutsClosed)", .primary)
-            }
-            if !stats.isRanked {
-                Text("Early record: \(stats.calloutsClosed) of the \(TraderStats.minimumClosedCallouts) closed callouts needed for the leaderboard.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            metric("Win rate", TraderStats.formatWinRate(stats.winRatePercent), .primary)
+            metric("Avg result", TraderStats.formatPercent(stats.avgReturnPercent), TraderStats.color(for: stats.avgReturnPercent))
+            metric("Closed", "\(stats.calloutsClosed)", .primary)
+        }
+    }
+
+    /// Fewer closed callouts than a full record needs: progress only, no win rate yet.
+    private func building(_ stats: TraderStats) -> some View {
+        let needed = TraderStats.minimumClosedCallouts
+        let closed = min(stats.calloutsClosed, needed)
+        return VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("Building a record: \(closed) of \(needed) closed callouts")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.primary)
+            ProgressView(value: Double(closed), total: Double(needed))
+                .tint(Color.arkadGold)
+            Text("Win rate and results show after \(needed) closed callouts.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -358,12 +375,10 @@ struct CalloutResultRow: View {
                 Text(TraderStats.formatPercent(result.resultPercent))
                     .arkadNumber(17)
                     .foregroundStyle(tint)
-                if let checked = result.isPriceChecked {
-                    Label(checked ? "Price checked" : "Unchecked",
-                          systemImage: checked ? "checkmark.seal.fill" : "exclamationmark.circle")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(checked ? Color.goldText : Color.secondary)
-                }
+                Label(result.isPriceChecked ? "Price checked" : "Unchecked",
+                      systemImage: result.isPriceChecked ? "checkmark.seal.fill" : "exclamationmark.circle")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(result.isPriceChecked ? Color.goldText : Color.secondary)
             }
         }
         .padding(.horizontal, DS.Spacing.l)

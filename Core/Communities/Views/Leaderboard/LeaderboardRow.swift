@@ -9,7 +9,7 @@ extension LeaderboardCategory {
         switch self {
         case .winRate: return "Win rate"
         case .avgReturn: return "Avg return"
-        case .totalReturn: return "Total return"
+        case .totalReturn: return TraderStats.sumOfResultsTitle
         case .mostCallouts: return "Most callouts"
         }
     }

@@ -2,6 +2,8 @@
 // Renders lesson Markdown in the Learn lesson style. SwiftUI's Text only lays out inline
 // Markdown, so the blocks (headings, lists, quotes, code, rules) are split here and each
 // line's inline Markdown (bold, italic, code, links) goes through AttributedString(markdown:).
+// Only https links are kept and opened. Parsed results are cached, so a lesson isn't parsed
+// again every time its view is rebuilt.
 
 import SwiftUI
 
@@ -168,10 +170,47 @@ enum MarkdownBlock: Equatable {
     // MARK: - Inline
 
     /// Inline Markdown (bold, italic, `code`, [links](https://…)); falls back to plain text.
+    /// Links that aren't https are dropped (their text stays).
     static func inline(_ text: String) -> AttributedString {
+        if let hit = MarkdownCache.inline.object(forKey: text as NSString) { return hit.value }
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        var result = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        for run in result.runs {
+            if let url = run.link, url.scheme?.lowercased() != "https" {
+                result[run.range].link = nil
+            }
+        }
+        MarkdownCache.inline.setObject(MarkdownCache.Box(result), forKey: text as NSString)
+        return result
     }
+
+    /// `parse`, cached by the Markdown text.
+    static func cachedParse(_ markdown: String) -> [MarkdownBlock] {
+        if let hit = MarkdownCache.blocks.object(forKey: markdown as NSString) { return hit.value }
+        let blocks = parse(markdown)
+        MarkdownCache.blocks.setObject(MarkdownCache.Box(blocks), forKey: markdown as NSString)
+        return blocks
+    }
+}
+
+/// Parsed lesson Markdown, kept in memory (NSCache drops entries under memory pressure).
+private enum MarkdownCache {
+    final class Box<Value>: NSObject {
+        let value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    static let blocks: NSCache<NSString, Box<[MarkdownBlock]>> = {
+        let cache = NSCache<NSString, Box<[MarkdownBlock]>>()
+        cache.countLimit = 50
+        return cache
+    }()
+
+    static let inline: NSCache<NSString, Box<AttributedString>> = {
+        let cache = NSCache<NSString, Box<AttributedString>>()
+        cache.countLimit = 2000
+        return cache
+    }()
 }
 
 /// A block of lesson Markdown, laid out like the app's Learn lessons.
@@ -180,7 +219,7 @@ struct MarkdownText: View {
     var tint: Color
 
     init(_ markdown: String, tint: Color = .goldText) {
-        self.blocks = MarkdownBlock.parse(markdown)
+        self.blocks = MarkdownBlock.cachedParse(markdown)
         self.tint = tint
     }
 
@@ -192,6 +231,10 @@ struct MarkdownText: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .tint(tint)
+        // Only https links open, whatever the Markdown says
+        .environment(\.openURL, OpenURLAction { url in
+            url.scheme?.lowercased() == "https" ? .systemAction : .discarded
+        })
     }
 
     @ViewBuilder

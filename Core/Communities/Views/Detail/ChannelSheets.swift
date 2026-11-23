@@ -73,6 +73,8 @@ struct EnhancedChannelRow: View {
 struct CreateChannelSheet: View {
     let community: Community
     var editing: Channel?
+    /// The community's channels, so a name can't be used twice
+    var existingChannels: [Channel] = []
     @Environment(\.dismiss) private var dismiss
 
     @State private var channelName = ""
@@ -121,6 +123,22 @@ struct CreateChannelSheet: View {
             .replacingOccurrences(of: "#", with: "")
     }
 
+    /// Why the name can't be used, or nil when it's fine (an empty name just disables Create)
+    private var nameProblem: String? {
+        let name = cleanedName
+        guard !name.isEmpty else { return nil }
+        if name.count < 2 { return "Use at least 2 characters." }
+        if name.count > 50 { return "Use 50 characters or fewer." }
+        let allowed = CharacterSet.lowercaseLetters.union(.decimalDigits).union(CharacterSet(charactersIn: "-_"))
+        if name.unicodeScalars.contains(where: { !allowed.contains($0) }) {
+            return "Use letters, numbers, hyphens and underscores."
+        }
+        if existingChannels.contains(where: { $0.name == name && $0.id != editing?.id }) {
+            return "There's already a #\(name)."
+        }
+        return nil
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -130,6 +148,11 @@ struct CreateChannelSheet: View {
                         TextField("channel-name", text: $channelName)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                    }
+                    if let nameProblem {
+                        Text(nameProblem)
+                            .font(.footnote)
+                            .foregroundStyle(Color.marketRed)
                     }
                     Picker("Type", selection: $preset) {
                         ForEach(Preset.allCases) { option in
@@ -171,7 +194,7 @@ struct CreateChannelSheet: View {
                     } else {
                         Button(editing == nil ? "Create" : "Save", action: save)
                             .fontWeight(.semibold)
-                            .disabled(cleanedName.isEmpty)
+                            .disabled(cleanedName.isEmpty || nameProblem != nil)
                     }
                 }
             }
@@ -199,6 +222,7 @@ struct CreateChannelSheet: View {
     }
 
     private func save() {
+        guard !cleanedName.isEmpty, nameProblem == nil else { return }
         isSaving = true
         errorMessage = nil
         Task {
@@ -223,7 +247,7 @@ struct CreateChannelSheet: View {
                 }
                 dismiss()
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = "Couldn't save the channel. Check your connection and try again."
                 isSaving = false
             }
         }

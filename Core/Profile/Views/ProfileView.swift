@@ -6,7 +6,8 @@ import SwiftUI
 
 struct ProfileView: View {
     @EnvironmentObject var authService: FirebaseAuthService
-    @StateObject private var portfolioViewModel = PortfolioViewModel()
+    /// Shared with the Portfolio tab (injected by TabBarView)
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
     @StateObject private var postsViewModel = UserPostsViewModel()
     @StateObject private var groupsViewModel = UserGroupsViewModel()
 
@@ -53,6 +54,7 @@ struct ProfileView: View {
             }
         }
         .screenBackground()
+        .statusBarBackground()
         .refreshable {
             await refreshProfile()
         }
@@ -130,6 +132,7 @@ struct ProfileView: View {
             ProfileSourceLabel(title: "Portfolio", detail: "Price-checked & verified trades")
             ProfilePerformanceCard(
                 summary: portfolioViewModel.getPortfolioSummaryForProfile(),
+                hasCheckedTrades: portfolioViewModel.checkedStats.tradeCount > 0,
                 bestTrade: bestClosedTrade
             ) {
                 showPortfolioDetails = true
@@ -161,7 +164,7 @@ struct ProfileView: View {
         await authService.refreshCurrentUser()
 
         // Refresh other profile data
-        portfolioViewModel.refreshPortfolio()
+        await portfolioViewModel.refreshPortfolio()
         await postsViewModel.refreshPosts()
         await groupsViewModel.refreshGroups()
     }
@@ -171,4 +174,5 @@ struct ProfileView: View {
     ProfileView()
         .environmentObject(FirebaseAuthService.shared)
         .environmentObject(TabRouter())
+        .environmentObject(PortfolioViewModel())
 }

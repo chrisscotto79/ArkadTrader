@@ -1,5 +1,5 @@
 // File: Core/Portfolio/Views/PortfolioView.swift
-// The Portfolio tab: account value, realized P&L chart, key stats, and your open and closed trades.
+// The Portfolio tab: account value, performance chart, key stats, and your open and closed trades.
 // Tap a trade to close, edit or delete it; the gold "+" logs a new one. Linked brokerages add a
 // read-only holdings section and Verified imported trades (hidden while AppConfig.brokerageLinkingEnabled is off).
 // Every trade row shows its proof label. Win rate, realized P&L, the chart and best trade count only
@@ -10,7 +10,8 @@ import Charts
 
 struct PortfolioView: View {
     @EnvironmentObject var authService: FirebaseAuthService
-    @StateObject private var portfolioViewModel = PortfolioViewModel()
+    /// Shared with the Profile tab (injected by TabBarView or PortfolioDetailsSheet)
+    @EnvironmentObject var portfolioViewModel: PortfolioViewModel
 
     @State private var showAddTrade = false
     @State private var selectedTrade: Trade?
@@ -34,8 +35,9 @@ struct PortfolioView: View {
                 }
             }
             .screenBackground()
+            .statusBarBackground()
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { portfolioViewModel.refreshPortfolio() }
+            .refreshable { await portfolioViewModel.refreshPortfolio() }
             .navigationDestination(isPresented: $showLinkedAccounts) {
                 LinkedAccountsView()
             }
@@ -74,7 +76,7 @@ struct PortfolioView: View {
 
     /// True until the first batch of trades arrives, so we don't flash empty numbers
     private var isFirstLoad: Bool {
-        portfolioViewModel.isLoading && portfolioViewModel.trades.isEmpty
+        portfolioViewModel.isLoading && portfolioViewModel.trades.isEmpty && portfolioViewModel.loadError == nil
     }
 
     // MARK: - Layout
@@ -96,8 +98,13 @@ struct PortfolioView: View {
 
     private var content: some View {
         VStack(spacing: DS.Spacing.xl) {
+            if let error = portfolioViewModel.loadError {
+                loadErrorCard(error)
+            }
             heroCard
-            if portfolioViewModel.trades.isEmpty && !isFirstLoad {
+            if portfolioViewModel.trades.isEmpty && portfolioViewModel.loadError != nil {
+                EmptyView()
+            } else if portfolioViewModel.trades.isEmpty && !isFirstLoad {
                 emptyJournal
                 holdingsSection
             } else {
@@ -107,6 +114,21 @@ struct PortfolioView: View {
                 closedTradesSection
             }
         }
+    }
+
+    private func loadErrorCard(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            IconWell(systemName: "exclamationmark.triangle.fill", tint: .marketRed, size: 36)
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                Text(message)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Retry") { portfolioViewModel.retryLoading() }
+                    .buttonStyle(PillButtonStyle(kind: .neutral))
+            }
+            Spacer(minLength: 0)
+        }
+        .cardStyle()
     }
 
     // MARK: - Hero
@@ -139,13 +161,14 @@ struct PortfolioView: View {
                 .contentTransition(.numericText())
                 .animation(.snappy, value: portfolioValue)
 
-            HStack(spacing: DS.Spacing.s) {
+            VStack(alignment: .leading, spacing: 4) {
                 ChangePill(text: totalPLText, isPositive: totalProfitLoss >= 0)
+                    .lineLimit(1)
+                    .fixedSize()
                 Text(accountChangeCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -167,8 +190,8 @@ struct PortfolioView: View {
 
     /// The account value is a balance over every logged trade, so say when it includes self-reported ones
     private var accountChangeCaption: String {
-        let base = startingCapital == nil ? "realized" : "all time"
-        return selfReported.tradeCount > 0 ? "\(base), incl. self-reported" : base
+        let base = startingCapital == nil ? "Realized" : "All time"
+        return selfReported.tradeCount > 0 ? "\(base), including self-reported trades" : base
     }
 
     private var totalPLText: String {
@@ -180,55 +203,64 @@ struct PortfolioView: View {
 
     // MARK: - Chart
 
+    @ViewBuilder
     private var chartBlock: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Realized P&L")
-                        .font(.headline)
-                    Text("Price-checked & verified trades")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let last = pnlSeries.last {
-                    Text("\(last.value.asCurrencyWithSign) \(chartRange.caption)")
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(last.value >= 0 ? Color.marketGreen : Color.marketRed)
-                }
-            }
-
-            if pnlSeries.count < 2 {
-                chartPlaceholder
-            } else {
-                PnLChart(points: pnlSeries)
-                    .frame(height: 180)
-                    .transition(.opacity)
-            }
-
-            rangeChips
-        }
-    }
-
-    private var chartPlaceholder: some View {
-        VStack(spacing: DS.Spacing.s) {
-            Image(systemName: "chart.xyaxis.line")
-                .font(.title2)
-                .foregroundStyle(.tertiary)
-            Text(chartPlaceholderText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 160)
-    }
-
-    private var chartPlaceholderText: String {
         if countedClosedTrades.isEmpty {
-            return closedTrades.isEmpty
-                ? "Close a price-checked trade to start your chart"
-                : "No price-checked closed trades yet"
+            chartEmptyState
+        } else {
+            VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Performance")
+                            .font(.headline)
+                        Text("Realized P&L, price-checked & verified trades")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if let last = pnlSeries.last {
+                        Text("\(last.value.asCurrencyWithSign) \(chartRange.caption)")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(last.value >= 0 ? Color.marketGreen : Color.marketRed)
+                    }
+                }
+
+                if pnlSeries.count < 2 {
+                    Text("No price-checked trades closed \(chartRange.caption)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 80)
+                } else {
+                    PnLChart(points: pnlSeries)
+                        .frame(height: 180)
+                        .transition(.opacity)
+                }
+
+                rangeChips
+            }
         }
-        return "No price-checked trades closed \(chartRange.caption)"
+    }
+
+    /// Nothing to chart yet: one compact line instead of an empty plot and range picker
+    private var chartEmptyState: some View {
+        HStack(spacing: DS.Spacing.m) {
+            Image(systemName: "chart.xyaxis.line")
+                .font(.title3)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Performance")
+                    .font(.subheadline.weight(.semibold))
+                Text(closedTrades.isEmpty
+                     ? "Close a price-checked trade to start your chart."
+                     : "No price-checked closed trades yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var rangeChips: some View {
@@ -260,7 +292,9 @@ struct PortfolioView: View {
                     title: "Realized P&L",
                     value: checked.hasClosedTrades ? checked.realizedPL.asCurrencyWithSign : "–",
                     valueColor: checked.hasClosedTrades ? (checked.realizedPL >= 0 ? .marketGreen : .marketRed) : .primary,
-                    footnote: "\(checked.closedTodayPL.asCurrencyWithSign) closed today"
+                    footnote: checked.hasClosedTrades
+                        ? "\(checked.closedTodayPL.asCurrencyWithSign) closed today"
+                        : "No price-checked trades"
                 )
                 StatTile(
                     title: "Open positions",
@@ -337,6 +371,13 @@ struct PortfolioView: View {
     private var openPositionsSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             SectionHeader(title: "Open positions", count: openTrades.count)
+            if portfolioViewModel.quotesUnavailable && openTrades.contains(where: { $0.tradeType == .stock }) {
+                Label("Live prices are unavailable right now. Pull to refresh in a minute.",
+                      systemImage: "wifi.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if openTrades.isEmpty {
                 inlineEmpty(
                     icon: "tray",
@@ -579,18 +620,32 @@ struct PortfolioTradeRow: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.primary)
                         .lineLimit(1)
+                    if trade.side == .short {
+                        Text("Short")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.marketRed)
+                    }
                     if trade.tradeType != .stock {
                         Text(trade.tradeType.displayName)
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(terms.tint)
                     }
                     TradeProofBadge(proof: trade.proof, compact: true)
+                    if trade.exitNotChecked {
+                        Text("Exit not checked")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
                 }
                 Text(detailLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: DS.Spacing.s)
 
@@ -874,16 +929,70 @@ struct AssetTerms {
         return String(base.prefix(4)).uppercased()
     }
 
-    /// Parses user-typed numbers, honouring the device's decimal separator (decimal pads type "," in many locales).
+    /// The largest amount a typed number may have (prices, quantities, balances).
+    static let maxTypedNumber: Double = 1_000_000_000_000
+
+    /// Parses a typed number: digits with an optional leading "-", one decimal separator and
+    /// optional grouping. Works with either "." or "," as the decimal mark (decimal pads type ","
+    /// in many locales): when both appear the last one is the decimal mark; a lone mark is a
+    /// thousands separator only when exactly three digits follow it and it isn't the device's
+    /// decimal separator. Rejects anything else ("inf", "nan", "1e308", "12abc") and values
+    /// above `maxTypedNumber`. Used by trade forms and callout sheets.
     static func parseNumber(_ text: String) -> Double? {
-        var cleaned = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "")
-        guard !cleaned.isEmpty else { return nil }
-        if Locale.current.decimalSeparator == "," {
-            cleaned = cleaned.replacingOccurrences(of: ".", with: "").replacingOccurrences(of: ",", with: ".")
-        } else {
-            cleaned = cleaned.replacingOccurrences(of: ",", with: "")
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .filter { !$0.isWhitespace && $0 != "\u{00A0}" && $0 != "\u{202F}" && $0 != "'" }
+        var isNegative = false
+        if cleaned.hasPrefix("-") || cleaned.hasPrefix("\u{2212}") {
+            isNegative = true
+            cleaned.removeFirst()
         }
-        return Double(cleaned)
+        guard !cleaned.isEmpty, cleaned.count <= 24,
+              cleaned.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == "." || $0 == ",") }),
+              cleaned.contains(where: \.isNumber) else { return nil }
+
+        let localeDecimal: Character = Locale.current.decimalSeparator == "," ? "," : "."
+        let marks = cleaned.filter { $0 == "." || $0 == "," }
+        var decimalMark: Character?
+        if Set(marks).count == 2 {
+            decimalMark = marks.last
+        } else if let mark = marks.first {
+            if marks.count > 1 {
+                decimalMark = nil  // "1,000,000": grouping only
+            } else if mark == localeDecimal {
+                decimalMark = mark
+            } else {
+                let digitsAfter = cleaned.split(separator: mark, omittingEmptySubsequences: false).last?.count ?? 0
+                decimalMark = digitsAfter == 3 ? nil : mark
+            }
+        }
+
+        // Grouping must look like real grouping: 1-3 digits, then groups of exactly 3
+        // ("1,234,567"), only before the decimal mark. "1.2.3" or "12.34.5" is a typo, not 123.
+        if let groupMark = marks.first(where: { $0 != decimalMark }) {
+            let integerPart = decimalMark.flatMap { mark in cleaned.split(separator: mark, maxSplits: 1, omittingEmptySubsequences: false).first }
+                .map(String.init) ?? cleaned
+            let groups = integerPart.split(separator: groupMark, omittingEmptySubsequences: false)
+            guard let first = groups.first, (1...3).contains(first.count),
+                  groups.dropFirst().allSatisfy({ $0.count == 3 }) else { return nil }
+        }
+
+        var normalized = ""
+        var seenDecimal = false
+        for character in cleaned {
+            if character == decimalMark {
+                guard !seenDecimal else { return nil }
+                seenDecimal = true
+                normalized.append(".")
+            } else if character.isNumber {
+                normalized.append(character)
+            } else if seenDecimal {
+                return nil  // a grouping mark after the decimal mark
+            }
+            // anything else left is a grouping mark: dropped
+        }
+        if normalized.hasPrefix(".") { normalized = "0" + normalized }
+        guard let value = Double(normalized), value.isFinite, value <= maxTypedNumber else { return nil }
+        return isNegative ? -value : value
     }
 
     /// A number as the user would type it (no grouping, local decimal separator, no trailing zeros)
@@ -896,16 +1005,17 @@ struct AssetTerms {
         return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
-    /// "Mar 3", or "Mar 3, 2024" for other years
+    /// "Mar 3", or "3/3/24" for other years (short enough for one-line trade rows)
     static func shortDate(_ date: Date) -> String {
         if Calendar.current.isDate(date, equalTo: Date(), toGranularity: .year) {
             return date.formatted(.dateTime.month(.abbreviated).day())
         }
-        return date.formatted(.dateTime.month(.abbreviated).day().year())
+        return date.formatted(.dateTime.month(.defaultDigits).day().year(.twoDigits))
     }
 }
 
 #Preview {
     PortfolioView()
         .environmentObject(FirebaseAuthService.shared)
+        .environmentObject(PortfolioViewModel())
 }

@@ -18,9 +18,15 @@ struct EventsSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+            if viewModel.hasLoaded, let message = viewModel.loadError {
+                CommunityRefreshBanner(message: message) {
+                    Task { await viewModel.reload() }
+                }
+            }
+
             if !viewModel.hasLoaded && viewModel.isLoading {
                 placeholders
-            } else if !viewModel.hasLoaded, let message = viewModel.errorMessage {
+            } else if !viewModel.hasLoaded, let message = viewModel.loadError {
                 EmptyStateView(
                     systemImage: "wifi.exclamationmark",
                     title: "Couldn't load events",

@@ -23,7 +23,8 @@ struct EnhancedMessageRowWithReactions: View {
     let onDelete: () -> Void
     let onReact: (String) -> Void
     let onShowEmojiPicker: () -> Void
-    let onProfileTap: (User) -> Void
+    /// Opens the author's profile (the chat loads it when it isn't cached)
+    let onProfileTap: () -> Void
     let currentUserId: String
     /// Used to highlight @mentions of the current user
     var currentUsername: String = ""
@@ -43,6 +44,10 @@ struct EnhancedMessageRowWithReactions: View {
     var isMessageLoaded: (String) -> Bool = { _ in false }
     /// Scrolls the chat to a loaded message
     var onJumpToMessage: (String) -> Void = { _ in }
+    /// Members can reply and react; others only read
+    var canInteract: Bool = true
+    /// The message this one replies to has since been deleted
+    var isReplyParentDeleted: Bool = false
 
     @Environment(\.openURL) private var openURL
 
@@ -99,7 +104,7 @@ struct EnhancedMessageRowWithReactions: View {
     private var avatarColumn: some View {
         if showUsername {
             Button {
-                if let author { onProfileTap(author) }
+                onProfileTap()
             } label: {
                 UserAvatar(username: message.authorUsername, imageURL: avatarURL, size: avatarSize)
             }
@@ -113,7 +118,7 @@ struct EnhancedMessageRowWithReactions: View {
     private var authorLine: some View {
         HStack(spacing: 5) {
             Button {
-                if let author { onProfileTap(author) }
+                onProfileTap()
             } label: {
                 Text(message.authorUsername)
                     .font(.subheadline.weight(.semibold))
@@ -223,7 +228,8 @@ struct EnhancedMessageRowWithReactions: View {
         if let replyTo = message.replyTo {
             VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 3) {
                 let canJump = isMessageLoaded(replyTo.messageId)
-                ReplyQuoteHeader(reply: replyTo, canJump: canJump) {
+                ReplyQuoteHeader(reply: replyTo, canJump: canJump && !isReplyParentDeleted,
+                                 isOriginalDeleted: isReplyParentDeleted) {
                     onJumpToMessage(replyTo.messageId)
                 }
                 kindContent
@@ -262,12 +268,12 @@ struct EnhancedMessageRowWithReactions: View {
                 onOpenParent: parentJump(update.parentMessageId)
             )
         } else if let result = message.calloutResult {
-            CalloutResultCard(result: result, onOpenParent: parentJump(result.parentMessageId))
+            CalloutResultCard(result: result, parent: parentCallout, onOpenParent: parentJump(result.parentMessageId))
         } else if let share = message.tradeShare {
             TradeShareCard(share: share)
         } else if let plan = message.gamePlan {
             GamePlanCard(plan: plan)
-        } else if let media = getMediaContent(from: message) {
+        } else if let media = message.displayMedia {
             mediaMessageView(media)
         } else {
             textBubble
@@ -315,7 +321,7 @@ struct EnhancedMessageRowWithReactions: View {
     // MARK: - Media
 
     @ViewBuilder
-    private func mediaMessageView(_ media: MediaContent) -> some View {
+    private func mediaMessageView(_ media: MessageMedia) -> some View {
         switch media.type {
         case .image:
             imageView(media)
@@ -326,66 +332,55 @@ struct EnhancedMessageRowWithReactions: View {
         }
     }
 
-    private func imageView(_ media: MediaContent) -> some View {
-        AsyncImage(url: URL(string: media.url)) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 240, maxHeight: 320)
-            case .failure:
-                mediaPlaceholder(icon: "photo", text: "Photo unavailable")
-            default:
-                mediaPlaceholder(icon: nil, text: nil)
-            }
+    private func imageView(_ media: MessageMedia) -> some View {
+        ArkadAsyncImage(urlString: media.url) { image in
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 240, maxHeight: 320)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                        .strokeBorder(Color.hairline, lineWidth: 1)
+                )
+        } placeholder: {
+            unavailableMedia(icon: "photo", text: "Photo")
         }
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                .strokeBorder(Color.hairline, lineWidth: 1)
-        )
         .accessibilityLabel("Photo from \(message.authorUsername)")
     }
 
-    private func mediaPlaceholder(icon: String?, text: String?) -> some View {
-        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-            .fill(Color.surfaceRaised)
-            .frame(width: 240, height: 180)
-            .overlay {
-                if let icon, let text {
-                    VStack(spacing: 6) {
-                        Image(systemName: icon).font(.title2)
-                        Text(text).font(.caption)
-                    }
-                    .foregroundStyle(.secondary)
-                } else {
-                    ProgressView()
-                }
-            }
+    /// One compact line while a photo loads, or when it can't be shown
+    private func unavailableMedia(icon: String, text: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(bubbleShape.fill(Color.surfaceRaised))
     }
 
     @ViewBuilder
-    private func documentView(_ media: MediaContent) -> some View {
-        if let url = URL(string: media.url) {
+    private func documentView(_ media: MessageMedia) -> some View {
+        if let url = URL(string: media.url), url.scheme == "https" {
             Link(destination: url) { documentCard(media) }
                 .buttonStyle(PressableStyle())
-                .accessibilityLabel("Open \(media.fileName)")
+                .accessibilityLabel("Open \(media.fileName ?? "document")")
         } else {
             documentCard(media)
         }
     }
 
-    private func documentCard(_ media: MediaContent) -> some View {
-        HStack(spacing: DS.Spacing.m) {
-            IconWell(systemName: documentIcon(for: media.fileName), size: 40)
+    private func documentCard(_ media: MessageMedia) -> some View {
+        let fileName = media.fileName ?? "Document"
+        return HStack(spacing: DS.Spacing.m) {
+            IconWell(systemName: documentIcon(for: fileName), size: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(media.fileName)
+                Text(fileName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
-                Text(media.fileSize.map(formatFileSize) ?? fileKind(for: media.fileName))
+                Text(fileKind(for: fileName))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -408,33 +403,14 @@ struct EnhancedMessageRowWithReactions: View {
     }
 
     @ViewBuilder
-    private func videoView(_ media: MediaContent) -> some View {
-        if let url = URL(string: media.url) {
-            Link(destination: url) { videoThumbnail }
+    private func videoView(_ media: MessageMedia) -> some View {
+        if let url = URL(string: media.url), url.scheme == "https" {
+            Link(destination: url) { unavailableMedia(icon: "play.circle.fill", text: "Play video") }
                 .buttonStyle(PressableStyle())
                 .accessibilityLabel("Play video")
         } else {
-            videoThumbnail
+            unavailableMedia(icon: "play.circle.fill", text: "Video")
         }
-    }
-
-    private var videoThumbnail: some View {
-        RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-            .fill(Color.surfaceRaised)
-            .frame(width: 240, height: 140)
-            .overlay {
-                VStack(spacing: 6) {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 40))
-                    Text("Play video")
-                        .font(.caption.weight(.medium))
-                }
-                .foregroundStyle(.secondary)
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                    .strokeBorder(Color.hairline, lineWidth: 1)
-            )
     }
 
     // MARK: - Reactions
@@ -443,7 +419,7 @@ struct EnhancedMessageRowWithReactions: View {
         HStack(spacing: 6) {
             ForEach(reactions) { group in
                 Button {
-                    onReact(group.emoji)
+                    if canInteract { onReact(group.emoji) }
                 } label: {
                     HStack(spacing: 4) {
                         Text(group.emoji)
@@ -467,15 +443,17 @@ struct EnhancedMessageRowWithReactions: View {
                 .accessibilityLabel("\(group.emoji) \(group.count), \(group.displayText)")
             }
 
-            Button(action: onShowEmojiPicker) {
-                Image(systemName: "face.smiling")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 26)
-                    .background(Capsule().fill(Color.surfaceRaised))
+            if canInteract {
+                Button(action: onShowEmojiPicker) {
+                    Image(systemName: "face.smiling")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, height: 26)
+                        .background(Capsule().fill(Color.surfaceRaised))
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Add reaction")
             }
-            .buttonStyle(PressableStyle())
-            .accessibilityLabel("Add reaction")
         }
     }
 
@@ -483,27 +461,29 @@ struct EnhancedMessageRowWithReactions: View {
 
     @ViewBuilder
     private var contextActions: some View {
-        Button(action: onReply) {
-            Label("Reply", systemImage: "arrowshape.turn.up.left")
+        if canInteract {
+            Button(action: onReply) {
+                Label("Reply", systemImage: "arrowshape.turn.up.left")
+            }
+            Button(action: onShowEmojiPicker) {
+                Label("React", systemImage: "face.smiling")
+            }
         }
-        Button(action: onShowEmojiPicker) {
-            Label("React", systemImage: "face.smiling")
-        }
-        if message.callout == nil, getMediaContent(from: message) == nil {
+        if message.callout == nil, message.displayMedia == nil {
             Button {
                 UIPasteboard.general.string = message.content
             } label: {
                 Label("Copy Text", systemImage: "doc.on.doc")
             }
         }
-        if let media = getMediaContent(from: message), let url = URL(string: media.url) {
+        if let media = message.displayMedia, let url = URL(string: media.url), url.scheme == "https" {
             Button {
                 openURL(url)
             } label: {
                 Label("Open", systemImage: "arrow.up.right.square")
             }
         }
-        if canEdit && !message.hasStructuredKind && getMediaContent(from: message) == nil {
+        if canEdit && !message.hasStructuredKind && message.displayMedia == nil {
             Button(action: onEdit) {
                 Label("Edit", systemImage: "pencil")
             }
@@ -536,25 +516,6 @@ struct EnhancedMessageRowWithReactions: View {
         date.formatted(date: .omitted, time: .shortened)
     }
 
-    private func getMediaContent(from message: CommunityMessage) -> MediaContent? {
-        let content = message.content
-
-        if content.hasPrefix("[MEDIA:IMAGE]") {
-            let url = String(content.dropFirst(13))
-            return MediaContent(type: .image, url: url, fileName: "image.jpg", fileSize: nil)
-        } else if content.hasPrefix("[MEDIA:DOCUMENT]") {
-            let parts = String(content.dropFirst(16)).components(separatedBy: "|")
-            if parts.count >= 2 {
-                return MediaContent(type: .document, url: parts[0], fileName: parts[1], fileSize: nil)
-            }
-        } else if content.hasPrefix("[MEDIA:VIDEO]") {
-            let url = String(content.dropFirst(13))
-            return MediaContent(type: .video, url: url, fileName: "video.mp4", fileSize: nil)
-        }
-
-        return nil
-    }
-
     private func documentIcon(for fileName: String) -> String {
         switch (fileName as NSString).pathExtension.lowercased() {
         case "pdf": return "doc.richtext"
@@ -571,13 +532,6 @@ struct EnhancedMessageRowWithReactions: View {
     private func fileKind(for fileName: String) -> String {
         let ext = (fileName as NSString).pathExtension.uppercased()
         return ext.isEmpty ? "File" : "\(ext) file"
-    }
-
-    private func formatFileSize(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
     }
 
     // MARK: - Mentions

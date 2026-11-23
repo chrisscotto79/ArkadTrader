@@ -54,15 +54,23 @@ final class PriceAlertChecker {
         loopTask = nil
     }
 
+    /// Stops checking and forgets the last check. Call on sign-out.
+    func reset() {
+        stop()
+        lastCheckAt = nil
+    }
+
     // MARK: - Checking
 
-    /// Checks every active stock alert once. Does nothing if a check ran in the last minute.
-    func checkNow() async {
+    /// Checks every active stock alert once. Does nothing if a check ran in the last minute,
+    /// unless `force` (a new alert was just saved). Quotes come from QuoteClient, which reuses
+    /// prices up to 30 seconds old, so forcing doesn't spend extra Finnhub calls.
+    func checkNow(force: Bool = false) async {
         guard !AppConfig.serverFunctionsEnabled,
               !isChecking,
               WatchlistQuotes.isConfigured,
               let userId = Auth.auth().currentUser?.uid else { return }
-        if let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < Self.minimumGap { return }
+        if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < Self.minimumGap { return }
 
         isChecking = true
         lastCheckAt = Date()

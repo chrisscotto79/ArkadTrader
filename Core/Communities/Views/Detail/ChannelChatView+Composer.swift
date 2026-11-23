@@ -12,7 +12,9 @@ extension ChannelChatView {
             Rectangle().fill(Color.hairline).frame(height: 1)
 
             Group {
-                if viewModel.isMuted {
+                if !viewModel.isMember {
+                    joinToChatBar
+                } else if viewModel.isMuted {
                     mutedNotice
                 } else if viewModel.canUserPost || editingMessage != nil {
                     composerRow
@@ -162,6 +164,33 @@ extension ChannelChatView {
         .disabled(!canSendMessage)
         .animation(.snappy(duration: 0.18), value: canSendMessage)
         .accessibilityLabel(editingMessage != nil ? "Save edit" : "Send")
+    }
+
+    /// Non-members of a free community read along; joining turns this into the composer
+    private var joinToChatBar: some View {
+        HStack(spacing: DS.Spacing.m) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Join to chat")
+                    .font(.subheadline.weight(.semibold))
+                Text("Members can post, reply and react.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: DS.Spacing.s)
+            Button {
+                Task { await viewModel.joinCommunity() }
+            } label: {
+                if viewModel.isJoining {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Join")
+                }
+            }
+            .buttonStyle(PillButtonStyle(kind: .gold))
+            .disabled(viewModel.isJoining)
+            .accessibilityLabel("Join \(community.name)")
+        }
+        .frame(minHeight: 36)
     }
 
     private var readOnlyNotice: some View {

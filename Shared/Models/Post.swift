@@ -3,8 +3,14 @@
 
 import Foundation
 import FirebaseFirestore
+import SwiftUI
 
 struct Post: Identifiable, Codable {
+    /// Limits the database rules enforce on new posts.
+    static let maxContentLength = 2000
+    static let maxTickers = 10
+    static let maxHashtags = 10
+
     var id: String
     var content: String
     var authorId: String
@@ -17,15 +23,14 @@ struct Post: Identifiable, Codable {
     var createdAt: Date
     var postType: PostType
     
-    // ✅ New trading-specific fields
+    // Trading fields
     var tickers: [String] = []
     var tradingData: TradingData?
     
-    // ✅ New media fields
+    // Media
     var imageUrls: [String] = []
-    var hasMedia: Bool { !imageUrls.isEmpty }
     
-    // ✅ Enhanced content analysis
+    // Content analysis
     var hashtags: [String] = []
     var mentions: [String] = []
 
@@ -75,7 +80,7 @@ struct Post: Identifiable, Codable {
         self.commentsCount = 0
         self.createdAt = Date()
         self.postType = postType
-        self.tickers = tickers
+        self.tickers = Cashtag.cleaned(tickers)
         self.tradingData = tradingData
         self.imageUrls = imageUrls
         
@@ -94,9 +99,9 @@ struct Post: Identifiable, Codable {
             "commentsCount": commentsCount,
             "createdAt": Timestamp(date: createdAt),
             "postType": postType.rawValue,
-            "tickers": tickers,
+            "tickers": Cashtag.cleaned(tickers),
             "imageUrls": imageUrls,
-            "hashtags": hashtags,
+            "hashtags": Array(hashtags.prefix(Post.maxHashtags)),
             "mentions": mentions
         ]
         
@@ -125,13 +130,17 @@ struct Post: Identifiable, Codable {
         return data
     }
 
+    /// A post from a query result. Reads pending server timestamps (your own post that hasn't
+    /// reached the server yet) as their estimated value.
+    static func fromDocument(_ document: DocumentSnapshot) -> Post? {
+        guard let data = document.data(with: .estimate) else { return nil }
+        return try? fromFirestore(data: data, id: document.documentID)
+    }
+
     static func fromFirestore(data: [String: Any], id: String) throws -> Post {
         guard let content = data["content"] as? String,
               let authorId = data["authorId"] as? String,
               let authorUsername = data["authorUsername"] as? String,
-              let likesCount = data["likesCount"] as? Int,
-              let commentsCount = data["commentsCount"] as? Int,
-              let createdAtTimestamp = data["createdAt"] as? Timestamp,
               let postTypeString = data["postType"] as? String,
               let postType = PostType(rawValue: postTypeString) else {
             throw NSError(domain: "PostDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid post data"])
@@ -139,12 +148,12 @@ struct Post: Identifiable, Codable {
 
         var post = Post(content: content, authorId: authorId, authorUsername: authorUsername)
         post.id = id
-        post.likesCount = likesCount
-        post.commentsCount = commentsCount
-        post.createdAt = createdAtTimestamp.dateValue()
+        post.likesCount = max(0, data["likesCount"] as? Int ?? 0)
+        post.commentsCount = max(0, data["commentsCount"] as? Int ?? 0)
+        // A pending server timestamp reads as nil (or NSNull) without `.estimate`
+        post.createdAt = (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
         post.postType = postType
-        
-        // ✅ Load enhanced fields
+
         post.tickers = data["tickers"] as? [String] ?? []
         post.imageUrls = data["imageUrls"] as? [String] ?? []
         post.hashtags = data["hashtags"] as? [String] ?? []
@@ -179,10 +188,13 @@ struct TradeSnapshot: Codable, Equatable {
     var entryDate: Date
     var exitDate: Date
     var proof: TradeProof
+    /// "long" or "short" (older snapshots have none: long).
+    var side: String = "long"
 
     var assetType: TradeType? { TradeType(rawValue: tradeType) }
-    var profitLoss: Double { (exitPrice - entryPrice) * quantity }
-    var profitLossPercentage: Double { entryPrice > 0 ? (exitPrice - entryPrice) / entryPrice * 100 : 0 }
+    private var sign: Double { side == "short" ? -1 : 1 }
+    var profitLoss: Double { sign * (exitPrice - entryPrice) * quantity }
+    var profitLossPercentage: Double { entryPrice > 0 ? sign * (exitPrice - entryPrice) / entryPrice * 100 : 0 }
 
     /// From a closed trade. Nil while the trade is open.
     init?(trade: Trade) {
@@ -195,10 +207,11 @@ struct TradeSnapshot: Codable, Equatable {
         self.entryDate = trade.entryDate
         self.exitDate = trade.exitDate ?? trade.entryDate
         self.proof = trade.proof
+        self.side = trade.side.rawValue
     }
 
     init(ticker: String, tradeType: String, entryPrice: Double, exitPrice: Double, quantity: Double,
-         entryDate: Date, exitDate: Date, proof: TradeProof) {
+         entryDate: Date, exitDate: Date, proof: TradeProof, side: String = "long") {
         self.ticker = ticker
         self.tradeType = tradeType
         self.entryPrice = entryPrice
@@ -207,6 +220,7 @@ struct TradeSnapshot: Codable, Equatable {
         self.entryDate = entryDate
         self.exitDate = exitDate
         self.proof = proof
+        self.side = side
     }
 
     func toFirestore() -> [String: Any] {
@@ -218,7 +232,8 @@ struct TradeSnapshot: Codable, Equatable {
             "quantity": quantity,
             "entryDate": Timestamp(date: entryDate),
             "exitDate": Timestamp(date: exitDate),
-            "proof": proof.rawValue
+            "proof": proof.rawValue,
+            "side": side
         ]
     }
 
@@ -241,7 +256,8 @@ struct TradeSnapshot: Codable, Equatable {
             "quantity": quantity,
             "entryDate": entryDate,
             "exitDate": (trade["exitDate"] as? Timestamp) ?? entryDate,
-            "proof": (trade["proof"] as? String) ?? TradeProof.selfReported.rawValue
+            "proof": (trade["proof"] as? String) ?? TradeProof.selfReported.rawValue,
+            "side": (trade["side"] as? String) ?? "long"
         ]
     }
 
@@ -259,7 +275,8 @@ struct TradeSnapshot: Codable, Equatable {
             quantity: quantity,
             entryDate: entryDate,
             exitDate: (data["exitDate"] as? Timestamp)?.dateValue() ?? entryDate,
-            proof: TradeProof(firestoreValue: data["proof"])
+            proof: TradeProof(firestoreValue: data["proof"]),
+            side: data["side"] as? String ?? "long"
         )
     }
 }
@@ -414,74 +431,128 @@ enum PostType: String, CaseIterable, Codable {
     }
 }
 
-// MARK: - Content Extraction Functions
+// MARK: - Cashtags, hashtags and mentions
 
+/// "$AAPL"-style cashtags. Matching ignores case ("$nvda" is NVDA) and allows a share-class
+/// suffix ("$BRK.B"). Symbols are stored uppercased: 1-5 letters plus an optional ".X", the
+/// same pattern the database rules check for `tickers`.
+enum Cashtag {
+    /// A "$" not inside another word, 1-5 letters, an optional ".X" class, then a word end.
+    private static let regex = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9_$])\$([A-Za-z]{1,5}(?:\.[A-Za-z])?)(?![A-Za-z0-9_])"#)
+
+    private static let symbolRegex = try! NSRegularExpression(pattern: #"^[A-Z]{1,5}(\.[A-Z])?$"#)
+
+    /// "$aapl " -> "AAPL"
+    static func normalize(_ ticker: String) -> String {
+        var symbol = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        while symbol.hasPrefix("$") { symbol.removeFirst() }
+        return symbol
+    }
+
+    /// True for an uppercased symbol like "AAPL" or "BRK.B".
+    static func isValid(_ symbol: String) -> Bool {
+        let range = NSRange(symbol.startIndex..., in: symbol)
+        return symbolRegex.firstMatch(in: symbol, range: range) != nil
+    }
+
+    /// Every cashtag in `text` with its range, in order (duplicates included).
+    static func matches(in text: String) -> [(symbol: String, range: NSRange)] {
+        let ns = text as NSString
+        return regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { match in
+            (ns.substring(with: match.range(at: 1)).uppercased(), match.range)
+        }
+    }
+
+    /// The symbols in `text`, uppercased, in the order they first appear, without duplicates.
+    static func symbols(in text: String) -> [String] {
+        var seen = Set<String>()
+        return matches(in: text).map(\.symbol).filter { seen.insert($0).inserted }
+    }
+
+    /// `text` with every "$symbol" token (any case) removed, along with one space before it.
+    /// "$A" inside "$AAPL" is left alone.
+    static func removing(_ symbol: String, from text: String) -> String {
+        let target = normalize(symbol)
+        var result = text as NSString
+        for match in matches(in: text).reversed() where match.symbol == target {
+            var range = match.range
+            if range.location > 0, result.substring(with: NSRange(location: range.location - 1, length: 1)) == " " {
+                range = NSRange(location: range.location - 1, length: range.length + 1)
+            }
+            result = result.replacingCharacters(in: range, with: "") as NSString
+        }
+        return result as String
+    }
+
+    /// `text` with every cashtag uppercased: "$nvda" -> "$NVDA".
+    static func uppercasingSymbols(in text: String) -> String {
+        var result = text as NSString
+        for match in matches(in: text).reversed() {
+            result = result.replacingCharacters(in: match.range, with: "$" + match.symbol) as NSString
+        }
+        return result as String
+    }
+
+    /// Up to `limit` valid, uppercased, unique symbols, keeping their order.
+    static func cleaned(_ tickers: [String], limit: Int = Post.maxTickers) -> [String] {
+        var seen = Set<String>()
+        return Array(tickers.map(normalize).filter { isValid($0) && seen.insert($0).inserted }.prefix(limit))
+    }
+}
+
+/// Cashtag symbols in `content`, uppercased, in order of first appearance (at most 10).
 func extractTickers(from content: String) -> [String] {
-    let pattern = "\\$[A-Z]{1,5}\\b"
-    let regex = try! NSRegularExpression(pattern: pattern)
-    let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
-    
-    let tickers = matches.compactMap { match in
-        String(content[Range(match.range, in: content)!]).replacingOccurrences(of: "$", with: "")
-    }
-    
-    return Array(Set(tickers)) // Remove duplicates
+    Array(Cashtag.symbols(in: content).prefix(Post.maxTickers))
 }
 
+/// "#Tags" in `content`, in order of first appearance, without case-insensitive duplicates
+/// (at most 10).
 func extractHashtags(from content: String) -> [String] {
-    let pattern = "#[A-Za-z0-9_]+"
-    let regex = try! NSRegularExpression(pattern: pattern)
-    let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
-    
-    let hashtags = matches.compactMap { match in
-        String(content[Range(match.range, in: content)!])
-    }
-    
-    return Array(Set(hashtags)) // Remove duplicates
+    uniqueTokens(in: content, pattern: "#[A-Za-z0-9_]+", keepPrefix: true, limit: Post.maxHashtags)
 }
 
+/// "@usernames" in `content` (without the "@"), in order, without duplicates.
 func extractMentions(from content: String) -> [String] {
-    let pattern = "@[A-Za-z0-9_]+"
+    // Not after a letter, digit, "_" or ".", so "bob@gmail.com" isn't a mention of "gmail".
+    uniqueTokens(in: content, pattern: "(?<![A-Za-z0-9_.])@[A-Za-z0-9_]+", keepPrefix: false, limit: 20)
+}
+
+private func uniqueTokens(in content: String, pattern: String, keepPrefix: Bool, limit: Int) -> [String] {
     let regex = try! NSRegularExpression(pattern: pattern)
-    let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
-    
-    let mentions = matches.compactMap { match in
-        String(content[Range(match.range, in: content)!]).replacingOccurrences(of: "@", with: "")
+    let ns = content as NSString
+    var seen = Set<String>()
+    var tokens: [String] = []
+    for match in regex.matches(in: content, range: NSRange(location: 0, length: ns.length)) {
+        let token = ns.substring(with: match.range)
+        let value = keepPrefix ? token : String(token.dropFirst())
+        if seen.insert(value.lowercased()).inserted {
+            tokens.append(value)
+            if tokens.count == limit { break }
+        }
     }
-    
-    return Array(Set(mentions)) // Remove duplicates
+    return tokens
 }
 
 // MARK: - Post Extensions for Display
 
 extension Post {
-    var displayTickers: String {
-        return tickers.map { "$\($0)" }.joined(separator: " ")
-    }
-    
-    var displayHashtags: String {
-        return hashtags.joined(separator: " ")
-    }
-    
-    var hasTradingData: Bool {
-        return tradingData != nil
+    /// Post text for display, with cashtags uppercased ("$nvda" -> "$NVDA") to match the ticker
+    /// chips. Older trade posts were written from a template with "$[Entry]"-style placeholders
+    /// that people typed inside, leaving "$[200]"; this drops those brackets.
+    var displayContent: String {
+        var text = content
+        if text.contains("[") {
+            text = text.replacingOccurrences(
+                of: #"\[([^\[\]\n]{1,60})\]"#, with: "$1", options: .regularExpression)
+        }
+        return text.contains("$") ? Cashtag.uppercasingSymbols(in: text) : text
     }
 
-    /// Post text for display. Older trade posts were written from a template with "$[Entry]"-style
-    /// placeholders that people typed inside, leaving "$[200]"; this drops those brackets.
-    var displayContent: String {
-        guard content.contains("[") else { return content }
-        let unbracketed = content.replacingOccurrences(
-            of: #"\[([^\[\]\n]{1,60})\]"#, with: "$1", options: .regularExpression)
-        // "$aapl" -> "$AAPL"
-        let ns = unbracketed as NSString
-        var result = unbracketed
-        let regex = try! NSRegularExpression(pattern: #"\$([a-z]{1,5})\b"#)
-        for match in regex.matches(in: unbracketed, range: NSRange(location: 0, length: ns.length)).reversed() {
-            let ticker = ns.substring(with: match.range(at: 1)).uppercased()
-            result = (result as NSString).replacingCharacters(in: match.range, with: "$" + ticker)
-        }
-        return result
+    /// The post's tickers that are real cashtag symbols (older posts may hold others), for the
+    /// tappable chips.
+    var linkableTickers: [String] {
+        Cashtag.cleaned(tickers)
     }
 
     /// The proof label of a trade-result post: the snapshot's, or self-reported for older posts
@@ -514,31 +585,4 @@ extension Post {
         summary.profitLossString = nil
         return summary
     }
-    
-    var formattedContent: String {
-        var formatted = content
-        
-        // Highlight tickers
-        for ticker in tickers {
-            formatted = formatted.replacingOccurrences(
-                of: "$\(ticker)",
-                with: "💰$\(ticker)"
-            )
-        }
-        
-        return formatted
-    }
-    
-    // ✅ Search functionality
-    func matches(query: String) -> Bool {
-        let lowercaseQuery = query.lowercased()
-        
-        return content.lowercased().contains(lowercaseQuery) ||
-               authorUsername.lowercased().contains(lowercaseQuery) ||
-               tickers.contains { $0.lowercased().contains(lowercaseQuery) } ||
-               hashtags.contains { $0.lowercased().contains(lowercaseQuery) }
-    }
 }
-
-import SwiftUI
-

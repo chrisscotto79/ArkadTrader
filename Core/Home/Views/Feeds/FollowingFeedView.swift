@@ -3,22 +3,34 @@
 
 import SwiftUI
 
-/// The Home tab's Following feed. HomeView owns the view models and the
+/// The Home tab's Following feed. HomeView owns the view model and the
 /// surrounding ScrollView / pull-to-refresh.
 struct FollowingFeedView: View {
     @ObservedObject var viewModel: FollowingFeedViewModel
-    @ObservedObject var homeViewModel: HomeViewModel
+    @ObservedObject private var postStore = PostStore.shared
+    @ObservedObject private var blockStore = BlockStore.shared
     @EnvironmentObject var authService: FirebaseAuthService
 
     var body: some View {
+        let items = combinedFeedItems
+
         LazyVStack(spacing: DS.Spacing.m) {
             if viewModel.isLoading && !viewModel.hasLoaded {
                 HomeFeedLoadingView(message: "Loading people you follow…")
-            } else if viewModel.followingPosts.isEmpty && viewModel.followingTrades.isEmpty && viewModel.followingActivity.isEmpty {
+            } else if let loadError = viewModel.loadError, items.isEmpty {
+                EmptyStateView(
+                    systemImage: "wifi.exclamationmark",
+                    title: "Couldn't load Following",
+                    message: loadError,
+                    actionTitle: "Try again"
+                ) {
+                    Task { await viewModel.refreshContent() }
+                }
+            } else if items.isEmpty {
                 EmptyFollowingView()
             } else {
-                ForEach(combinedFeedItems, id: \.id) { item in
-                    FeedItemView(item: item, homeViewModel: homeViewModel)
+                ForEach(items, id: \.id) { item in
+                    FeedItemView(item: item)
                 }
             }
         }
@@ -28,17 +40,13 @@ struct FollowingFeedView: View {
                 await viewModel.loadFollowingContent()
             }
         }
-        .alert("Couldn't load Following", isPresented: $viewModel.showError) {
-            Button("OK") { viewModel.showError = false }
-        } message: {
-            Text(viewModel.errorMessage)
-        }
     }
 
-    /// Posts, trades and activity mixed together, newest first.
+    /// Posts, trades and activity mixed together, newest first. Deleted, reported and blocked
+    /// posts are left out.
     private var combinedFeedItems: [FeedItem] {
         var items: [FeedItem] = []
-        items.append(contentsOf: viewModel.followingPosts.map { FeedItem.post($0) })
+        items.append(contentsOf: postStore.visible(viewModel.followingPosts).map { FeedItem.post($0) })
         items.append(contentsOf: viewModel.followingTrades.map { FeedItem.trade($0) })
         items.append(contentsOf: viewModel.followingActivity.map { FeedItem.activity($0) })
         return items.sorted { $0.createdAt > $1.createdAt }
@@ -70,12 +78,11 @@ enum FeedItem: Identifiable {
 /// One item of the Following feed, drawn with the matching card.
 struct FeedItemView: View {
     let item: FeedItem
-    @ObservedObject var homeViewModel: HomeViewModel
 
     var body: some View {
         switch item {
         case .post(let post):
-            UserPostCard(post: post, homeViewModel: homeViewModel)
+            UserPostCard(post: post)
         case .trade(let trade):
             TradeCardView(trade: trade)
         case .activity(let activity):

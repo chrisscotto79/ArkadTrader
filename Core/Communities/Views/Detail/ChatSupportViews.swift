@@ -1,5 +1,5 @@
 // File: Core/Communities/Views/Detail/ChatSupportViews.swift
-// Small pieces used by the channel chat: media payload, mention suggestions, pickers and emoji data.
+// Small pieces used by the channel chat: mention suggestions, pickers and emoji data.
 
 import SwiftUI
 import UIKit
@@ -7,18 +7,6 @@ import UniformTypeIdentifiers
 import FirebaseStorage
 import Photos
 import MobileCoreServices
-
-// MARK: - Media Content Structure (File Level)
-struct MediaContent {
-    let type: MediaType
-    let url: String
-    let fileName: String
-    let fileSize: Int?
-    
-    enum MediaType {
-        case image, document, video
-    }
-}
 
 // MARK: - Mention Suggestion Row
 struct MentionSuggestionRow: View {

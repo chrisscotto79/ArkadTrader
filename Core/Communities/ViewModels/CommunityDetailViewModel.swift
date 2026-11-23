@@ -1,8 +1,8 @@
 // File: Core/Communities/ViewModels/CommunityDetailViewModel.swift
-// UPDATED - Enhanced CommunityDetailViewModel with better functionality
+// A community's page: membership (from the member doc), channels, joining (free, or with an
+// invite code for private communities) and leaving.
 
 import Foundation
-import Combine
 import FirebaseFirestore
 
 @MainActor
@@ -11,8 +11,7 @@ class CommunityDetailViewModel: ObservableObject {
     @Published var channels: [Channel] = []
     @Published var isLoading = false
     @Published var errorMessage = ""
-    @Published var showSetupPrompt = false
-    
+
     // User & Community State
     @Published var community: Community?
     @Published var userRole: String = "member"
@@ -20,6 +19,9 @@ class CommunityDetailViewModel: ObservableObject {
     @Published var canManageChannels = false
     /// When the current user joined, read from communities/{id}/members/{uid}
     @Published var memberSince: Date?
+    /// True once membership has been read, so locked states don't flash while loading
+    @Published private(set) var didLoadMembership = false
+    @Published private(set) var isJoining = false
 
     // Paid communities
     /// The current user's subscription, for members of paid communities (the owner has none)
@@ -28,12 +30,12 @@ class CommunityDetailViewModel: ObservableObject {
     @Published var isBanned = false
     /// Rules, loaded for the paid preview that non-members see
     @Published var rules: [CommunityRule] = []
-    
+
     // MARK: - Private Properties
     private let firebaseService = FirebaseServices.shared
     private let authService = FirebaseAuthService.shared
-    private var cancellables = Set<AnyCancellable>()
-    
+    private var errorClearTask: Task<Void, Never>?
+
     // MARK: - Computed Properties
     var currentUserId: String? {
         return authService.currentUser?.id
@@ -48,61 +50,46 @@ class CommunityDetailViewModel: ObservableObject {
             || userRole == CommunityRole.moderator.rawValue
     }
 
-    /// Non-members of a paid community only see the preview, never the channels
+    /// Members see the channels. Others only see a free, public community's channels:
+    /// paid ones show a preview and private ones are locked.
     var canViewChannels: Bool {
         guard let community else { return false }
-        return isUserMember || !community.requiresSubscription
+        return isUserMember || (!community.requiresSubscription && !community.isPrivate)
     }
-    
+
+    /// A private community the viewer hasn't joined
+    var isLockedPrivate: Bool {
+        guard let community else { return false }
+        return community.isPrivate && didLoadMembership && !isUserMember
+    }
+
     // MARK: - Initialization
     init() {}
-    
-    // MARK: - Public Methods
-    
+
+    // MARK: - Loading
+
     /// Re-fetch the community document so edits (name, avatar, banner) show immediately.
     func reloadCommunity() async {
         guard let id = community?.id else { return }
-        do {
-            let snapshot = try await Firestore.firestore().collection("communities").document(id).getDocument()
-            if let data = snapshot.data() {
-                community = try Community.fromFirestore(data: data, id: id)
-            }
-        } catch {
-            print("⚠️ CommunityDetailViewModel: Failed to reload community: \(error)")
-        }
-    }
-    
-    /// Load community data, channels, and user permissions
-    func loadCommunityData(community: Community) {
-        print("🏘️ CommunityDetailViewModel: Loading data for \(community.name)")
-        
-        self.community = community
-        
-        Task {
-            isLoading = true
-            errorMessage = ""
-            
-            // Membership first: it decides whether the channels can be read
-            await loadUserState(for: community)
-            await loadContent(for: community)
-            
-            // Check if we should prompt for channel setup
-            checkChannelSetupNeeded()
-            
-            isLoading = false
-        }
-    }
-    
-    /// Refresh channels after creation or updates
-    func refreshChannels() {
-        guard let community = community else { return }
-        
-        Task {
-            await loadChannels(for: community.id)
+        // Fails once a private community is left or a community is deleted; keep what's shown
+        if let snapshot = try? await Firestore.firestore().collection("communities").document(id).getDocument(),
+           let data = snapshot.data(),
+           let fresh = try? Community.fromFirestore(data: data, id: id) {
+            community = fresh
         }
     }
 
-    /// Channels for members and free communities; rules for the paid preview
+    /// Membership first (it decides whether the channels can be read), then the content.
+    func loadCommunityData(community: Community) async {
+        self.community = community
+        isLoading = true
+        errorMessage = ""
+        await loadUserState(for: community)
+        await loadContent(for: community)
+        isLoading = false
+    }
+
+    /// Channels when the viewer can read them; rules for the paid preview
     private func loadContent(for community: Community) async {
         if canViewChannels {
             await loadChannels(for: community.id)
@@ -121,228 +108,199 @@ class CommunityDetailViewModel: ObservableObject {
         await loadUserState(for: community)
         await loadContent(for: community)
     }
-    
-    /// Setup default channels for the community
+
+    /// Creates #general and #callouts (fixed ids, so never twice) with a short welcome in each.
     func setupDefaultChannels() async {
-        guard let community = community,
-              let currentUser = authService.currentUser else { return }
-        
+        guard let community, let currentUser = authService.currentUser else { return }
         do {
-            // Create default channels directly
-            let defaultChannels = createDefaultChannels(for: community)
-            
-            for channel in defaultChannels {
-                try await firebaseService.createChannel(channel)
-                print("✅ Created default channel: #\(channel.name)")
-            }
-            
-            // Send welcome messages
-            try await sendWelcomeMessages(to: community, channels: defaultChannels, username: currentUser.username)
-            
-            // Refresh channels
+            try await firebaseService.createDefaultChannels(for: community.id)
+            let defaults = FirebaseServices.defaultChannels(for: community.id)
+            try? await sendWelcomeMessages(to: community, channels: defaults, user: currentUser)
             await loadChannels(for: community.id)
-            
-            print("✅ Default channels setup complete")
-            
         } catch {
-            await handleError(error, context: "setting up default channels")
+            handleError(error, context: "setting up default channels")
         }
     }
-    
-    /// Create default channels for any community
-    private func createDefaultChannels(for community: Community) -> [Channel] {
-        var channels: [Channel] = []
-        
-        // 1. General Channel (always created)
-        let generalChannel = Channel(
-            name: "general",
-            type: .text,
-            communityId: community.id,
-            isDefault: true,
-            adminOnly: false
-        )
-        channels.append(generalChannel)
-        
-        // 2. Callouts Channel (admin-only)
-        let calloutsChannel = Channel(
-            name: "callouts",
-            type: .callouts,
-            communityId: community.id,
-            isDefault: true,
-            adminOnly: true
-        )
-        channels.append(calloutsChannel)
-        
-        return channels
-    }
-    
+
     /// Send welcome messages to new channels
-    private func sendWelcomeMessages(to community: Community, channels: [Channel], username: String) async throws {
-        guard let currentUser = authService.currentUser else { return }
-        
-        // Welcome message for general channel
+    private func sendWelcomeMessages(to community: Community, channels: [Channel], user: User) async throws {
         if let generalChannel = channels.first(where: { $0.name == "general" }) {
             let welcomeMessage = CommunityMessage(
                 content: "Welcome to \(community.name)! #general is open to every member, so say hello and share ideas.",
-                authorId: currentUser.id,
-                authorUsername: username,
+                authorId: user.id,
+                authorUsername: user.username,
                 channelId: generalChannel.id,
                 communityId: community.id
             )
-            
             try await firebaseService.sendCommunityMessage(welcomeMessage)
-            print("✅ Sent welcome message to #general")
         }
-        
-        // Short guide for the callouts channel
+
         if let calloutsChannel = channels.first(where: { $0.name == "callouts" }) {
             let instructionsMessage = CommunityMessage(
                 content: "#callouts is for trade ideas. Only admins can post here: tap the megaphone button next to the message box to share a callout with its entry, stop and target. Members can tap \"Track in Portfolio\" on a callout to add it to their own trades.",
-                authorId: currentUser.id,
-                authorUsername: username,
+                authorId: user.id,
+                authorUsername: user.username,
                 channelId: calloutsChannel.id,
                 communityId: community.id
             )
-            
             try await firebaseService.sendCommunityMessage(instructionsMessage)
-            print("✅ Sent instructions to #callouts")
         }
     }
-    
-    /// Join the community
+
+    // MARK: - Joining and leaving
+
+    /// Join a free, public community
     func joinCommunity() {
-        guard let community = community,
-              let userId = currentUserId else { return }
-        
+        guard let community, let userId = currentUserId, !isJoining else { return }
+        isJoining = true
+
         Task {
+            defer { isJoining = false }
             do {
                 try await firebaseService.joinCommunity(communityId: community.id, userId: userId)
-                
-                // Update local state
-                isUserMember = true
-                userRole = "member"
-                memberSince = Date()
-                await loadContent(for: community)
-                
-                // Create activity (only if user has a username)
+                await didJoin(community)
+
                 if authService.currentUser?.username != nil {
-                    try await authService.createActivity(
+                    try? await authService.createActivity(
                         userId: userId,
                         type: .joinedCommunity,
                         content: "Joined \(community.name)",
                         relatedId: community.id
                     )
                 }
-                
             } catch let error as CommunityJoinError {
+                HapticManager.shared.notification(type: .error)
                 if case .banned = error { isBanned = true }
                 errorMessage = error.errorDescription ?? ""
             } catch {
-                await handleError(error, context: "joining community")
+                HapticManager.shared.notification(type: .error)
+                handleError(error, context: "joining community")
             }
         }
     }
-    
+
+    /// Join this (private) community with an invite code. A code for another community is refused.
+    func joinWithInviteCode(_ code: String) async throws {
+        guard let community, let userId = currentUserId else { throw CommunityError.noPermission }
+        let clean = CommunityInvite.normalize(code)
+        guard let codeCommunityId = try await firebaseService.communityId(forInviteCode: clean),
+              codeCommunityId == community.id else {
+            throw CommunityJoinError.invalidInvite
+        }
+        try await firebaseService.joinCommunity(communityId: community.id, userId: userId, inviteCode: clean)
+        await didJoin(community)
+    }
+
+    private func didJoin(_ community: Community) async {
+        HapticManager.shared.notification(type: .success)
+        isUserMember = true
+        userRole = CommunityRole.member.rawValue
+        memberSince = Date()
+        isBanned = false
+        await reloadCommunity()
+        await loadContent(for: self.community ?? community)
+    }
+
     /// Leave the community
     func leaveCommunity() {
-        guard let community = community,
-              let userId = currentUserId else { return }
-        
+        guard let community, let userId = currentUserId else { return }
+
         Task {
             do {
                 try await firebaseService.leaveCommunity(communityId: community.id, userId: userId)
-                
-                // Update local state
                 isUserMember = false
-                userRole = "member"
+                userRole = CommunityRole.member.rawValue
                 canManageChannels = false
                 memberSince = nil
                 subscription = nil
                 await loadContent(for: community)
-                
             } catch {
-                await handleError(error, context: "leaving community")
+                handleError(error, context: "leaving community")
             }
         }
     }
-    
-    // MARK: - Private Methods
-    
+
+    // MARK: - Channels
+
     /// Reload the channel list (after a channel is created or edited)
     func reloadChannels() async {
         guard let communityId = community?.id, canViewChannels else { return }
         await loadChannels(for: communityId)
     }
 
-    /// Load channels for the community
+    /// The channel a notification points at, from the list or read directly
+    func channel(withId channelId: String) async -> Channel? {
+        if let channel = channels.first(where: { $0.id == channelId }) { return channel }
+        guard let communityId = community?.id, canViewChannels else { return nil }
+        return try? await firebaseService.getChannel(communityId: communityId, channelId: channelId)
+    }
+
+    /// #general first, then #callouts, then the rest A-Z
     private func loadChannels(for communityId: String) async {
         do {
             let loadedChannels = try await firebaseService.getCommunityChannels(communityId: communityId)
-            
-            // Sort channels: default channels first, then alphabetically
-            let sortedChannels = loadedChannels.sorted { channel1, channel2 in
-                // Default channels come first
-                if channel1.isDefault && !channel2.isDefault {
-                    return true
-                } else if !channel1.isDefault && channel2.isDefault {
-                    return false
-                } else if channel1.isDefault && channel2.isDefault {
-                    // Among default channels: general first, then callouts
+            channels = loadedChannels.sorted { channel1, channel2 in
+                if channel1.isDefault != channel2.isDefault {
+                    return channel1.isDefault
+                }
+                if channel1.isDefault {
                     if channel1.name == "general" { return true }
                     if channel2.name == "general" { return false }
-                    return channel1.name < channel2.name
-                } else {
-                    // Non-default channels: alphabetically
-                    return channel1.name < channel2.name
                 }
+                return channel1.name < channel2.name
             }
-            
-            channels = sortedChannels
-            
         } catch {
-            await handleError(error, context: "loading channels")
+            handleError(error, context: "loading channels")
         }
     }
-    
-    /// Load user state for the community
+
+    /// Delete a channel (if user has permission and it's not default)
+    func deleteChannel(_ channel: Channel) async throws {
+        guard canManageChannels else {
+            throw CommunityError.noPermission
+        }
+        guard !channel.isDefault else {
+            throw CommunityError.cannotDeleteDefaultChannel
+        }
+        try await firebaseService.deleteChannel(channelId: channel.id, communityId: channel.communityId)
+        channels.removeAll { $0.id == channel.id }
+    }
+
+    // MARK: - Membership
+
+    /// Membership comes from the member doc (communities/{id}/members/{uid}); the owner always counts.
     private func loadUserState(for community: Community) async {
+        defer { didLoadMembership = true }
         guard let userId = currentUserId else {
             isUserMember = false
-            userRole = "member"
+            userRole = CommunityRole.member.rawValue
             canManageChannels = false
             subscription = nil
             return
         }
-        
-        do {
-            // Check if user is a member
-            let userCommunities = try await firebaseService.getUserCommunities(userId: userId)
-            isUserMember = userCommunities.contains { $0.id == community.id } || community.createdBy == userId
-            
-            if isUserMember {
-                // Owners and admins can manage channels
-                let role = try await firebaseService.getMemberRole(
-                    communityId: community.id, userId: userId, createdBy: community.createdBy
-                ) ?? .member
-                userRole = role.rawValue
-                canManageChannels = role == .owner || role == .admin
-                let memberData = await loadMemberData(communityId: community.id, userId: userId)
-                memberSince = (memberData?["joinedAt"] as? Timestamp)?.dateValue()
-                // Free mode has no subscriptions, so a leftover subscription field never shows
-                subscription = AppConfig.paidCommunitiesEnabled ? memberData.flatMap { MemberSubscription(data: $0) } : nil
-                isBanned = false
-            } else {
-                userRole = "member"
-                canManageChannels = false
-                memberSince = nil
-                subscription = nil
-                isBanned = (try? await firebaseService.isUserBanned(communityId: community.id, userId: userId)) ?? false
-            }
-        } catch {
-            await handleError(error, context: "loading user state")
+
+        let isOwner = community.createdBy == userId
+        let memberData = await loadMemberData(communityId: community.id, userId: userId)
+        isUserMember = isOwner || memberData != nil
+
+        if isUserMember {
+            let storedRole = CommunityRole(rawValue: memberData?["role"] as? String ?? "") ?? .member
+            let role: CommunityRole = isOwner ? .owner : storedRole
+            userRole = role.rawValue
+            canManageChannels = role == .owner || role == .admin
+            memberSince = (memberData?["joinedAt"] as? Timestamp)?.dateValue()
+            // Free mode has no subscriptions, so a leftover subscription field never shows
+            subscription = AppConfig.paidCommunitiesEnabled ? memberData.flatMap { MemberSubscription(data: $0) } : nil
+            isBanned = false
+        } else {
+            userRole = CommunityRole.member.rawValue
+            canManageChannels = false
+            memberSince = nil
+            subscription = nil
+            isBanned = (try? await firebaseService.isUserBanned(communityId: community.id, userId: userId)) ?? false
         }
     }
-    
+
     /// The member document, or nil if it's missing or can't be read
     private func loadMemberData(communityId: String, userId: String) async -> [String: Any]? {
         let doc = try? await Firestore.firestore()
@@ -351,168 +309,40 @@ class CommunityDetailViewModel: ObservableObject {
             .getDocument()
         return doc?.data()
     }
-    
-    /// Check if we should prompt for channel setup
-    private func checkChannelSetupNeeded() {
-        // Only show setup prompt if:
-        // 1. User can manage channels (owner/admin)
-        // 2. There are no channels
-        // 3. We haven't shown the prompt yet
-        if canManageChannels && channels.isEmpty && !showSetupPrompt {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.showSetupPrompt = true
-            }
+
+    // MARK: - Errors
+
+    /// Shows a friendly message for a few seconds
+    private func handleError(_ error: Error, context: String) {
+        let message = "Error \(context): \(getFriendlyErrorMessage(error))"
+        errorMessage = message
+        errorClearTask?.cancel()
+        errorClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, self?.errorMessage == message else { return }
+            self?.errorMessage = ""
         }
     }
-    
-    /// Handle errors with user-friendly messages
-    private func handleError(_ error: Error, context: String) async {
-        let friendlyMessage = getFriendlyErrorMessage(error)
-        errorMessage = "Error \(context): \(friendlyMessage)"
-        print("❌ CommunityDetailViewModel - Error \(context): \(error)")
-        
-        // Auto-clear error after 5 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            if self?.errorMessage == "Error \(context): \(friendlyMessage)" {
-                self?.errorMessage = ""
-            }
-        }
-    }
-    
+
     /// Convert technical errors to user-friendly messages
     private func getFriendlyErrorMessage(_ error: Error) -> String {
-        if error.localizedDescription.contains("network") {
+        let nsError = error as NSError
+        if nsError.domain == FirestoreErrorDomain {
+            switch FirestoreErrorCode.Code(rawValue: nsError.code) {
+            case .permissionDenied: return "You don't have permission for this action"
+            case .unavailable, .deadlineExceeded: return "Check your internet connection"
+            case .notFound: return "Community or channel not found"
+            default: break
+            }
+        }
+        if nsError.domain == NSURLErrorDomain {
             return "Check your internet connection"
-        } else if error.localizedDescription.contains("permission") {
-            return "You don't have permission for this action"
-        } else if error.localizedDescription.contains("not found") {
-            return "Community or channel not found"
-        } else {
-            return "Something went wrong. Please try again."
         }
+        return "Something went wrong. Please try again."
     }
-    
-    // MARK: - Community Management
-    
-    /// Check if user can perform admin actions
-    func canPerformAdminAction() -> Bool {
-        return userRole == "owner" || userRole == "admin"
-    }
-    
-    /// Get formatted member count
-    func getFormattedMemberCount() -> String {
-        guard let community = community else { return "0" }
-        
-        if community.memberCount >= 1000 {
-            return String(format: "%.1fK", Double(community.memberCount) / 1000.0)
-        }
-        return "\(community.memberCount)"
-    }
-    
-    /// Get community stats for display
-    func getCommunityStats() -> (members: String, channels: String, role: String) {
-        return (
-            members: getFormattedMemberCount(),
-            channels: "\(channels.count)",
-            role: userRole.capitalized
-        )
-    }
-    
-    // MARK: - Channel Management
-    
-    /// Create a new channel
-    func createChannel(name: String, type: ChannelType, isAdminOnly: Bool) async throws {
-        guard let community = community else {
-            throw CommunityError.noCommunity
-        }
-        
-        guard canManageChannels else {
-            throw CommunityError.noPermission
-        }
-        
-        let channel = Channel(
-            name: name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
-            type: type,
-            communityId: community.id,
-            isDefault: false,
-            adminOnly: isAdminOnly
-        )
-        
-        try await firebaseService.createChannel(channel)
-        
-        // Refresh channels
-        await loadChannels(for: community.id)
-        
-        print("✅ Created channel: #\(channel.name)")
-    }
-    
-    /// Delete a channel (if user has permission and it's not default)
-    func deleteChannel(_ channel: Channel) async throws {
-        guard canManageChannels else {
-            throw CommunityError.noPermission
-        }
-        
-        guard !channel.isDefault else {
-            throw CommunityError.cannotDeleteDefaultChannel
-        }
-        
-        try await firebaseService.deleteChannel(channelId: channel.id, communityId: channel.communityId)
-        
-        // Remove from local array
-        channels.removeAll { $0.id == channel.id }
-        
-        print("✅ Deleted channel: #\(channel.name)")
-    }
-    
-    // MARK: - Validation
-    
-    /// Validate channel name
-    func validateChannelName(_ name: String) -> (isValid: Bool, message: String) {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        
-        if trimmedName.isEmpty {
-            return (false, "Channel name cannot be empty")
-        }
-        
-        if trimmedName.count < 2 {
-            return (false, "Channel name must be at least 2 characters")
-        }
-        
-        if trimmedName.count > 50 {
-            return (false, "Channel name must be less than 50 characters")
-        }
-        
-        // Check for invalid characters
-        let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        if trimmedName.unicodeScalars.contains(where: { !allowedCharacters.contains($0) }) {
-            return (false, "Channel names can only contain letters, numbers, hyphens, and underscores")
-        }
-        
-        // Check if name already exists
-        if channels.contains(where: { $0.name == trimmedName }) {
-            return (false, "A channel with this name already exists")
-        }
-        
-        return (true, "")
-    }
-    
-    /// Clear error message
+
     func clearError() {
         errorMessage = ""
-    }
-    
-    // MARK: - Refresh Methods
-    
-    /// Refresh all community data
-    func refreshAllData() {
-        guard let community = community else { return }
-        loadCommunityData(community: community)
-    }
-    
-    /// Force refresh user membership status
-    func refreshUserMembership() async {
-        guard let community = community else { return }
-        await loadUserState(for: community)
     }
 }
 

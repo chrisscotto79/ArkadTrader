@@ -37,7 +37,8 @@ struct ShareTradeToCommunitySheet: View {
             isOpen: trade.isOpen,
             exitPrice: trade.isOpen ? nil : trade.exitPrice,
             proof: ShareTradeToCommunityModel.proof(of: trade),
-            note: note
+            note: note,
+            side: trade.side.rawValue
         )
     }
 

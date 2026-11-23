@@ -3,6 +3,8 @@
 // Terms of Service and Privacy Policy.
 
 import SwiftUI
+import UIKit
+import FirebaseAuth
 
 struct RegisterView: View {
     @EnvironmentObject var authService: FirebaseAuthService
@@ -18,6 +20,7 @@ struct RegisterView: View {
     @State private var agreeToTerms = false
     @State private var currentStep = 1
     @State private var legalDocument: LegalDocumentType?
+    @State private var isSubmitting = false
 
     @FocusState private var fullNameFieldFocused: Bool
     @FocusState private var usernameFieldFocused: Bool
@@ -52,6 +55,7 @@ struct RegisterView: View {
                 .ignoresSafeArea()
                 .onTapGesture { hideKeyboard() }
         )
+        .interactiveDismissDisabled(isSubmitting)
         .alert("Couldn't Create Account", isPresented: $showError) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -175,7 +179,7 @@ struct RegisterView: View {
                 autocapitalization: .never,
                 icon: "at",
                 isValid: isValidUsername,
-                errorMessage: "Username must be 3-20 characters, letters, numbers, and underscores only",
+                errorMessage: "3-20 characters: letters, numbers and underscores",
                 textContentType: .username,
                 submitLabel: .next,
                 autocorrectionDisabled: true,
@@ -194,6 +198,11 @@ struct RegisterView: View {
             .buttonStyle(PrimaryButtonStyle())
             .disabled(!isStep1Valid)
             .padding(.top, DS.Spacing.xs)
+        }
+        // Usernames are lowercase
+        .onChange(of: username) { _, newValue in
+            let lowered = newValue.lowercased()
+            if lowered != newValue { username = lowered }
         }
     }
 
@@ -225,7 +234,7 @@ struct RegisterView: View {
                 isSecure: true,
                 icon: "lock",
                 isValid: isValidPassword,
-                errorMessage: "Password must be at least 6 characters with uppercase, lowercase, and number",
+                errorMessage: "At least 8 characters, with an uppercase letter, a lowercase letter and a number",
                 textContentType: .newPassword,
                 submitLabel: .next,
                 focus: $passwordFieldFocused
@@ -252,7 +261,7 @@ struct RegisterView: View {
                 .padding(.top, DS.Spacing.xs)
 
             Button(action: register) {
-                if authService.isLoading {
+                if isSubmitting {
                     ProgressView().tint(Color.onGold)
                 } else {
                     Text("Create account")
@@ -260,8 +269,14 @@ struct RegisterView: View {
             }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(!canRegister)
+            .accessibilityLabel(isSubmitting ? "Creating account" : "Create account")
         }
+        // Tells iOS strong-password suggestions what the password needs
+        .background(PasswordRulesHint(rules: Self.passwordRules))
     }
+
+    /// Matches `isValidPassword`
+    static let passwordRules = "minlength: 8; required: lower; required: upper; required: digit; allowed: ascii-printable;"
 
     private var termsAgreement: some View {
         HStack(alignment: .top, spacing: DS.Spacing.m) {
@@ -329,9 +344,13 @@ struct RegisterView: View {
 
     // MARK: - Validation
 
+    private var trimmedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var isValidEmail: Bool {
         let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: email)
+        return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: trimmedEmail)
     }
 
     private var isValidUsername: Bool {
@@ -340,13 +359,14 @@ struct RegisterView: View {
     }
 
     private var isValidPassword: Bool {
-        // At least 6 characters, one uppercase, one lowercase, one number
-        let passwordRegex = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)[a-zA-Z\\d@$!%*?&]{6,}$"
+        // At least 8 characters with a lowercase letter, an uppercase letter and a number.
+        // Any symbols are fine, so iOS strong passwords pass.
+        let passwordRegex = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}$"
         return NSPredicate(format: "SELF MATCHES %@", passwordRegex).evaluate(with: password)
     }
 
     private var isStep1Valid: Bool {
-        !fullName.isEmpty && fullName.count >= 2 && isValidUsername
+        fullName.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 && isValidUsername
     }
 
     private var isFormValid: Bool {
@@ -354,7 +374,7 @@ struct RegisterView: View {
     }
 
     private var canRegister: Bool {
-        isFormValid && agreeToTerms && !authService.isLoading
+        isFormValid && agreeToTerms && !isSubmitting
     }
 
     // MARK: - Actions
@@ -376,21 +396,40 @@ struct RegisterView: View {
     }
 
     private func register() {
+        guard canRegister else { return }
         hideKeyboard()
+        isSubmitting = true
 
         Task {
             do {
                 try await authService.register(
-                    email: email,
+                    email: trimmedEmail,
                     password: password,
                     username: username,
                     fullName: fullName
                 )
                 dismiss()
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = Self.message(for: error)
                 showError = true
             }
+            isSubmitting = false
+        }
+    }
+
+    private static func message(for error: Error) -> String {
+        if error is AuthError { return error.localizedDescription }
+        switch AuthErrorCode(rawValue: (error as NSError).code) {
+        case .emailAlreadyInUse:
+            return "There's already an account with this email. Sign in instead, or reset your password."
+        case .invalidEmail:
+            return "Please enter a valid email address."
+        case .weakPassword:
+            return "Please choose a stronger password."
+        case .networkError:
+            return "Check your connection and try again."
+        default:
+            return error.localizedDescription
         }
     }
 
@@ -400,6 +439,52 @@ struct RegisterView: View {
         emailFieldFocused = false
         passwordFieldFocused = false
         confirmPasswordFieldFocused = false
+    }
+}
+
+// MARK: - Password rules
+
+/// Sets `passwordRules` on the new-password fields around it, so iOS suggests a strong password
+/// that passes validation. SwiftUI fields don't expose the property, so this finds the
+/// underlying UITextFields in the window.
+private struct PasswordRulesHint: UIViewRepresentable {
+    let rules: String
+
+    func makeUIView(context: Context) -> HintView {
+        let view = HintView()
+        view.rules = UITextInputPasswordRules(descriptor: rules)
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: HintView, context: Context) {
+        uiView.apply()
+    }
+
+    final class HintView: UIView {
+        var rules: UITextInputPasswordRules?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            apply()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            apply()
+        }
+
+        func apply() {
+            guard let rules, let root = window else { return }
+            Self.textFields(in: root)
+                .filter { $0.textContentType == .newPassword && $0.passwordRules == nil }
+                .forEach { $0.passwordRules = rules }
+        }
+
+        private static func textFields(in view: UIView) -> [UITextField] {
+            if let field = view as? UITextField { return [field] }
+            return view.subviews.flatMap(textFields(in:))
+        }
     }
 }
 

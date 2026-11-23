@@ -1,9 +1,14 @@
 // File: Core/Portfolio/ViewModels/TradePriceChecker.swift
 // Decides a trade's proof label when it's logged or closed (docs/backend-contracts.md, section 0,
-// "Proof labels"): a price is "price_checked" when its date is today and it sits inside today's
-// low–high range from a Finnhub quote, widened by 0.5% for quote delay. Anything else is self-reported.
-// Quotes come from MarketQuotes.dayRange (the Portfolio's Finnhub client, same key) and are cached
-// for a minute so typing doesn't spend Finnhub's free-tier calls.
+// "Proof labels"). A price is "price_checked" only when:
+// - the fill is happening now (the user picked "Just now", not an earlier time or day),
+// - the asset is a stock or ETF (Finnhub's /quote covers nothing else; "BTC" there is an ETF),
+// - the price is within 1% of the live price from a fresh quote.
+// Anything else is self-reported. A whole day's low–high range is not accepted: with hindsight,
+// any price inside it could be claimed.
+// Quotes come from QuoteClient (shared budget and cache). When quotes are unavailable (rate
+// limited, offline) the outcome says so, and the screens let the user retry or explicitly save
+// as self-reported instead of quietly downgrading.
 
 import Foundation
 import SwiftUI
@@ -18,18 +23,20 @@ enum PriceCheckOutcome: Equatable {
     enum SelfReportedReason: Equatable {
         /// No price typed yet
         case missingPrice
-        /// The entry or exit date isn't today
-        case notToday
-        /// Options have no quote source (Finnhub /quote doesn't cover premiums)
+        /// The fill wasn't just now (an earlier time today, or another day)
+        case notNow
+        /// Options, crypto and forex have no live quote source
         case unsupportedAsset
         /// No Finnhub key in this build
         case quotesNotConfigured
-        /// No quote for the symbol (unknown symbol, network)
+        /// Finnhub has no price for the symbol (unknown symbol)
         case noQuote
+        /// Rate limited or offline: may work on retry
+        case quotesUnavailable
         /// The quote's last trade is more than a day old (market closed today)
         case marketClosed
-        /// The price is outside the widened day range
-        case outsideRange(low: Double, high: Double)
+        /// More than 1% away from the live price
+        case awayFromLivePrice(live: Double)
     }
 
     var proof: TradeProof {
@@ -43,40 +50,57 @@ enum PriceCheckOutcome: Equatable {
     }
 
     var isChecking: Bool { self == .checking }
+
+    /// Live prices couldn't be fetched right now (not a property of the trade itself)
+    var isQuotesUnavailable: Bool { self == .selfReported(.quotesUnavailable) }
 }
 
 enum TradePriceCheckRules {
-    /// Quotes are delayed, so the day range is widened by this much on each side.
-    static let rangeTolerance = 0.005
-    /// A quote whose last trade is older than this isn't "today's" range.
+    /// A checked price must be within this fraction of the live price.
+    static let tolerance = 0.01
+    /// A quote whose last trade is older than this isn't a live price.
     static let maxSessionAge: TimeInterval = 24 * 60 * 60
+    /// The quote used when saving is at most this old.
+    static let maxQuoteAgeAtSave: TimeInterval = QuoteClient.defaultMaxAge
 
-    static func canQuote(_ type: TradeType) -> Bool { type != .option }
+    /// Stocks and ETFs only.
+    static func canQuote(_ type: TradeType) -> Bool { type == .stock }
 
     /// Finnhub symbol for a ticker, the same way callouts and the watchlist ask for it.
     static func symbol(for ticker: String) -> String {
         WatchlistSymbol.normalize(ticker.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    static func evaluate(price: Double?, date: Date, type: TradeType, quote: DayRangeQuote?,
-                         isLoading: Bool, now: Date = Date()) -> PriceCheckOutcome {
-        guard let price, price > 0 else { return .selfReported(.missingPrice) }
-        guard Calendar.current.isDate(date, inSameDayAs: now) else { return .selfReported(.notToday) }
+    /// - Parameters:
+    ///   - isNow: the fill is being logged as it happens ("Just now")
+    ///   - result: the last quote answer, for telling "unknown symbol" from "unavailable"
+    static func evaluate(price: Double?, isNow: Bool, type: TradeType, quote: MarketQuote?,
+                         result: QuoteResult?, isLoading: Bool, now: Date = Date()) -> PriceCheckOutcome {
+        guard let price, price > 0, price.isFinite else { return .selfReported(.missingPrice) }
+        guard isNow else { return .selfReported(.notNow) }
         guard canQuote(type) else { return .selfReported(.unsupportedAsset) }
-        guard !AppConfig.finnhubAPIKey.isEmpty else { return .selfReported(.quotesNotConfigured) }
-        guard let quote else { return isLoading ? .checking : .selfReported(.noQuote) }
-        if let session = quote.sessionTime, now.timeIntervalSince(session) > maxSessionAge {
+        guard QuoteClient.isConfigured else { return .selfReported(.quotesNotConfigured) }
+        guard let quote else {
+            if isLoading { return .checking }
+            switch result {
+            case .noQuote: return .selfReported(.noQuote)
+            case .notConfigured: return .selfReported(.quotesNotConfigured)
+            case .none: return .checking
+            default: return .selfReported(.quotesUnavailable)
+            }
+        }
+        if let time = quote.time, now.timeIntervalSince(time) > maxSessionAge {
             return .selfReported(.marketClosed)
         }
-        let low = quote.low * (1 - rangeTolerance)
-        let high = quote.high * (1 + rangeTolerance)
+        let low = quote.current * (1 - tolerance)
+        let high = quote.current * (1 + tolerance)
         guard price >= low && price <= high else {
-            return .selfReported(.outsideRange(low: quote.low, high: quote.high))
+            return .selfReported(.awayFromLivePrice(live: quote.current))
         }
-        return .priceChecked(TradePriceCheck(low: quote.low, high: quote.high, checkedAt: quote.fetchedAt))
+        return .priceChecked(TradePriceCheck(low: low, high: high, checkedAt: quote.fetchedAt, price: quote.current))
     }
 
-    /// "Price checked: $187.20 is inside today's range $185.10–$189.90" and friends.
+    /// "Price checked: $187.20 is within 1% of the live price $187.05." and friends.
     /// `side` is "entry" or "exit".
     static func message(for outcome: PriceCheckOutcome, price: Double?, side: String, ticker: String,
                         type: TradeType) -> String {
@@ -84,108 +108,117 @@ enum TradePriceCheckRules {
         let symbol = ticker.isEmpty ? "this symbol" : ticker.uppercased()
         switch outcome {
         case .checking:
-            return "Checking \(symbol) against today's market range…"
+            return "Checking \(symbol) against the live price…"
         case .priceChecked(let check):
             let value = price.map { terms.price($0) } ?? "Your price"
-            return "Price checked: \(value) is inside today's range \(terms.price(check.low))–\(terms.price(check.high))."
+            let live = check.price.map { " \(terms.price($0))" } ?? ""
+            return "Price checked: \(value) is within 1% of the live price\(live)."
         case .selfReported(let reason):
             switch reason {
             case .missingPrice:
                 return "Self-reported until you enter the \(side) price."
-            case .notToday:
-                return "Self-reported: the \(side) date isn't today. Only trades logged as they happen can be price-checked."
+            case .notNow:
+                return "Self-reported: the \(side) wasn't just now. Only trades logged as they happen can be price-checked."
             case .unsupportedAsset:
-                return "Self-reported: there are no live quotes for options, so this can't be price-checked."
+                return "Self-reported: live prices cover stocks and ETFs only, so \(type.displayName.lowercased()) trades can't be price-checked."
             case .quotesNotConfigured:
-                return "Self-reported: live quotes aren't available in this version of the app."
+                return "Self-reported: live prices aren't available in this version of the app."
             case .noQuote:
-                return "Self-reported: no live quote for \(symbol) right now."
+                return "Self-reported: there's no live price for \(symbol). Check the symbol."
+            case .quotesUnavailable:
+                return "Live prices are unavailable right now. Try again in a minute, or save it as self-reported."
             case .marketClosed:
-                return "Self-reported: \(symbol) hasn't traded today, so there's no range to check against."
-            case .outsideRange(let low, let high):
+                return "Self-reported: \(symbol) hasn't traded today, so there's no live price to check against."
+            case .awayFromLivePrice(let live):
                 let value = price.map { terms.price($0) } ?? "Your price"
-                return "Self-reported: \(value) is outside today's range \(terms.price(low))–\(terms.price(high))."
+                return "Self-reported: \(value) is more than 1% away from the live price \(terms.price(live))."
             }
         }
     }
 }
 
-/// Fetches and caches today's range for one symbol at a time, for the add-trade and close screens.
+/// Loads the live quote for one symbol at a time, for the add-trade and close screens.
 @MainActor
 final class TradePriceChecker: ObservableObject {
-    @Published private(set) var quote: DayRangeQuote?
+    @Published private(set) var quote: MarketQuote?
+    /// The last answer from QuoteClient (nil before the first request)
+    @Published private(set) var lastResult: QuoteResult?
     @Published private(set) var isLoading = false
-
-    /// Shared by every checker so going back and forth doesn't refetch
-    private static var cache: [String: DayRangeQuote] = [:]
-    private static let freshFor: TimeInterval = 60
-    /// Before saving, a quote older than this is fetched again
-    static let maxAgeAtSave: TimeInterval = 120
 
     private var symbol = ""
     private var task: Task<Void, Never>?
 
-    /// Starts loading `ticker`'s range after a short pause (typing), unless options or no key.
-    func load(ticker: String, type: TradeType, debounce: Bool = true) {
+    /// Starts loading `ticker`'s quote after a short pause (typing). Nothing for non-stocks.
+    func load(ticker: String, type: TradeType, debounce: Bool = true, force: Bool = false) {
         let newSymbol = TradePriceCheckRules.symbol(for: ticker)
-        guard TradePriceCheckRules.canQuote(type), !AppConfig.finnhubAPIKey.isEmpty, !newSymbol.isEmpty else {
+        guard TradePriceCheckRules.canQuote(type), QuoteClient.isConfigured, !newSymbol.isEmpty else {
             task?.cancel()
             symbol = newSymbol
             quote = nil
+            lastResult = nil
             isLoading = false
             return
         }
-        if newSymbol == symbol {
+        if newSymbol == symbol, !force {
             if isLoading { return }
-            if let quote, Date().timeIntervalSince(quote.fetchedAt) < Self.freshFor { return }
+            if let quote, quote.age < QuoteClient.defaultMaxAge { return }
+        }
+        if newSymbol != symbol {
+            quote = nil
+            lastResult = nil
         }
         symbol = newSymbol
-        if let cached = Self.cache[newSymbol], Date().timeIntervalSince(cached.fetchedAt) < Self.freshFor {
-            task?.cancel()
-            quote = cached
-            isLoading = false
-            return
-        }
-
         task?.cancel()
-        quote = nil
         isLoading = true
         task = Task { [weak self] in
             if debounce {
-                try? await Task.sleep(for: .milliseconds(700))
+                try? await Task.sleep(for: .milliseconds(600))
                 if Task.isCancelled { return }
             }
-            let result = await MarketQuotes.dayRange(symbol: newSymbol)
+            let result = await QuoteClient.shared.quote(for: newSymbol)
             guard let self, !Task.isCancelled, self.symbol == newSymbol else { return }
-            if let result { Self.cache[newSymbol] = result }
-            self.quote = result
-            self.isLoading = false
+            self.apply(result)
         }
     }
 
-    func outcome(price: Double?, date: Date, type: TradeType) -> PriceCheckOutcome {
-        TradePriceCheckRules.evaluate(price: price, date: date, type: type, quote: quote, isLoading: isLoading)
+    /// Fetches again now (the "Try again" button).
+    func retry(ticker: String, type: TradeType) {
+        load(ticker: ticker, type: type, debounce: false, force: true)
     }
 
-    /// The outcome to save with: refetches the quote first when it's more than two minutes old.
-    func outcomeForSaving(ticker: String, price: Double?, date: Date, type: TradeType) async -> PriceCheckOutcome {
+    func outcome(price: Double?, isNow: Bool, type: TradeType) -> PriceCheckOutcome {
+        TradePriceCheckRules.evaluate(price: price, isNow: isNow, type: type, quote: quote,
+                                      result: lastResult, isLoading: isLoading)
+    }
+
+    /// The outcome to save with, from a quote at most 30 seconds old (fetched again if needed).
+    func outcomeForSaving(ticker: String, price: Double?, isNow: Bool, type: TradeType) async -> PriceCheckOutcome {
         let newSymbol = TradePriceCheckRules.symbol(for: ticker)
-        let needsQuote = TradePriceCheckRules.canQuote(type)
-            && !AppConfig.finnhubAPIKey.isEmpty
-            && Calendar.current.isDateInToday(date)
-            && (price ?? 0) > 0
+        let needsQuote = TradePriceCheckRules.canQuote(type) && QuoteClient.isConfigured
+            && isNow && (price ?? 0) > 0 && !newSymbol.isEmpty
         if needsQuote {
-            let isStale = quote.map { Date().timeIntervalSince($0.fetchedAt) > Self.maxAgeAtSave } ?? true
+            let isStale = quote.map { $0.age > TradePriceCheckRules.maxQuoteAgeAtSave } ?? true
             if newSymbol != symbol || isStale {
                 task?.cancel()
                 symbol = newSymbol
                 isLoading = true
-                let result = await MarketQuotes.dayRange(symbol: newSymbol)
-                if let result { Self.cache[newSymbol] = result }
-                quote = result
-                isLoading = false
+                let result = await QuoteClient.shared.quote(for: newSymbol,
+                                                            maxAge: TradePriceCheckRules.maxQuoteAgeAtSave)
+                if symbol == newSymbol { apply(result) }
             }
         }
-        return TradePriceCheckRules.evaluate(price: price, date: date, type: type, quote: quote, isLoading: false)
+        return TradePriceCheckRules.evaluate(price: price, isNow: isNow, type: type, quote: quote,
+                                             result: lastResult, isLoading: false)
+    }
+
+    private func apply(_ result: QuoteResult) {
+        lastResult = result
+        if let fresh = result.quote {
+            quote = fresh
+        } else if !result.isTemporarilyUnavailable || (quote?.age ?? .infinity) > TradePriceCheckRules.maxQuoteAgeAtSave {
+            // Keep a still-fresh quote through a brief rate limit; otherwise there's no price
+            quote = nil
+        }
+        isLoading = false
     }
 }

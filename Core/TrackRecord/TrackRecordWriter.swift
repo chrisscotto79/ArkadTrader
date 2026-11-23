@@ -3,13 +3,17 @@
 // callout record. See docs/backend-contracts.md, section 0 ("Track records are computed
 // on the phone") and section 3 for the `traderStats` shape.
 //
-// - Posting a callout writes the mirror doc `users/{uid}/callouts/{messageId}`.
-// - Closing one (by hand or through CalloutAutoTracker) updates the mirror.
-// - After either, `recomputeStats()` rebuilds `traderStats/{uid}` and
-//   `communities/{cid}/traderStats/{uid}` from the author's own mirror docs.
-// - Community members get `callout`, `callout_update` and `callout_result` inbox notifications.
-// - The mirror also records `resultPosted: true` once the result message is in the channel
-//   (CalloutFollowUps), and follows stop / target moves.
+// Mirror docs, `users/{uid}/callouts/{messageId}`:
+// - created right after the callout message, with the message's own values
+//   (TradeCallout.mirrorData: communityId, channelId, messageId, ticker, assetType, direction,
+//   entryPrice, status "open", priceCheck, stopPrice?, targetPrice?, postedAt?, quoteAtPost?);
+// - while open, only `lastPrice` / `lastPriceAt` (each price check), `deletedAt` (the message
+//   was deleted before it could be closed) and the close fields change;
+// - closing writes `status`, `exitPrice`, `resultPercent`, `closedAt`, and optionally
+//   `exitCheck` and `closedBy`; after that the doc never changes. The app never deletes one.
+// After a post or a close, `recomputeStats()` rebuilds `traderStats/{uid}` and
+// `communities/{cid}/traderStats/{uid}` from the author's mirror docs.
+// Community members get `callout` and `callout_result` inbox notifications (capped fan-out).
 //
 // When the server functions are deployed, everything here does nothing.
 
@@ -24,6 +28,10 @@ final class TrackRecordWriter {
     /// True while the app (not the server) keeps track records.
     static var isActive: Bool { !AppConfig.serverFunctionsEnabled }
 
+    /// The most members one community notification is sent to, so a big community can't
+    /// use up the day's free-plan writes on its own.
+    static let maxFanOut = 200
+
     private var db: Firestore { FirebaseServices.shared.db }
 
     private var isRecomputing = false
@@ -34,6 +42,13 @@ final class TrackRecordWriter {
     private let memberCacheTimeout: TimeInterval = 5 * 60
 
     private init() {}
+
+    /// Debug-only log line for writes that fail quietly.
+    nonisolated static func log(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        print("TrackRecord: \(message())")
+        #endif
+    }
 
     private func mirrors(of userId: String) -> CollectionReference {
         db.collection("users").document(userId).collection("callouts")
@@ -57,7 +72,7 @@ final class TrackRecordWriter {
             try await mirrors(of: authorId).document(messageId)
                 .setData(callout.mirrorData(communityId: communityId, channelId: channelId, messageId: messageId))
         } catch {
-            print("⚠️ TrackRecordWriter: couldn't write callout mirror: \(error.localizedDescription)")
+            Self.log("couldn't write callout mirror: \(error.localizedDescription)")
         }
 
         await recomputeStats()
@@ -68,14 +83,36 @@ final class TrackRecordWriter {
             type: "callout",
             title: "New callout in \(communityName)",
             body: callout.summary,
-            data: Self.channelRoute(communityId: communityId, channelId: channelId, messageId: messageId)
+            data: Self.channelRoute(communityId: communityId, channelId: channelId, messageId: messageId),
+            communityId: communityId
         )
+    }
+
+    // MARK: - Prices
+
+    /// A fresh quote for an open callout (stocks only), or nil when there's none right now.
+    func freshQuote(for callout: TradeCallout, maxWait: TimeInterval = 10) async -> MarketQuote? {
+        guard CalloutQuotes.canQuote(callout) else { return nil }
+        return await QuoteClient.shared.quote(for: CalloutQuotes.symbol(for: callout), maxAge: 60, maxWait: maxWait).quote
+    }
+
+    /// Records a price check on an open callout's mirror (`lastPrice`, `lastPriceAt`).
+    func mirrorPrice(authorId: String, messageId: String, price: Double) async {
+        guard Self.isActive, price > 0, price.isFinite else { return }
+        do {
+            try await mirrors(of: authorId).document(messageId).updateData([
+                "lastPrice": price,
+                "lastPriceAt": FieldValue.serverTimestamp()
+            ])
+        } catch {
+            Self.log("couldn't update mirror price: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Closing
 
-    /// Writes a closed callout to its mirror doc. Merges, so a callout posted before
-    /// mirrors existed gains one when it closes.
+    /// Writes the close of a callout to its mirror doc. Only the close fields change; a callout
+    /// posted before mirrors existed gets its mirror created, already closed.
     /// - Parameter closedNow: stamp `closedAt` with the server time (a close happening now)
     ///   rather than the callout's own `closedAt` (syncing a close made elsewhere).
     func mirrorClosed(
@@ -88,67 +125,70 @@ final class TrackRecordWriter {
         closedBy: String? = nil,
         exitCheck: TradeCallout.PriceCheck? = nil
     ) async throws {
-        guard Self.isActive else { return }
-        var data = callout.mirrorData(communityId: communityId, channelId: channelId, messageId: messageId)
-        if let closedBy { data["closedBy"] = closedBy }
-        if let exitCheck { data["exitCheck"] = exitCheck.rawValue }
+        guard Self.isActive, !callout.isOpen else { return }
+        var close = callout.mirrorCloseData()
+        if let closedBy { close["closedBy"] = closedBy }
+        if let exitCheck { close["exitCheck"] = exitCheck.rawValue }
         if closedNow || callout.closedAt == nil {
-            data["closedAt"] = FieldValue.serverTimestamp()
+            close["closedAt"] = FieldValue.serverTimestamp()
+        } else if let closedAt = callout.closedAt {
+            close["closedAt"] = Timestamp(date: closedAt)
         }
-        try await mirrors(of: authorId).document(messageId).setData(data, merge: true)
+        if let lastPrice = callout.lastPrice, lastPrice > 0 {
+            close["lastPrice"] = lastPrice
+        }
+
+        let ref = mirrors(of: authorId).document(messageId)
+        do {
+            try await ref.updateData(close)
+        } catch let error as NSError where error.domain == "FIRFirestoreErrorDomain" && error.code == 5 {
+            // No mirror yet (posted before mirrors existed)
+            var data = callout.mirrorData(communityId: communityId, channelId: channelId, messageId: messageId)
+            data.merge(close) { _, closeValue in closeValue }
+            try await ref.setData(data)
+        }
     }
 
-    /// The author deleted (or a moderator removed) a message with an open callout. The callout
-    /// still counts: it closes in the mirror at its last price, or at entry (0%) if it was never
-    /// priced, with `closedBy: "deleted"`. It has no `exitCheck`, so it counts (a deleted loser
-    /// still shows). Returns the callout as closed.
+    /// The author deleted (or a moderator removed) a message with an open callout. It still
+    /// counts: it closes in the mirror at a fresh price, with `closedBy: "deleted"`, so deleting
+    /// a loser doesn't erase the loss. Without a fresh price it stays open with `deletedAt`, and
+    /// CalloutAutoTracker closes it once it has one. Returns the callout as it now stands.
+    /// - Parameter freshPrice: a quote the caller just fetched; when nil one is fetched here.
     @discardableResult
     func closeDeleted(
         _ callout: TradeCallout,
-        lastPrice: Double? = nil,
+        freshPrice: Double? = nil,
         authorId: String,
         communityId: String,
         channelId: String,
         messageId: String
     ) async throws -> TradeCallout {
+        guard Self.isActive, callout.isOpen else { return callout }
+        var price = freshPrice.flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
+        if price == nil {
+            price = await freshQuote(for: callout)?.current
+        }
+        guard let exit = price else {
+            try await markDeleted(authorId: authorId, messageId: messageId)
+            return callout
+        }
+
         var closed = callout
-        let exit = [lastPrice, callout.lastPrice].compactMap { $0 }.first { $0 > 0 && $0.isFinite } ?? callout.entryPrice
         closed.status = .closed
         closed.exitPrice = exit
         closed.closedAt = Date()
+        closed.lastPrice = exit
         closed.resultPercent = CalloutTrackingService.resultPercent(for: callout, exitPrice: exit)
         try await mirrorClosed(closed, authorId: authorId, communityId: communityId, channelId: channelId,
-                               messageId: messageId, closedNow: true, closedBy: "deleted")
+                               messageId: messageId, closedNow: true, closedBy: "deleted", exitCheck: .live)
         return closed
     }
 
-    /// The author moved a callout's stop or target: keep the mirror's levels in step, so a callout
-    /// whose message is later deleted still closes against the new level. Updates only an
-    /// existing mirror (a callout posted before mirrors existed gains one when it closes).
-    func mirrorLevels(authorId: String, messageId: String, stopPrice: Double?, targetPrice: Double?) async {
-        guard Self.isActive else { return }
-        var fields: [String: Any] = [:]
-        if let stopPrice { fields["stopPrice"] = stopPrice }
-        if let targetPrice { fields["targetPrice"] = targetPrice }
-        guard !fields.isEmpty else { return }
-        do {
-            try await mirrors(of: authorId).document(messageId).updateData(fields)
-        } catch {
-            print("⚠️ TrackRecordWriter: couldn't update callout mirror levels: \(error.localizedDescription)")
-        }
-    }
-
-    /// Whether the mirror records that this callout's result message was posted.
-    func isResultPosted(authorId: String, messageId: String) async -> Bool {
-        guard Self.isActive else { return false }
-        let data = try? await mirrors(of: authorId).document(messageId).getDocument().data()
-        return data?["resultPosted"] as? Bool ?? false
-    }
-
-    /// Records on the mirror that the result message is posted, so it's never posted twice.
-    func markResultPosted(authorId: String, messageId: String) async {
-        guard Self.isActive else { return }
-        try? await mirrors(of: authorId).document(messageId).updateData(["resultPosted": true])
+    /// Marks an open mirror as belonging to a deleted message (`deletedAt`), once.
+    func markDeleted(authorId: String, messageId: String) async throws {
+        try await mirrors(of: authorId).document(messageId).updateData([
+            "deletedAt": FieldValue.serverTimestamp()
+        ])
     }
 
     /// `callout_result` for the community's members (not the author).
@@ -176,7 +216,8 @@ final class TrackRecordWriter {
             type: "callout_result",
             title: title,
             body: body,
-            data: Self.channelRoute(communityId: communityId, channelId: channelId, messageId: messageId)
+            data: Self.channelRoute(communityId: communityId, channelId: channelId, messageId: messageId),
+            communityId: communityId
         )
     }
 
@@ -198,67 +239,86 @@ final class TrackRecordWriter {
         } while recomputeAgain
     }
 
+    /// Whether a mirror doc counts toward the record: the entry was checked against a live
+    /// price, a close by hand had its exit checked too (`exitCheck != "unchecked"`), and a
+    /// closed callout's result matches its exit. Auto-closes and deleted callouts are
+    /// `exitCheck: "live"`, so a deleted loser still counts.
+    nonisolated static func counts(_ data: [String: Any]) -> TradeCallout? {
+        guard (data["exitCheck"] as? String) != TradeCallout.PriceCheck.unchecked.rawValue,
+              let callout = TradeCallout.fromFirestore(data), callout.isPriceChecked else { return nil }
+        if !callout.isOpen && !callout.isConsistentResult { return nil }
+        return callout
+    }
+
     private func writeStats(userId: String) async {
         let snapshot: QuerySnapshot
         do {
             snapshot = try await mirrors(of: userId).getDocuments()
         } catch {
-            print("⚠️ TrackRecordWriter: couldn't read callout mirrors: \(error.localizedDescription)")
+            Self.log("couldn't read callout mirrors: \(error.localizedDescription)")
+            return
+        }
+        // The rules require the username on users/{uid}, so read it fresh.
+        let profile: (username: String, imageUrl: String?)
+        do {
+            let data = try await db.collection("users").document(userId).getDocument().data()
+            profile = (data?["username"] as? String ?? "", data?["profileImageUrl"] as? String)
+        } catch {
+            Self.log("couldn't read the profile for traderStats: \(error.localizedDescription)")
             return
         }
 
-        // Anti-fake: only callouts whose entry was checked against a live price count, and a
-        // close by hand counts only when its exit was too (`exitCheck != "unchecked"`).
-        // Auto-closes are `exitCheck: "live"`; deleted callouts have none and count.
-        let callouts = snapshot.documents
-            .filter { ($0.data()["exitCheck"] as? String) != TradeCallout.PriceCheck.unchecked.rawValue }
-            .compactMap { TradeCallout.fromFirestore($0.data()) }
-            .filter { $0.isPriceChecked }
-        let profile = await profile(userId: userId)
+        // Every community the author has posted in gets a doc, even when none of its callouts
+        // count any more, so a stale record never lingers.
+        var byCommunity: [String: [TradeCallout]] = [:]
+        var counted: [TradeCallout] = []
+        for doc in snapshot.documents {
+            let data = doc.data()
+            let communityId = data["communityId"] as? String ?? ""
+            if !communityId.isEmpty, byCommunity[communityId] == nil { byCommunity[communityId] = [] }
+            guard let callout = Self.counts(data) else { continue }
+            counted.append(callout)
+            if !communityId.isEmpty { byCommunity[communityId]?.append(callout) }
+        }
 
         do {
             try await db.collection("traderStats").document(userId).setData(
-                TrackRecordMath.statsData(for: callouts, username: profile.username, profileImageUrl: profile.imageUrl)
+                TrackRecordMath.statsData(for: counted, username: profile.username, profileImageUrl: profile.imageUrl)
             )
         } catch {
-            print("⚠️ TrackRecordWriter: couldn't write traderStats: \(error.localizedDescription)")
+            Self.log("couldn't write traderStats: \(error.localizedDescription)")
         }
 
-        // One doc per community with callouts, from that community's callouts only
-        let byCommunity = Dictionary(grouping: callouts.filter { !($0.communityId ?? "").isEmpty }) { $0.communityId ?? "" }
         for (communityId, communityCallouts) in byCommunity {
             do {
                 try await db.collection("communities").document(communityId)
                     .collection("traderStats").document(userId)
-                    .setData(TrackRecordMath.statsData(for: communityCallouts, username: profile.username, profileImageUrl: profile.imageUrl))
+                    .setData(TrackRecordMath.statsData(for: communityCallouts, username: profile.username,
+                                                       profileImageUrl: profile.imageUrl))
             } catch {
                 // e.g. the author has since left or been removed from the community
-                print("⚠️ TrackRecordWriter: couldn't write community traderStats (\(communityId)): \(error.localizedDescription)")
+                Self.log("couldn't write community traderStats (\(communityId)): \(error.localizedDescription)")
             }
             CommunityLeaderboardService.shared.invalidate(communityId: communityId)
         }
         CommunityLeaderboardService.shared.invalidate(communityId: "global")
     }
 
-    /// Username and photo for the leaderboard, from the signed-in profile when it's loaded.
-    private func profile(userId: String) async -> (username: String, imageUrl: String?) {
-        if let user = FirebaseAuthService.shared.currentUser, user.id == userId {
-            return (user.username, user.profileImageUrl)
-        }
-        let data = try? await db.collection("users").document(userId).getDocument().data()
-        return (data?["username"] as? String ?? "", data?["profileImageUrl"] as? String)
-    }
-
     // MARK: - Helpers
 
-    /// Ids in `communities/{cid}/members`. Empty when the list can't be read.
+    /// Up to `maxFanOut` ids from `communities/{cid}/members`. Empty when the list can't be read.
     func memberIds(communityId: String) async -> [String] {
         if let hit = memberCache[communityId], hit.expires > Date() { return hit.ids }
-        guard let snapshot = try? await db.collection("communities").document(communityId)
-            .collection("members").getDocuments() else { return [] }
-        let ids = snapshot.documents.map { $0.documentID }
-        memberCache[communityId] = (ids, Date().addingTimeInterval(memberCacheTimeout))
-        return ids
+        do {
+            let snapshot = try await db.collection("communities").document(communityId)
+                .collection("members").limit(to: Self.maxFanOut).getDocuments()
+            let ids = snapshot.documents.map { $0.documentID }
+            memberCache[communityId] = (ids, Date().addingTimeInterval(memberCacheTimeout))
+            return ids
+        } catch {
+            Self.log("couldn't read members of \(communityId): \(error.localizedDescription)")
+            return []
+        }
     }
 
     /// Deep link to a message in a channel (docs/backend-contracts.md, section 2).
@@ -270,6 +330,10 @@ final class TrackRecordWriter {
 // MARK: - Stats math
 
 /// Builds a `traderStats` doc (docs/backend-contracts.md, section 3) from a list of callouts.
+/// Fields (fixed list): calloutsTotal, calloutsClosed, openCallouts, wins, losses (ints >= 0),
+/// winRate (0–1), avgReturnPercent, totalReturnPercent (the sum of closed results, shown as
+/// "Sum of results"), bestCalloutPercent?, worstCalloutPercent?, lastCalloutAt?, updatedAt,
+/// username (= users/{uid}.username), profileImageUrl?.
 enum TrackRecordMath {
     static func statsData(for callouts: [TradeCallout], username: String, profileImageUrl: String?) -> [String: Any] {
         // A closed callout with no recorded result counts as flat

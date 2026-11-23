@@ -19,6 +19,8 @@ struct OtherUserProfileView: View {
     @State private var showBlockConfirmation = false
     @State private var isUpdatingBlock = false
     @State private var blockError: String?
+    /// Follows and unfollows made here, so the follower count moves straight away
+    @State private var followersDelta = 0
     @ObservedObject private var blockStore = BlockStore.shared
     @Environment(\.dismiss) var dismiss
 
@@ -46,7 +48,9 @@ struct OtherUserProfileView: View {
                             targetUserId: user.id,
                             targetUsername: user.username,
                             layout: .pill
-                        )
+                        ) { followed in
+                            followersDelta += followed ? 1 : -1
+                        }
                     }
                 }
 
@@ -220,7 +224,7 @@ struct OtherUserProfileView: View {
         return ProfileStatsCard(items: [
             ProfileStatItem(
                 title: "Followers",
-                value: "\(user.followersCount)",
+                value: "\(max(0, user.followersCount + followersDelta))",
                 action: { showFollowersList = true }
             ),
             ProfileStatItem(
@@ -268,7 +272,8 @@ struct OtherUserProfileView: View {
     /// P&L, win rate and the top performer count only price-checked and verified trades;
     /// the trade counts include everything (each trade row shows its label).
     private func calculatePortfolioSummary() -> PortfolioSummary {
-        let counted = TradeStats(counted: userTrades)
+        // Same numbers as the profile document's totalProfitLoss / winRate (TradeStats.publicRecord)
+        let counted = TradeStats.publicRecord(userTrades)
         let selfReported = TradeStats(selfReported: userTrades)
 
         return PortfolioSummary(

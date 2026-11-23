@@ -16,6 +16,9 @@ struct SimpleFollowButton: View {
     let targetUserId: String
     let targetUsername: String
     var layout: Layout = .fullWidth
+    /// Called after a follow (true) or unfollow (false) is saved, so the screen can move the
+    /// follower count by one without reloading
+    var onFollowChange: ((Bool) -> Void)? = nil
 
     @State private var isFollowing = false
     @State private var isLoading = false
@@ -30,12 +33,10 @@ struct SimpleFollowButton: View {
             .sensoryFeedback(.selection, trigger: isFollowing)
             .accessibilityLabel(isFollowing ? "Following @\(targetUsername)" : "Follow @\(targetUsername)")
             .accessibilityHint(isFollowing ? "Double-tap to unfollow" : "")
-            .onAppear {
-                Task {
-                    await checkFollowStatus()
-                }
+            .task(id: targetUserId) {
+                await checkFollowStatus()
             }
-            .alert("Follow Error", isPresented: $showError) {
+            .alert("Couldn't Update Follow", isPresented: $showError) {
                 Button("OK") { }
             } message: {
                 Text(errorMessage)
@@ -82,80 +83,36 @@ struct SimpleFollowButton: View {
 
     private func toggleFollow() async {
         guard let currentUserId = authService.currentUser?.id else {
-            await MainActor.run {
-                errorMessage = "Not authenticated. Please sign in again."
-                showError = true
-            }
-            print("❌ No current user found")
+            errorMessage = "You're signed out. Please sign in again."
+            showError = true
             return
         }
+        guard !targetUserId.isEmpty, currentUserId != targetUserId else { return }
 
-        guard !targetUserId.isEmpty else {
-            await MainActor.run {
-                errorMessage = "Invalid user ID"
-                showError = true
-            }
-            print("❌ Target user ID is empty")
-            return
-        }
-
-        guard currentUserId != targetUserId else {
-            await MainActor.run {
-                errorMessage = "Cannot follow yourself"
-                showError = true
-            }
-            print("❌ Trying to follow self")
-            return
-        }
-
-        await MainActor.run {
-            isLoading = true
-        }
-
+        isLoading = true
+        let follow = !isFollowing
         do {
-            if isFollowing {
-                try await authService.unfollowUser(userId: targetUserId, followerId: currentUserId)
-            } else {
+            if follow {
                 try await authService.followUser(userId: targetUserId, followerId: currentUserId)
+            } else {
+                try await authService.unfollowUser(userId: targetUserId, followerId: currentUserId)
             }
-
-            await MainActor.run {
-                isFollowing.toggle()
-            }
-
+            isFollowing = follow
+            authService.adjustFollowingCount(by: follow ? 1 : -1)
+            onFollowChange?(follow)
         } catch {
-            print("❌ Follow error: \(error)")
-
-            await MainActor.run {
-                errorMessage = "Follow failed: \(error.localizedDescription)"
-                showError = true
-            }
+            errorMessage = follow
+                ? "Couldn't follow @\(targetUsername). Check your connection and try again."
+                : "Couldn't unfollow @\(targetUsername). Check your connection and try again."
+            showError = true
         }
-
-        await MainActor.run {
-            isLoading = false
-        }
+        isLoading = false
     }
 
     private func checkFollowStatus() async {
-        guard let currentUserId = authService.currentUser?.id else {
-            print("❌ No current user for follow status check")
-            return
-        }
-
-        guard !targetUserId.isEmpty else {
-            print("❌ Empty target user ID for follow status check")
-            return
-        }
-
-        do {
-            let followStatus = try await authService.isFollowing(userId: currentUserId, targetUserId: targetUserId)
-
-            await MainActor.run {
-                isFollowing = followStatus
-            }
-        } catch {
-            print("❌ Error checking follow status: \(error)")
+        guard let currentUserId = authService.currentUser?.id, !targetUserId.isEmpty else { return }
+        if let status = try? await authService.isFollowing(userId: currentUserId, targetUserId: targetUserId) {
+            isFollowing = status
         }
     }
 }
@@ -168,6 +125,9 @@ struct SimpleFollowListView: View {
 
     @State private var users: [User] = []
     @State private var isLoading = true
+    @State private var loadFailed = false
+    @State private var selectedUser: User?
+    @ObservedObject private var blockStore = BlockStore.shared
     @EnvironmentObject var authService: FirebaseAuthService
     @Environment(\.dismiss) var dismiss
 
@@ -190,6 +150,11 @@ struct SimpleFollowListView: View {
         }
     }
 
+    /// Blocked accounts are left out
+    private var visibleUsers: [User] {
+        users.filter { !blockStore.isBlocked($0.id) }
+    }
+
     var body: some View {
         NavigationStack {
             content
@@ -206,20 +171,35 @@ struct SimpleFollowListView: View {
                         .foregroundStyle(Color.goldText)
                     }
                 }
-                .onAppear {
-                    Task {
-                        await loadUsers()
-                    }
+                .task {
+                    await blockStore.loadIfNeeded()
+                    await loadUsers()
                 }
+                .refreshable {
+                    await loadUsers()
+                }
+        }
+        .sheet(item: $selectedUser) { user in
+            OtherUserProfileView(user: user)
+                .environmentObject(authService)
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        if isLoading {
+        if isLoading && users.isEmpty {
             ProgressView()
                 .tint(Color.goldText)
-        } else if users.isEmpty {
+        } else if loadFailed && users.isEmpty {
+            EmptyStateView(
+                systemImage: "wifi.exclamationmark",
+                title: "Couldn't load \(listType.title.lowercased())",
+                message: "Check your connection and try again.",
+                actionTitle: "Try again"
+            ) {
+                Task { await loadUsers() }
+            }
+        } else if visibleUsers.isEmpty {
             EmptyStateView(
                 systemImage: listType == .followers ? "person.2" : "person.badge.plus",
                 title: "No \(listType.title.lowercased()) yet",
@@ -228,11 +208,19 @@ struct SimpleFollowListView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(users.enumerated()), id: \.element.id) { index, user in
+                    ForEach(Array(visibleUsers.enumerated()), id: \.element.id) { index, user in
                         if index > 0 {
                             ProfileRowDivider(inset: DS.Spacing.l + 44 + DS.Spacing.m)
                         }
-                        SimpleUserRow(user: user)
+                        Button {
+                            selectedUser = user
+                        } label: {
+                            SimpleUserRow(user: user)
+                                .foregroundStyle(Color.primary)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(SettingsRowButtonStyle())
+                        .accessibilityHint("Opens their profile")
                     }
                 }
                 .cardStyle(padding: 0)
@@ -242,33 +230,28 @@ struct SimpleFollowListView: View {
         }
     }
 
+    /// Reads the ids, then the profiles 30 at a time. Missing or unreadable profiles are skipped.
     private func loadUsers() async {
+        guard !userId.isEmpty else {
+            isLoading = false
+            return
+        }
         isLoading = true
+        loadFailed = false
 
         do {
             let userIds: Set<String>
-
             switch listType {
             case .followers:
                 userIds = try await authService.getUserFollowers(userId: userId)
             case .following:
                 userIds = try await authService.getUserFollowing(userId: userId)
             }
-
-            // Fetch user details
-            var fetchedUsers: [User] = []
-            for id in userIds {
-                if let user = try await authService.getUserById(userId: id) {
-                    fetchedUsers.append(user)
-                }
-            }
-
-            users = fetchedUsers.sorted { $0.username < $1.username }
-
+            let fetched = try await FirebaseServices.shared.getUsers(ids: Array(userIds))
+            users = fetched.sorted { $0.username < $1.username }
         } catch {
-            print("Error loading users: \(error)")
+            loadFailed = true
         }
-
         isLoading = false
     }
 }
@@ -280,7 +263,7 @@ struct SimpleUserRow: View {
 
     var body: some View {
         HStack(spacing: DS.Spacing.m) {
-            UserAvatar(username: user.username, imageURL: user.profileImageUrl, size: 44)
+            UserAvatar(user: user, size: 44)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {

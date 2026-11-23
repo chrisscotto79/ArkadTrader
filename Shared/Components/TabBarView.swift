@@ -63,6 +63,8 @@ final class TabRouter: ObservableObject {
 struct TabBarView: View {
     @EnvironmentObject private var authService: FirebaseAuthService
     @ObservedObject private var tabRouter = TabRouter.shared
+    /// One portfolio (trades listener, quotes) shared by the Portfolio and Profile tabs
+    @StateObject private var portfolioViewModel = PortfolioViewModel()
     @State private var linkedProfile: User?
 
     var body: some View {
@@ -90,6 +92,7 @@ struct TabBarView: View {
         // Readable gold for the selected tab in both light and dark mode
         .tint(.goldText)
         .environmentObject(tabRouter)
+        .environmentObject(portfolioViewModel)
         .sheet(item: $linkedProfile) { user in
             OtherUserProfileView(user: user)
                 .environmentObject(authService)

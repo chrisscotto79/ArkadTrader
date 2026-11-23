@@ -14,6 +14,8 @@ enum EventLimits {
     /// Durations offered in the editor, in minutes
     static let durations = [15, 30, 45, 60, 90, 120, 180, 240]
     static let defaultDuration = 60
+    /// What the rules accept for `durationMinutes`: one minute to a day.
+    static let durationRange = 1...1440
 }
 
 struct CommunityEvent: Identifiable, Hashable {
@@ -66,6 +68,26 @@ struct EventDraft {
     var durationMinutes: Int
     /// Empty when there's no link
     var link: String
+
+    /// Throws when the draft can't be saved (the editor blocks these first).
+    func validate() throws {
+        guard EventLimits.durationRange.contains(durationMinutes) else {
+            throw EventDraftError("Pick a duration between 1 minute and 24 hours.")
+        }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= EventLimits.titleLength else {
+            throw EventDraftError("Give the event a title of up to \(EventLimits.titleLength) characters.")
+        }
+        guard details.count <= EventLimits.detailsLength else {
+            throw EventDraftError("Keep the details under \(EventLimits.detailsLength) characters.")
+        }
+    }
+}
+
+struct EventDraftError: LocalizedError {
+    let message: String
+    init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
 }
 
 // MARK: - Formatting

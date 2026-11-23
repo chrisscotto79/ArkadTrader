@@ -15,6 +15,8 @@ struct SearchView: View {
     @EnvironmentObject private var tabRouter: TabRouter
     @ObservedObject private var watchlist = WatchlistStore.shared
     @ObservedObject private var learnProgress = LearnProgressStore.shared
+    @ObservedObject private var postStore = PostStore.shared
+    @ObservedObject private var blockStore = BlockStore.shared
     @State private var watchlistError: String?
     @State private var showLearnFromLink = false
     @State private var showWatchlistFromLink = false
@@ -51,6 +53,7 @@ struct SearchView: View {
                     .onChange(of: tabRouter.pendingDeepLink) { _, link in openLinkedScreen(link) }
             }
             .screenBackground()
+            .statusBarBackground()
             .toolbar(.hidden, for: .navigationBar)
             .animation(.snappy(duration: 0.25), value: hasQuery)
         }
@@ -544,8 +547,10 @@ struct SearchView: View {
             VStack(spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, result in
                     if index > 0 { rowDivider() }
-                    SearchResultView(result: result)
-                        .environmentObject(authService)
+                    SearchResultView(result: result, onOpen: {
+                        searchViewModel.recordSearch(trimmedQuery)
+                    })
+                    .environmentObject(authService)
                 }
             }
             .cardStyle(padding: 0)
@@ -687,18 +692,27 @@ struct SearchView: View {
     }
 
     private func results(for scope: SearchType) -> [SearchResult] {
+        let shown = searchViewModel.searchResults.filter(isStillVisible)
         switch scope {
         case .all:
-            return searchViewModel.searchResults
+            return shown
         case .users:
-            return searchViewModel.searchResults.filter { $0.type == .user }
+            return shown.filter { $0.type == .user }
         case .posts:
-            return searchViewModel.searchResults.filter { $0.type == .post }
+            return shown.filter { $0.type == .post }
         case .stocks:
-            return searchViewModel.searchResults.filter { $0.type == .trade }
+            return shown.filter { $0.type == .trade }
         case .groups:
-            return searchViewModel.searchResults.filter { $0.type == .group }
+            return shown.filter { $0.type == .group }
         }
+    }
+
+    /// Hides posts deleted or reported, and people blocked, after the results came in.
+    private func isStillVisible(_ result: SearchResult) -> Bool {
+        if let post = result.post { return postStore.isVisible(post) }
+        if let user = result.user { return !blockStore.isBlocked(user.id) }
+        if let trade = result.trade { return !blockStore.isBlocked(trade.userId) }
+        return true
     }
 
     /// Scope label. `.stocks` matches traders' logged trades, so it's "Trades".
@@ -732,9 +746,11 @@ struct SearchView: View {
         }
     }
 
+    /// A submitted search (return key or a recent search), so it's saved to Recent.
     private func performSearch() {
         guard hasQuery else { return }
 
+        searchViewModel.recordSearch(trimmedQuery)
         searchTask?.cancel()
         Task {
             isSearching = true

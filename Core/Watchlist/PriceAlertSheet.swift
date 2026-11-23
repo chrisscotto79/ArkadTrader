@@ -284,7 +284,7 @@ struct PriceAlertSheet: View {
                 if !AppConfig.serverFunctionsEnabled {
                     // Banners need permission; a first alert is the moment it clearly helps.
                     await PushNotificationManager.shared.requestAuthorizationIfNeeded()
-                    await PriceAlertChecker.shared.checkNow()
+                    await PriceAlertChecker.shared.checkNow(force: true)
                 }
             } catch {
                 errorMessage = error.localizedDescription

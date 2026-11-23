@@ -3,20 +3,21 @@
 The iOS app and the Cloud Functions in `functions/` both follow this file. If code and this file disagree, fix one of them so they match.
 
 - Firebase project: `arkad-ios-app`. Functions region: `us-central1`. Callable functions are invoked from the app with `Functions.functions().httpsCallable("<name>")`.
-- Server-only fields are written by Cloud Functions, never by the app. The Firestore rules enforce this.
+- In server mode, server-only fields are written by Cloud Functions, never by the app, and the Firestore rules enforce this. In free mode (section 0, the current setup) the app writes some of them itself.
 - Every money amount is in US dollars as a `Double` (9.99). Stripe amounts in cents exist only inside `functions/`.
 - Arkad's platform fee is **10%** of each paid community subscription. It is the constant `PLATFORM_FEE_PERCENT` in `functions/src/config.ts` and `AppConfig.platformFeePercent` in the app.
 - Deep-link scheme: `arkad://`. Web flows (Stripe, SnapTrade) are opened with `ASWebAuthenticationSession`, using `callbackURLScheme: "arkad"`.
 
 ## 0. Free mode (current)
 
-Arkad currently runs on Firebase's free Spark plan. Cloud Functions, Stripe and SnapTrade are **not deployed**. Three switches in `Shared/Config/AppConfig.swift` control this, and all three are `false` for now:
+Arkad currently runs on Firebase's free Spark plan. Cloud Functions, Stripe and SnapTrade are **not deployed**. Four switches in `Shared/Config/AppConfig.swift` control this, and all four are `false` for now:
 
 | Switch | What it controls |
 |---|---|
 | `paidCommunitiesEnabled` | paid communities, payouts, subscriptions, the revenue dashboard |
 | `brokerageLinkingEnabled` | SnapTrade brokerage linking |
 | `serverFunctionsEnabled` | whether the server does the work below |
+| `mediaUploadsEnabled` | photos attached to posts and chat (needs Cloud Storage) |
 
 While `serverFunctionsEnabled == false`, the app does that work itself:
 
@@ -57,7 +58,7 @@ While `serverFunctionsEnabled == false`, the app does that work itself:
 **Account deletion cleans up from the phone.** Before `Auth.currentUser.delete()`, the app deletes:
 - the user's posts (and their comments and likes subcollections, where readable), trades, follows in both directions (with count updates where the existing unfollow code does that), and memberships (through the leave batch);
 - communities the user owns;
-- `users/{uid}` subcollections (`watchlist`, `priceAlerts`, `learnProgress`, `callouts`, `fcmTokens`, `following`, `followers`, `blockedUsers`, `reportedPosts`, `communityLessonProgress`), `traderStats/{uid}`, the profile image in Storage, and finally `users/{uid}`.
+- `users/{uid}` subcollections (`watchlist`, `priceAlerts`, `learnProgress`, `callouts`, `fcmTokens`, `following`, `followers`, `blockedUsers`, `reportedPosts`, `communityLessonProgress`), `traderStats/{uid}`, the profile image (`images/avatar_{uid}` in Firestore, see "Photos without Cloud Storage" below), and finally `users/{uid}`.
 
 It's best-effort: each step is wrapped so one failure doesn't stop the rest. Chat messages are left as they are.
 
@@ -110,6 +111,12 @@ Reports (free mode): the reporter's app writes `posts/{pid}/reporters/{me}` and 
 - Photos attached to posts and chat are switched off by `AppConfig.mediaUploadsEnabled = false` until Storage is available.
 
 **Security rules.** The free-mode rules are in `firestore.rules`, and they allow exactly these client writes. The stricter server-mode rules are kept in `firestore.server.rules`, for when the functions are deployed.
+
+**Security model in free mode.** With no server, every write comes from someone's phone, so there are two kinds of data:
+- *Enforced by the rules.* Who may write what: you can only write your own profile, posts, trades, follows, memberships and mirror docs; field shapes, sizes and types; fields that are locked after create (trade entries, proof labels, timestamps that must be the server time); counters that may only move by one in a matching batch; and the evidence a notification must point to. Someone with a modified app still can't write as another user, edit someone else's data, or break these shapes.
+- *Trusted from the app.* Anything the phone computes: price checks against a live quote, callout auto-closes, and the track-record numbers in `traderStats` (win rate, average result, counts). The rules check their shape and ranges, but not that the numbers are true, so a determined person with a modified app could inflate their own stats. Treat track records as app-computed until server mode, where Cloud Functions recompute them from the ledger (section 3) and `firestore.server.rules` makes them server-only.
+
+`firestore.rules` is the source of truth for the exact checks.
 
 
 ## Existing collections (unchanged unless noted)

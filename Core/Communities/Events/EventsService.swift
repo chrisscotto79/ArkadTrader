@@ -3,8 +3,11 @@
 // `match /events/{eventId}` rules in firestore.rules:
 // - staff create (rsvpCount 0, createdBy = me, https link or none), edit (never createdBy or
 //   rsvpCount) and delete;
-// - an RSVP creates or deletes rsvps/{me} and moves rsvpCount by exactly 1 in the same batch.
-// Creating an event notifies the members (`community_event`), fanned out like callouts.
+// - an RSVP creates or deletes rsvps/{me} and moves rsvpCount by exactly 1 in the same batch,
+//   and writes or deletes the owner-only mirror users/{me}/eventRsvps/{eventId} =
+//   { communityId, eventId, createdAt } in that batch, so "which events am I going to" is one query.
+// Creating an event notifies the members (`community_event`, capped like callouts); moving or
+// cancelling one notifies the people who RSVP'd.
 
 import Foundation
 import FirebaseFirestore
@@ -21,6 +24,10 @@ final class EventsService {
 
     private func events(_ communityId: String) -> CollectionReference {
         db.collection("communities").document(communityId).collection("events")
+    }
+
+    private func rsvpMirrors(_ userId: String) -> CollectionReference {
+        db.collection("users").document(userId).collection("eventRsvps")
     }
 
     // MARK: - Reading
@@ -66,52 +73,79 @@ final class EventsService {
         return snapshot.exists ? CommunityEvent.from(snapshot) : nil
     }
 
-    /// Which of these events the user has RSVP'd to (one small read per event).
-    func rsvpedEventIds(communityId: String, eventIds: [String], userId: String) async -> Set<String> {
-        await withTaskGroup(of: String?.self) { group in
-            for eventId in eventIds {
-                group.addTask { [db] in
-                    let ref = db.collection("communities").document(communityId)
-                        .collection("events").document(eventId)
-                        .collection("rsvps").document(userId)
-                    let snapshot = try? await ref.getDocument()
-                    return (snapshot?.exists ?? false) ? eventId : nil
-                }
+    /// Ids of the events in this community the user has RSVP'd to, from their own
+    /// `eventRsvps` mirror (one query). Throws when it can't be read, so callers never mistake
+    /// a failed read for "going to nothing".
+    func rsvpedEventIds(communityId: String, userId: String) async throws -> Set<String> {
+        let snapshot = try await rsvpMirrors(userId)
+            .whereField("communityId", isEqualTo: communityId)
+            .limit(to: 200)
+            .getDocuments()
+        return Set(snapshot.documents.map(\.documentID))
+    }
+
+    /// Every event the user has RSVP'd to: event id -> community id.
+    func allRSVPs(userId: String) async throws -> [String: String] {
+        let snapshot = try await rsvpMirrors(userId).limit(to: 200).getDocuments()
+        var result: [String: String] = [:]
+        for document in snapshot.documents {
+            if let communityId = document.data()["communityId"] as? String, !communityId.isEmpty {
+                result[document.documentID] = communityId
             }
-            var ids = Set<String>()
-            for await id in group {
-                if let id { ids.insert(id) }
-            }
-            return ids
         }
+        return result
     }
 
     // MARK: - RSVP
 
-    /// Creates or deletes rsvps/{me} and moves rsvpCount by 1, in one batch.
-    func setRSVP(_ going: Bool, communityId: String, eventId: String, userId: String) async throws {
+    /// Creates or deletes rsvps/{me}, moves rsvpCount by 1 and keeps the user's mirror in step,
+    /// in one batch. Returns false when nothing needed to change (already in that state).
+    @discardableResult
+    func setRSVP(_ going: Bool, communityId: String, eventId: String, userId: String) async throws -> Bool {
         let eventRef = events(communityId).document(eventId)
         let rsvpRef = eventRef.collection("rsvps").document(userId)
+        let mirrorRef = rsvpMirrors(userId).document(eventId)
 
         // The rules need the doc's current state to match the change (create when missing,
         // delete when present), so check first and skip a no-op.
         let existing = try await rsvpRef.getDocument()
-        if existing.exists == going { return }
+        if existing.exists == going {
+            // Repair the mirror if it drifted (e.g. an RSVP made before mirrors existed)
+            if going {
+                try? await mirrorRef.setData(Self.mirrorData(communityId: communityId, eventId: eventId))
+            } else {
+                try? await mirrorRef.delete()
+            }
+            return false
+        }
 
         let batch = db.batch()
         if going {
             batch.setData(["userId": userId, "createdAt": FieldValue.serverTimestamp()], forDocument: rsvpRef)
             batch.updateData(["rsvpCount": FieldValue.increment(Int64(1))], forDocument: eventRef)
+            batch.setData(Self.mirrorData(communityId: communityId, eventId: eventId), forDocument: mirrorRef)
         } else {
             batch.deleteDocument(rsvpRef)
             batch.updateData(["rsvpCount": FieldValue.increment(Int64(-1))], forDocument: eventRef)
+            batch.deleteDocument(mirrorRef)
         }
         try await batch.commit()
+        return true
+    }
+
+    private static func mirrorData(communityId: String, eventId: String) -> [String: Any] {
+        ["communityId": communityId, "eventId": eventId, "createdAt": FieldValue.serverTimestamp()]
+    }
+
+    /// Drops the user's mirror for an event that no longer exists.
+    func removeRSVPMirror(eventId: String, userId: String) async {
+        try? await rsvpMirrors(userId).document(eventId).delete()
     }
 
     // MARK: - Staff
 
     func createEvent(communityId: String, draft: EventDraft, createdBy: String) async throws -> CommunityEvent {
+        try draft.validate()
         let ref = events(communityId).document()
         var data: [String: Any] = [
             "communityId": communityId,
@@ -137,6 +171,7 @@ final class EventsService {
 
     /// Edits the event's own fields. Never touches createdBy or rsvpCount (the rules require both unchanged).
     func updateEvent(communityId: String, eventId: String, draft: EventDraft) async throws {
+        try draft.validate()
         let link = draft.link.trimmingCharacters(in: .whitespacesAndNewlines)
         var fields: [String: Any] = [
             "title": draft.title,
@@ -153,39 +188,69 @@ final class EventsService {
         try await events(communityId).document(eventId).updateData(fields)
     }
 
-    /// Deletes the event and the caller's own RSVP. Other members' rsvps/{uid} docs can only
-    /// be deleted by their owners, so they're left behind (nothing reads them without the event).
+    /// Deletes the event and the caller's own RSVP. Other members' rsvps/{uid} and eventRsvps
+    /// mirrors can only be deleted by their owners, so they're left behind; their apps drop them
+    /// (and the reminder) when the event can't be found.
     func deleteEvent(communityId: String, eventId: String, userId: String?) async throws {
         let eventRef = events(communityId).document(eventId)
         if let userId {
-            try? await eventRef.collection("rsvps").document(userId).delete()
+            let batch = db.batch()
+            batch.deleteDocument(eventRef.collection("rsvps").document(userId))
+            batch.deleteDocument(rsvpMirrors(userId).document(eventId))
+            try? await batch.commit()
         }
         try await eventRef.delete()
     }
 
     // MARK: - Notifications
 
+    /// Most people one event notification goes to (free-plan write budget).
+    private let maxFanOut = TrackRecordWriter.maxFanOut
+
     /// Free mode: tells the community's members about a new event (`community_event`).
-    /// `createNotifications` skips the actor and blocked users and batches by 450.
+    /// `createNotifications` skips the actor and blocked users.
     func notifyMembers(of event: CommunityEvent, community: Community) async {
         guard !AppConfig.serverFunctionsEnabled else { return }
-        let memberIds = await self.memberIds(communityId: community.id, ownerId: community.createdBy)
+        let memberIds = await self.memberIds(communityId: community.id)
         guard !memberIds.isEmpty else { return }
         await FirebaseServices.shared.createNotifications(
             to: memberIds,
             type: "community_event",
             title: "New event in \(community.name)",
             body: "\(event.title) · \(EventFormat.shortWhen(event.startsAt))",
-            data: ["route": "community", "communityId": community.id, "eventId": event.id]
+            data: ["route": "community", "communityId": community.id, "eventId": event.id],
+            communityId: community.id
         )
     }
 
-    /// Member ids, read the same way the callout fan-out reads them (the members collection).
-    private func memberIds(communityId: String, ownerId: String) async -> [String] {
-        guard let snapshot = try? await db.collection("communities").document(communityId)
-            .collection("members").getDocuments() else { return [] }
-        var ids = snapshot.documents.map(\.documentID)
-        if !ownerId.isEmpty, !ids.contains(ownerId) { ids.append(ownerId) }
-        return ids
+    /// Free mode: tells the people going that an event moved (`moved: true`) or was cancelled.
+    /// Read the RSVP ids before deleting the event: they can't be listed afterwards.
+    func notifyRSVPs(_ userIds: [String], about event: CommunityEvent, community: Community, cancelled: Bool) async {
+        guard !AppConfig.serverFunctionsEnabled, !userIds.isEmpty else { return }
+        let title = cancelled ? "Event cancelled in \(community.name)" : "Event time changed in \(community.name)"
+        let body = cancelled ? event.title : "\(event.title) · now \(EventFormat.shortWhen(event.startsAt))"
+        var data = ["route": "community", "communityId": community.id]
+        if !cancelled { data["eventId"] = event.id }
+        await FirebaseServices.shared.createNotifications(
+            to: userIds, type: "community_event", title: title, body: body, data: data,
+            communityId: community.id
+        )
+    }
+
+    /// Who RSVP'd to an event (at most `maxFanOut`). Empty when it can't be read.
+    func rsvpUserIds(communityId: String, eventId: String) async -> [String] {
+        do {
+            let snapshot = try await events(communityId).document(eventId).collection("rsvps")
+                .limit(to: maxFanOut).getDocuments()
+            return snapshot.documents.map(\.documentID)
+        } catch {
+            TrackRecordWriter.log("couldn't read RSVPs for \(eventId): \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Up to `maxFanOut` member ids, read the same way the callout fan-out reads them.
+    private func memberIds(communityId: String) async -> [String] {
+        await TrackRecordWriter.shared.memberIds(communityId: communityId)
     }
 }

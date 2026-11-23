@@ -90,7 +90,7 @@ struct BlockedUsersView: View {
     private func row(for userId: String) -> some View {
         let user = users[userId]
         return HStack(spacing: DS.Spacing.m) {
-            UserAvatar(username: user?.username ?? "?", imageURL: user?.profileImageUrl, size: 44)
+            UserAvatar(username: user?.username ?? "?", fullName: user?.fullName, imageURL: user?.profileImageUrl, size: 44)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayName(for: userId))
@@ -142,9 +142,10 @@ struct BlockedUsersView: View {
         }
         loadFailed = !blockStore.hasLoaded
 
-        for userId in blockStore.blockedIds where users[userId] == nil {
-            if let user = try? await FirebaseServices.shared.getUserById(userId: userId) {
-                users[userId] = user
+        let missing = blockStore.blockedIds.filter { users[$0] == nil }
+        if let fetched = try? await FirebaseServices.shared.getUsers(ids: Array(missing)) {
+            for user in fetched {
+                users[user.id] = user
             }
         }
         isLoading = false

@@ -21,15 +21,13 @@ extension ChannelChatView {
         Task {
             do {
                 let imageUrl = try await uploadImageToFirebase(image)
-                let mediaMessage = "[MEDIA:IMAGE]\(imageUrl)"
                 await MainActor.run {
-                    sendMediaMessage(content: mediaMessage)
+                    viewModel.sendMedia(MessageMedia(type: .image, url: imageUrl))
                     selectedImage = nil
                     isUploadingMedia = false
                 }
             } catch {
                 await MainActor.run {
-                    print("❌ Failed to upload image: \(error)")
                     uploadErrorMessage = "Couldn't upload the photo: \(error.localizedDescription)"
                     selectedImage = nil
                     isUploadingMedia = false
@@ -49,15 +47,13 @@ extension ChannelChatView {
             do {
                 let documentUrl = try await uploadDocumentToFirebase(url)
                 let fileName = url.lastPathComponent
-                let mediaMessage = "[MEDIA:DOCUMENT]\(documentUrl)|\(fileName)"
                 await MainActor.run {
-                    sendMediaMessage(content: mediaMessage)
+                    viewModel.sendMedia(MessageMedia(type: .document, url: documentUrl, fileName: fileName))
                     selectedDocumentURL = nil
                     isUploadingMedia = false
                 }
             } catch {
                 await MainActor.run {
-                    print("❌ Failed to upload document: \(error)")
                     uploadErrorMessage = "Couldn't upload the file: \(error.localizedDescription)"
                     selectedDocumentURL = nil
                     isUploadingMedia = false
@@ -66,27 +62,18 @@ extension ChannelChatView {
         }
     }
     
-    func sendMediaMessage(content: String) {
-        viewModel.sendMessage(content: content)
-    }
-    
     func uploadImageToFirebase(_ image: UIImage) async throws -> String {
-        print("🔄 Starting chat image upload...")
         
         guard let imageData = image.jpegData(compressionQuality: 0.7) else {
-            print("❌ Failed to convert image to data")
             throw NSError(domain: "ImageUpload", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to process image"])
         }
         
-        print("📊 Image data size: \(imageData.count) bytes")
         
         let fileName = "\(UUID().uuidString).jpg"
         let storageRef = Storage.storage().reference().child("chat_images").child(fileName)
         
-        print("🔍 Upload path: chat_images/\(fileName)")
         
         do {
-            print("🔄 Uploading chat image to Firebase Storage...")
             
             // Upload the file using proper async/await pattern
             _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StorageMetadata, Error>) in
@@ -100,7 +87,6 @@ extension ChannelChatView {
                     }
                 }
             }
-            print("✅ Chat image uploaded successfully")
             
             // Add retry logic for download URL
             var downloadURL: URL?
@@ -110,21 +96,16 @@ extension ChannelChatView {
             while downloadURL == nil && attempts < maxAttempts {
                 do {
                     attempts += 1
-                    print("🔄 Attempting to get download URL (attempt \(attempts)/\(maxAttempts))...")
                     
                     downloadURL = try await storageRef.downloadURL()
-                    print("✅ Download URL obtained: \(downloadURL!.absoluteString)")
                     
                 } catch {
-                    print("⚠️ Download URL attempt \(attempts) failed: \(error)")
                     
                     if attempts < maxAttempts {
                         // Wait before retrying (exponential backoff)
                         let delay = Double(attempts) * 0.5 // 0.5s, 1s, 1.5s, 2s
-                        print("⏳ Waiting \(delay)s before retry...")
                         try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     } else {
-                        print("❌ All download URL attempts failed")
                         throw error
                     }
                 }
@@ -137,30 +118,24 @@ extension ChannelChatView {
             return finalURL.absoluteString
             
         } catch {
-            print("❌ Chat image upload failed: \(error)")
             throw error
         }
     }
     
     func uploadDocumentToFirebase(_ url: URL) async throws -> String {
-        print("🔄 Starting document upload: \(url.lastPathComponent)")
         
         guard let documentData = try? Data(contentsOf: url) else {
-            print("❌ Failed to read document data")
             throw NSError(domain: "DocumentUpload", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to read document"])
         }
         
-        print("📊 Document data size: \(documentData.count) bytes")
         
         let originalName = url.lastPathComponent
         let fileExtension = (originalName as NSString).pathExtension
         let fileName = "\(UUID().uuidString).\(fileExtension)"
         let storageRef = Storage.storage().reference().child("chat_documents").child(fileName)
         
-        print("🔍 Upload path: chat_documents/\(fileName)")
         
         do {
-            print("🔄 Uploading document to Firebase Storage...")
             
             // Upload the file
             _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StorageMetadata, Error>) in
@@ -174,7 +149,6 @@ extension ChannelChatView {
                     }
                 }
             }
-            print("✅ Document uploaded successfully")
             
             // Add retry logic for download URL
             var downloadURL: URL?
@@ -184,21 +158,16 @@ extension ChannelChatView {
             while downloadURL == nil && attempts < maxAttempts {
                 do {
                     attempts += 1
-                    print("🔄 Attempting to get download URL (attempt \(attempts)/\(maxAttempts))...")
                     
                     downloadURL = try await storageRef.downloadURL()
-                    print("✅ Download URL obtained: \(downloadURL!.absoluteString)")
                     
                 } catch {
-                    print("⚠️ Download URL attempt \(attempts) failed: \(error)")
                     
                     if attempts < maxAttempts {
                         // Wait before retrying (exponential backoff)
                         let delay = Double(attempts) * 0.5 // 0.5s, 1s, 1.5s, 2s
-                        print("⏳ Waiting \(delay)s before retry...")
                         try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     } else {
-                        print("❌ All download URL attempts failed")
                         throw error
                     }
                 }
@@ -211,7 +180,6 @@ extension ChannelChatView {
             return finalURL.absoluteString
             
         } catch {
-            print("❌ Document upload failed: \(error)")
             throw error
         }
     }

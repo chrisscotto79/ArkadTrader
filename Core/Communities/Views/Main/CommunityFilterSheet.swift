@@ -111,10 +111,6 @@ struct CommunityFilterSheet: View {
         viewModel.selectedCategory = tempSelectedCategory
         viewModel.sortType = tempSortType
         viewModel.minimumMemberCount = Int(tempMinMembers)
-        
-        Task {
-            await viewModel.loadDiscoveryCommunities()
-        }
     }
     
     private func resetFilters() {

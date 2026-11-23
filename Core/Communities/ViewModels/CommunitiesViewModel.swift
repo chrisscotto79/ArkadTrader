@@ -1,472 +1,292 @@
 // File: Core/Communities/ViewModels/CommunitiesViewModel.swift
-// Updated Communities ViewModel with Complete Service Integration
+// The Communities tab: your communities, Discover (one query for the biggest public communities,
+// then category / size / sort filters on the phone), search, and joining.
 
 import Foundation
 import Combine
+import UIKit
 
 @MainActor
 class CommunitiesViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var featuredCommunities: [Community] = []
-    @Published var discoveryCommunities: [Community] = []
+    @Published private(set) var discoveryCommunities: [Community] = []
     @Published var userCommunities: [Community] = []
     @Published var isLoading = false
     @Published var errorMessage = ""
     /// Shown as an alert when joining fails (banned, paid community, network)
     @Published var joinErrorMessage: String?
-    
-    
-    // User stats
-    @Published var userStats: UserCommunityStats?
-    @Published var activeCommunities = 0
-    @Published var userGlobalRank = 0
-    
+    /// Communities with a join in flight
+    @Published private(set) var joiningIds: Set<String> = []
+
     // Search and filtering
     @Published var searchQuery = ""
-    @Published var selectedCategory: CommunityType? = nil
-    @Published var showPrivateCommunities = false
-    @Published var sortType: CommunitySortType = .memberCount
+    @Published var selectedCategory: CommunityType? = nil {
+        didSet { applyFilters() }
+    }
+    @Published var sortType: CommunitySortType = .memberCount {
+        didSet { applyFilters() }
+    }
     /// Discovery filter: hide communities with fewer members than this
-    @Published var minimumMemberCount = 0
-    
+    @Published var minimumMemberCount = 0 {
+        didSet { applyFilters() }
+    }
+
     // MARK: - Private Properties
     private let communityService = CommunityFirebaseService.shared
     private let authService = FirebaseAuthService.shared
     private var cancellables = Set<AnyCancellable>()
-    
-    
+    /// The biggest public communities, as last read
+    private var publicCommunities: [Community] = []
+    /// Results for `searchQuery`, before filters
+    private var searchResults: [Community] = []
+    private var discoveryTask: Task<Void, Never>?
+    private var searchTask: Task<Void, Never>?
+    private var hasLoaded = false
+
     // MARK: - Initialization
     init() {
         setupBindings()
     }
-    
-    // MARK: - Setup
+
     private func setupBindings() {
-        // React to auth state changes
+        // A different signed-in user (the first one is loaded by loadInitialDataIfNeeded)
         authService.$currentUser
-            .compactMap { $0 }
+            .map { $0?.id }
+            .removeDuplicates()
+            .dropFirst()
             .sink { [weak self] _ in
-                Task {
-                    await self?.loadUserCommunities()
-                    await self?.loadUserStats()
-                }
+                Task { await self?.loadUserCommunities() }
             }
             .store(in: &cancellables)
-        
-        // Setup search debouncing
+
         $searchQuery
+            .dropFirst()
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .removeDuplicates()
             .sink { [weak self] query in
-                if !query.isEmpty {
-                    Task { await self?.searchCommunities(query: query) }
-                } else {
-                    Task { await self?.loadDiscoveryCommunities() }
-                }
+                self?.runSearch(query)
             }
             .store(in: &cancellables)
-        
-        // React to category changes
-        $selectedCategory
-            .sink { [weak self] _ in
-                Task { await self?.loadDiscoveryCommunities() }
-            }
-            .store(in: &cancellables)
-        
-        // React to privacy filter changes
-        $showPrivateCommunities
-            .sink { [weak self] _ in
-                Task { await self?.loadDiscoveryCommunities() }
-            }
-            .store(in: &cancellables)
-    }
-    
-    // MARK: - Public Methods
-    
-    /// Load initial data when view appears
-    func loadInitialData() {
-        Task {
-            isLoading = true
-            errorMessage = ""
-            
-            // Sequential execution - simple and reliable
-            await loadFeaturedCommunities()
-            await loadDiscoveryCommunities()
-            await loadUserCommunities()
-            await loadUserStats()
-            
-            isLoading = false
-        }
     }
 
-    /// Refresh all data
-    func refreshData() {
-        loadInitialData()
+    // MARK: - Loading
+
+    /// Loads everything once per screen; later visits keep what's on screen.
+    func loadInitialDataIfNeeded() async {
+        guard !hasLoaded else { return }
+        hasLoaded = true
+        await refresh()
     }
-    
-    // MARK: - Data Loading Methods
-    
-    /// Load featured communities
-    func loadFeaturedCommunities() async {
-        do {
-            let featured = try await communityService.loadFeaturedCommunities(limit: 5)
-            featuredCommunities = featured
-        } catch {
-            handleError(error, context: "loading featured communities")
+
+    /// Pull to refresh: your communities and Discover
+    func refresh() async {
+        isLoading = true
+        errorMessage = ""
+        async let mine: Void = loadUserCommunities()
+        async let discovery: Void = loadDiscoveryCommunities()
+        _ = await (mine, discovery)
+        if !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+            await search(searchQuery)
         }
+        isLoading = false
     }
-    
-    /// Load discovery communities with filters
+
+    /// Reads the biggest public communities (one query) and applies the filters.
+    /// A newer call cancels an older one, so results never arrive out of order.
     func loadDiscoveryCommunities() async {
-        do {
-            var communities: [Community]
-            
-            // Apply category filter
-            if let category = selectedCategory {
-                communities = try await communityService.loadCommunitiesByCategory(category)
-            } else {
-                communities = try await communityService.loadDiscoveryCommunities()
+        discoveryTask?.cancel()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let communities = try await self.communityService.loadDiscoveryCommunities(limit: 100)
+                guard !Task.isCancelled else { return }
+                self.publicCommunities = communities
+                self.featuredCommunities = Array(communities.sorted { $0.discoveryScore > $1.discoveryScore }.prefix(5))
+                self.applyFilters()
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.handleError(error, context: "loading communities")
             }
-            
-            // Apply privacy filter
-            communities = communityService.filterCommunitiesByPrivacy(
-                communities,
-                showPrivate: showPrivateCommunities
-            )
-            
-            // Apply member count filter
-            if minimumMemberCount > 0 {
-                communities = communities.filter { $0.memberCount >= minimumMemberCount }
-            }
-            
-            // Apply sorting
-            communities = communityService.sortCommunities(communities, by: sortType)
-            
-            discoveryCommunities = communities
-            
-        } catch {
-            handleError(error, context: "loading discovery communities")
         }
+        discoveryTask = task
+        await task.value
     }
-    
-    /// Load user's communities
+
     func loadUserCommunities() async {
         guard let userId = authService.currentUser?.id else {
             userCommunities = []
             return
         }
-        
         do {
-            let communities = try await communityService.loadUserCommunities(userId: userId)
-            userCommunities = communities
-            activeCommunities = communities.count
+            userCommunities = try await communityService.loadUserCommunities(userId: userId)
         } catch {
-            handleError(error, context: "loading user communities")
+            handleError(error, context: "loading your communities")
         }
     }
-    
-    /// Load user statistics
-    func loadUserStats() async {
-        guard let userId = authService.currentUser?.id else {
-            userStats = nil
+
+    // MARK: - Search and filtering
+
+    private func runSearch(_ query: String) {
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            await self?.search(query)
+        }
+    }
+
+    /// Public communities matching the query, plus your own (private ones included) that match by name
+    func searchCommunities(query: String) async {
+        searchTask?.cancel()
+        await search(query)
+    }
+
+    private func search(_ query: String) async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            searchResults = []
+            applyFilters()
             return
         }
-        
         do {
-            let stats = try await communityService.getUserCommunityStats(userId: userId)
-            userStats = stats
-            activeCommunities = stats.activeCommunities
-            userGlobalRank = stats.globalRank
+            var results = try await communityService.searchCommunities(query: trimmed)
+            guard !Task.isCancelled, trimmed == searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            let lowered = trimmed.lowercased()
+            let ownMatches = userCommunities.filter {
+                $0.name.lowercased().contains(lowered) && !results.map(\.id).contains($0.id)
+            }
+            results = ownMatches + results
+            searchResults = results
+            applyFilters()
         } catch {
-            handleError(error, context: "loading user stats")
+            guard !Task.isCancelled else { return }
+            handleError(error, context: "searching communities")
         }
     }
-    
-    // MARK: - Community Actions
-    
-    /// Join a community
+
+    /// Category, size and sort, applied to the loaded communities (no extra reads)
+    private func applyFilters() {
+        let isSearching = !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+        var communities = isSearching ? searchResults : publicCommunities
+        if let category = selectedCategory {
+            communities = communities.filter { $0.type == category }
+        }
+        if minimumMemberCount > 0 {
+            communities = communities.filter { $0.memberCount >= minimumMemberCount }
+        }
+        // Search results keep their relevance order unless a sort was picked
+        if !isSearching || sortType != .memberCount {
+            communities = communityService.sortCommunities(communities, by: sortType)
+        }
+        discoveryCommunities = communities
+    }
+
+    // MARK: - Joining
+
+    func isJoining(_ community: Community) -> Bool {
+        joiningIds.contains(community.id)
+    }
+
+    /// Joins a free community. The community shows as joined right away; the haptic plays on success.
     func joinCommunity(_ community: Community) {
-        guard let userId = authService.currentUser?.id else { return }
-        
+        guard let userId = authService.currentUser?.id, !joiningIds.contains(community.id) else { return }
+        joiningIds.insert(community.id)
+
         Task {
+            defer { joiningIds.remove(community.id) }
             do {
-                try await communityService.joinCommunity(
-                    communityId: community.id,
-                    userId: userId
-                )
-                
+                try await communityService.joinCommunity(communityId: community.id, userId: userId)
+                var joined = community
+                joined.memberCount += 1
+                if !userCommunities.contains(where: { $0.id == community.id }) {
+                    userCommunities.append(joined)
+                }
+                replace(joined)
+                HapticManager.shared.notification(type: .success)
+
                 // A first join is a good moment to ask about notifications. Without the
                 // server there's no remote push, so only ask when it's on.
                 if AppConfig.serverFunctionsEnabled {
                     await PushNotificationManager.shared.requestAuthorizationIfNeeded()
                 }
-
-                // Refresh data after joining
-                await loadUserCommunities()
-                await loadDiscoveryCommunities()
-                await loadUserStats()
-                
             } catch let error as CommunityJoinError {
+                HapticManager.shared.notification(type: .error)
                 joinErrorMessage = error.errorDescription
             } catch {
+                HapticManager.shared.notification(type: .error)
                 joinErrorMessage = "Couldn't join \(community.name). Check your connection and try again."
-                handleError(error, context: "joining community")
             }
         }
     }
-    
-    /// Leave a community
-    func leaveCommunity(_ community: Community) {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        Task {
-            do {
-                try await communityService.leaveCommunity(
-                    communityId: community.id,
-                    userId: userId
-                )
-                
-                // Refresh data after leaving
-                await loadUserCommunities()
-                await loadDiscoveryCommunities()
-                await loadUserStats()
-                
-            } catch {
-                handleError(error, context: "leaving community")
-            }
+
+    /// Joins with an invite code (private communities). Returns the community to open.
+    func joinWithInviteCode(_ code: String) async throws -> Community {
+        guard let userId = authService.currentUser?.id else { throw CommunityError.noPermission }
+        let community = try await communityService.joinWithInviteCode(code, userId: userId)
+        if !userCommunities.contains(where: { $0.id == community.id }) {
+            userCommunities.append(community)
         }
+        HapticManager.shared.notification(type: .success)
+        return community
     }
-    
-    /// Create a new community
-    func createCommunity(_ community: Community) {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        Task {
-            do {
-                // Check if user can create more communities
-                let canCreate = try await communityService.canUserCreateCommunity(userId: userId)
-                guard canCreate.canCreate else {
-                    errorMessage = canCreate.message
-                    return
-                }
-                
-                try await communityService.createCommunity(community)
-                
-                // Refresh data after creating
-                await loadUserCommunities()
-                await loadDiscoveryCommunities()
-                await loadUserStats()
-                
-            } catch {
-                handleError(error, context: "creating community")
-            }
+
+    /// Puts an updated copy of a community into the Discover lists
+    private func replace(_ community: Community) {
+        if let index = publicCommunities.firstIndex(where: { $0.id == community.id }) {
+            publicCommunities[index] = community
         }
-    }
-    
-    // MARK: - Search and Filtering
-    
-    /// Search communities
-    func searchCommunities(query: String) async {
-        do {
-            // Simple search first
-            var results = try await communityService.searchCommunities(query: query)
-            
-            // Apply filters manually
-            if let category = selectedCategory {
-                results = results.filter { $0.type == category }
-            }
-            
-            if !showPrivateCommunities {
-                results = results.filter { !$0.isPrivate }
-            }
-            
-            if minimumMemberCount > 0 {
-                results = results.filter { $0.memberCount >= minimumMemberCount }
-            }
-            
-            discoveryCommunities = communityService.sortCommunities(results, by: sortType)
-        } catch {
-            handleError(error, context: "searching communities")
+        if let index = searchResults.firstIndex(where: { $0.id == community.id }) {
+            searchResults[index] = community
         }
+        if let index = featuredCommunities.firstIndex(where: { $0.id == community.id }) {
+            featuredCommunities[index] = community
+        }
+        applyFilters()
     }
-    
-    /// Filter by category
-    func filterByCategory(_ category: CommunityType?) {
-        selectedCategory = category
-        // Auto-triggers loadDiscoveryCommunities via binding
-    }
-    
-    /// Toggle private communities visibility
-    func togglePrivateCommunities() {
-        showPrivateCommunities.toggle()
-        // Auto-triggers loadDiscoveryCommunities via binding
-    }
-    
-    /// Sort communities
-    func sortCommunitiesBy(_ sortType: CommunitySortType) {
-        self.sortType = sortType
-        discoveryCommunities = communityService.sortCommunities(discoveryCommunities, by: sortType)
-    }
-    
+
     // MARK: - Community Information
-    
-    /// Check if user is member of community
+
     func isUserMember(of community: Community) -> Bool {
-        return userCommunities.contains { $0.id == community.id }
+        userCommunities.contains { $0.id == community.id }
     }
-    
-    /// Check if user owns community
-    func isUserOwner(of community: Community) -> Bool {
-        guard let userId = authService.currentUser?.id else { return false }
-        return community.createdBy == userId
-    }
-    
-    /// Get communities created by user
+
+    /// Communities created by the user
     var userOwnedCommunities: [Community] {
         guard let userId = authService.currentUser?.id else { return [] }
         return userCommunities.filter { $0.createdBy == userId }
     }
-    
-    /// Get communities user is member of (but didn't create)
+
+    /// Communities the user is a member of (but didn't create)
     var userMemberCommunities: [Community] {
         guard let userId = authService.currentUser?.id else { return [] }
         return userCommunities.filter { $0.createdBy != userId }
     }
-    
-    /// Get count of communities by type
-    func communitiesCount(for type: CommunityType) -> Int {
-        return discoveryCommunities.filter { $0.type == type }.count
-    }
-    
-    // MARK: - Validation
-    
-    /// Validate community creation data
-    func validateCommunityData(name: String, description: String) -> (isValid: Bool, message: String) {
-        let nameValidation = communityService.validateCommunityName(name)
-        if !nameValidation.isValid {
-            return nameValidation
-        }
-        
-        let descriptionValidation = communityService.validateCommunityDescription(description)
-        if !descriptionValidation.isValid {
-            return descriptionValidation
-        }
-        
-        return (true, "")
-    }
-    
+
     // MARK: - Error Handling
-    
+
     private func handleError(_ error: Error, context: String) {
-        let message = communityService.handleCommunityError(error)
-        errorMessage = "Error \(context): \(message)"
-        print("❌ CommunitiesViewModel - Error \(context): \(error)")
+        errorMessage = "Error \(context): \(communityService.handleCommunityError(error))"
     }
-    
-    /// Clear error message
+
     func clearError() {
         errorMessage = ""
     }
-    
-    // MARK: - Computed Properties
-    
-    /// Whether user has any communities
-    var hasUserCommunities: Bool {
-        !userCommunities.isEmpty
-    }
-    
-    /// Count of communities user created
-    var userCreatedCommunitiesCount: Int {
-        userOwnedCommunities.count
-    }
-    
-    /// Whether data is currently loading
-    var isDataLoading: Bool {
-        isLoading
-    }
-    
-    /// Whether there's an active error
-    var hasError: Bool {
-        !errorMessage.isEmpty
-    }
-    
-    // MARK: - Leaderboard Data
-    
-    @Published var leaderboardData: CommunityLeaderboards?
-    
-    /// Load leaderboard data
-    func loadLeaderboards() async {
-        do {
-            let leaderboards = try await communityService.getCommunityLeaderboards()
-            leaderboardData = leaderboards
-        } catch {
-            handleError(error, context: "loading leaderboards")
-        }
-    }
 }
 
-
 extension CommunitiesViewModel {
-    
-    // MARK: - Grouped Communities for Discover Tab
-    
-    /// Communities grouped by type in the desired display order
-    var groupedDiscoveryCommunities: [(type: CommunityType, communities: [Community])] {
-        // Define the display order
-        let typeOrder: [CommunityType] = [
-            .dayTrading,
-            .swingTrading,
-            .options,
-            .crypto,
-            .stocks,
-            .general
-        ]
-        
-        // Group communities by type
-        let grouped = Dictionary(grouping: discoveryCommunities) { $0.type }
-        
-        // Return in the specified order, only including types that have communities
-        return typeOrder.compactMap { type in
-            guard let communities = grouped[type], !communities.isEmpty else {
-                return nil
-            }
-            return (type: type, communities: communities.sorted {
-                // Sort within each group by member count (descending) and then by name
-                if $0.memberCount != $1.memberCount {
-                    return $0.memberCount > $1.memberCount
-                }
-                return $0.name < $1.name
-            })
-        }
-    }
-    
-    /// All community types in display order (for showing empty states)
+    /// All community types in display order
     var allCommunityTypesInOrder: [CommunityType] {
-        return [.dayTrading, .swingTrading, .options, .crypto, .stocks, .general]
+        [.dayTrading, .swingTrading, .options, .crypto, .stocks, .general]
     }
-    
-    /// Get communities for a specific type
+
+    /// Discover communities of one type, in the chosen sort order
     func communitiesForType(_ type: CommunityType) -> [Community] {
-        // discoveryCommunities is already in the user's chosen sort order
-        return discoveryCommunities.filter { $0.type == type }
+        discoveryCommunities.filter { $0.type == type }
     }
-    
-    /// Check if a community type has any communities
-    func hasCommunitiesForType(_ type: CommunityType) -> Bool {
-        return discoveryCommunities.contains { $0.type == type }
-    }
-    
-    /// Get empty community types (for showing empty states)
-    var emptyCommunityTypes: [CommunityType] {
-        let typesWithCommunities = Set(discoveryCommunities.map { $0.type })
-        return allCommunityTypesInOrder.filter { !typesWithCommunities.contains($0) }
-    }
-    
-    /// Get section title for a community type
+
     func sectionTitle(for type: CommunityType) -> String {
-        return type.shortDisplayName
+        type.shortDisplayName
     }
-    
-    /// Get section icon for a community type
+
     func sectionIcon(for type: CommunityType) -> String {
         switch type {
         case .general: return "person.3"
@@ -475,18 +295,6 @@ extension CommunitiesViewModel {
         case .options: return "option"
         case .crypto: return "bitcoinsign.circle"
         case .stocks: return "building.columns"
-        }
-    }
-    
-    /// Get section color for a community type
-    func sectionColor(for type: CommunityType) -> String {
-        switch type {
-        case .dayTrading: return "red"
-        case .swingTrading: return "orange"
-        case .options: return "purple"
-        case .crypto: return "yellow"
-        case .stocks: return "green"
-        case .general: return "blue"
         }
     }
 }

@@ -157,6 +157,11 @@ struct EditProfileView: View {
                 submitLabel: .next,
                 autocorrectionDisabled: true
             )
+            .onChange(of: username) { _, newValue in
+                // Usernames are lowercase
+                let lowered = newValue.lowercased()
+                if lowered != newValue { username = lowered }
+            }
 
             VStack(alignment: .trailing, spacing: 6) {
                 CustomTextField(
@@ -214,11 +219,12 @@ struct EditProfileView: View {
         isLoading = true
 
         do {
+            // Only what changed is saved; an empty bio removes it
             try await authService.updateProfile(
-                fullName: fullName.isEmpty ? nil : fullName,
-                bio: bio.isEmpty ? nil : bio,
-                username: username.isEmpty ? nil : username,
-                profileImage: selectedImage // Pass the selected image
+                fullName: fullName,
+                bio: bio,
+                username: username,
+                profileImage: selectedImage
             )
 
             // Reset image changed flag
@@ -227,7 +233,7 @@ struct EditProfileView: View {
 
             dismiss()
         } catch {
-            validationMessage = "Failed to update profile: \(error.localizedDescription)"
+            validationMessage = error.localizedDescription
             showValidationError = true
         }
 
@@ -237,7 +243,8 @@ struct EditProfileView: View {
     // MARK: - Validation
 
     private var isValidFullName: Bool {
-        return fullName.count >= 2 && fullName.count <= 50
+        let count = fullName.trimmingCharacters(in: .whitespacesAndNewlines).count
+        return count >= 2 && count <= 50
     }
 
     private var isValidBio: Bool {
@@ -261,7 +268,7 @@ struct EditProfileView: View {
             return "Bio must be 150 characters or less"
         }
         if !isValidUsername {
-            return "Username must be 3-20 characters, letters, numbers, and underscores only"
+            return "Username: 3-20 characters, letters, numbers and underscores"
         }
         return ""
     }

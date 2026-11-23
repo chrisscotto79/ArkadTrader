@@ -5,6 +5,7 @@
 // gets the free layout: members, activity, the callout record and recent members.
 
 import SwiftUI
+import FirebaseFirestore
 
 private extension Community {
     /// Subscribers, revenue and payouts apply: paid communities are on and this one is paid
@@ -21,44 +22,78 @@ final class CommunityDashboardViewModel: ObservableObject {
         case failed
     }
 
-    @Published private(set) var members: [CommunityMemberWithRole] = []
+    /// The most recent members (owner excluded), newest first
+    @Published private(set) var recentMembers: [CommunityMemberWithRole] = []
+    /// Members who joined in the last 7 days, owner excluded
+    @Published private(set) var newMembersThisWeek = 0
     @Published private(set) var isLoadingMembers = false
     @Published private(set) var membersFailed = false
     @Published private(set) var revenueState: RevenueState = .loading
     @Published private(set) var payoutStatus: StripeAccountStatus?
 
+    private let recentLimit = 5
+
     func load(community: Community) async {
         if community.hasPaidDashboard {
             async let revenueTask: Void = loadRevenue(communityId: community.id)
             async let payoutsTask: Void = loadPayoutStatus()
-            await loadMembers(communityId: community.id)
+            await loadMembers(community: community)
             await revenueTask
             await payoutsTask
         } else {
-            await loadMembers(communityId: community.id)
+            await loadMembers(community: community)
         }
     }
 
-    /// Members who joined in the last 7 days, owner excluded
-    var newMembersThisWeek: Int {
-        let weekAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        return members.filter { $0.role != .owner && $0.joinedAt > weekAgo }.count
-    }
-
-    /// Members who joined most recently, owner excluded
-    var recentMembers: [CommunityMemberWithRole] {
-        Array(members.filter { $0.role != .owner }.sorted { $0.joinedAt > $1.joinedAt }.prefix(5))
-    }
-
-    private func loadMembers(communityId: String) async {
+    /// The newest members (one query, plus one profile read each) and a count() of this week's.
+    /// Member docs without `joinedAt` are left out of both, so they never count as new.
+    private func loadMembers(community: Community) async {
         isLoadingMembers = true
         membersFailed = false
+        defer { isLoadingMembers = false }
+        let members = FirebaseServices.shared.db.collection("communities").document(community.id).collection("members")
+        let weekAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
         do {
-            members = try await CommunityFirebaseService.shared.getCommunityMembersWithRoles(communityId: communityId)
+            async let recentSnapshot = members
+                .order(by: "joinedAt", descending: true)
+                .limit(to: recentLimit + 1)  // the owner may be among them
+                .getDocuments()
+            async let weekCount = members
+                .whereField("joinedAt", isGreaterThan: Timestamp(date: weekAgo))
+                .count
+                .getAggregation(source: .server)
+
+            let recent = try await recentSnapshot.documents
+            let docs = recent.filter { $0.documentID != community.createdBy }
+            var count = try await weekCount.count.intValue
+            // Leave the owner out of the count when their own member doc is from this week
+            if !community.createdBy.isEmpty {
+                let ownerData = try? await members.document(community.createdBy).getDocument().data()
+                if let ownerJoined = (ownerData?["joinedAt"] as? Timestamp)?.dateValue(), ownerJoined > weekAgo {
+                    count = max(count - 1, 0)
+                }
+            }
+            newMembersThisWeek = count
+
+            var loaded: [CommunityMemberWithRole] = []
+            for doc in docs.prefix(recentLimit) {
+                let data = doc.data()
+                guard let joinedAt = (data["joinedAt"] as? Timestamp)?.dateValue() else { continue }
+                let role = CommunityRole(rawValue: data["role"] as? String ?? "") ?? .member
+                let user = try? await FirebaseServices.shared.getUserById(userId: doc.documentID)
+                loaded.append(CommunityMemberWithRole(
+                    userId: doc.documentID,
+                    username: user?.username ?? "member",
+                    fullName: user?.fullName ?? "",
+                    role: role,
+                    joinedAt: joinedAt,
+                    profileImageUrl: user?.profileImageUrl
+                ))
+            }
+            recentMembers = loaded
         } catch {
             membersFailed = true
         }
-        isLoadingMembers = false
     }
 
     private func loadRevenue(communityId: String) async {
@@ -293,7 +328,7 @@ struct CommunityDashboardView: View {
     private var recentMembersSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             SectionHeader(title: "Recent members")
-            if viewModel.isLoadingMembers && viewModel.members.isEmpty {
+            if viewModel.isLoadingMembers && viewModel.recentMembers.isEmpty {
                 HStack(spacing: DS.Spacing.m) {
                     ProgressView()
                     Text("Loading members…")
@@ -309,7 +344,7 @@ struct CommunityDashboardView: View {
             } else {
                 CommunityCardList(items: viewModel.recentMembers, dividerInset: 68) { member in
                     HStack(spacing: DS.Spacing.m) {
-                        UserAvatar(username: member.displayName, imageURL: member.profileImageUrl, size: 40)
+                        UserAvatar(username: member.username, fullName: member.fullName, imageURL: member.profileImageUrl, size: 40)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(member.displayName)
                                 .font(.subheadline.weight(.semibold))

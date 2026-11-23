@@ -218,7 +218,10 @@ struct PositionSizeCalculatorView: View {
 
         let riskPerShare = abs(entry - stop)
         let budget = account * riskPercent / 100
-        let shares = Int((budget / riskPerShare).rounded(.down))
+        let rawShares = (budget / riskPerShare).rounded(.down)
+        // Huge or tiny inputs can make this overflow Int
+        guard rawShares.isFinite, rawShares >= 0, rawShares <= Self.maxShares else { return nil }
+        let shares = Int(rawShares)
         let positionValue = Double(shares) * entry
 
         return Result(
@@ -233,9 +236,18 @@ struct PositionSizeCalculatorView: View {
         )
     }
 
+    /// More shares than this and the numbers are almost certainly a typo.
+    private static let maxShares: Double = 1_000_000_000_000
+
     private var missingInputMessage: String {
         if let entry = Self.parse(entryText), let stop = Self.parse(stopText), entry == stop {
             return "Your stop needs to be different from your entry."
+        }
+        if let account = Self.parse(accountText), account > 0,
+           let riskPercent, riskPercent > 0, riskPercent <= 100,
+           let entry = Self.parse(entryText), entry > 0,
+           let stop = Self.parse(stopText), stop > 0, stop != entry {
+            return "Those numbers are too large to work out. Check your account size, entry and stop."
         }
         return "Enter your account size, risk, entry and stop to see how many shares to buy."
     }

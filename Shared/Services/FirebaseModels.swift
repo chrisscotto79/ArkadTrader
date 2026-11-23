@@ -15,7 +15,7 @@ enum FirestoreError: LocalizedError {
     case documentNotFound
     case unauthorized
     case networkError
-    case uploadFailed  // ✅ ADD THIS LINE
+    case uploadFailed
     
     var errorDescription: String? {
         switch self {
@@ -70,6 +70,9 @@ struct UserStats {
 // MARK: - Comment Model
 
 struct Comment: Identifiable, Codable {
+    /// The longest comment the app (and the database rules) accept.
+    static let maxLength = 2000
+
     let id: String
     let postId: String
     let content: String
@@ -103,13 +106,14 @@ struct Comment: Identifiable, Codable {
         self.parentCommentId = parentCommentId
     }
     
+    /// For a new comment: `createdAt` is the server's time (the rules require it).
     func toFirestore() -> [String: Any] {
         var data: [String: Any] = [
             "postId": postId,
             "content": content,
             "authorId": authorId,
             "authorUsername": authorUsername,
-            "createdAt": Timestamp(date: createdAt),
+            "createdAt": FieldValue.serverTimestamp(),
             "likesCount": likesCount
         ]
         
@@ -125,20 +129,19 @@ struct Comment: Identifiable, Codable {
         guard let postId = data["postId"] as? String,
               let content = data["content"] as? String,
               let authorId = data["authorId"] as? String,
-              let authorUsername = data["authorUsername"] as? String,
-              let createdAtTimestamp = data["createdAt"] as? Timestamp,
-              let likesCount = data["likesCount"] as? Int else {
+              let authorUsername = data["authorUsername"] as? String else {
             throw FirestoreError.invalidData
         }
-        
+
         return Comment(
             id: id,
             postId: postId,
             content: content,
             authorId: authorId,
             authorUsername: authorUsername,
-            createdAt: createdAtTimestamp.dateValue(),
-            likesCount: likesCount,
+            // A pending server timestamp (your own new comment) reads as nil
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+            likesCount: max(0, data["likesCount"] as? Int ?? 0),
             parentCommentId: data["parentCommentId"] as? String
         )
     }
@@ -176,8 +179,9 @@ struct Conversation: Identifiable, Codable {
 
 // MARK: - User Notification Model
 
-/// A `notifications/{id}` document. Cloud Functions create these; the app only reads
-/// them and sets `isRead` (docs/backend-contracts.md, section 2).
+/// A `notifications/{id}` document. In free mode the sender's app writes these (security
+/// rules check the shape and evidence); in server mode Cloud Functions create them. The
+/// recipient only reads them and sets `isRead` (docs/backend-contracts.md, section 2).
 struct UserNotification: Identifiable {
     let id: String
     let userId: String

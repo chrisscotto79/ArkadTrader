@@ -4,21 +4,23 @@ rules_version = '2';
 // Contract: docs/backend-contracts.md, section 0. The stricter rules for when the
 // Cloud Functions are deployed are in firestore.server.rules.
 //
-// Free-mode differences: the app writes its own traderStats and callout mirror,
-// tracks and closes its own callouts, creates inbox notifications for others,
-// triggers its own price alerts, counts post reports, and stores small images in
-// /images. Trade proof labels and locked fields are enforced here.
+// Free mode means the phone does work a server would normally do: it writes its own
+// trader stats and callout mirror, tracks and closes its own callouts, creates inbox
+// notifications for other people, triggers its own price alerts and counts reports.
+// These rules can't re-run that work, so they bound it: fixed field lists, server
+// timestamps, numbers that must agree with each other, and evidence documents
+// (a like, a follow, a membership) that must exist before a notification is allowed.
 //
 // Principles
 // - Every read and write needs a signed-in user.
-// - Server-only data (traderStats, stripeAccounts, private/*, brokerage*, notifications,
-//   subscription fields on members, callout tracking fields) is written only by Cloud
-//   Functions (the Admin SDK bypasses these rules).
-// - Paid communities: only members can read channels, messages, reactions and typing.
-//   Everyone signed in can read the community doc, its rules and its trader stats (the preview).
-// - Writes the app makes to other people's documents (follow counts, like counts,
-//   member counts, removing a community from a removed member's list) are allowed only
-//   as the exact, minimal change those flows make.
+// - New posts, comments, chat messages, notifications and trades carry a server
+//   timestamp (createdAt / loggedAt == request.time), so dates can't be back-dated.
+// - Counters on other people's documents (followers, likes, comments, members, RSVPs)
+//   move by exactly 1, in the same batch that creates or deletes the matching doc.
+// - Private data (email, starting capital, private trades, private communities) is
+//   readable only by its owner or members.
+// - Batched writes may make at most 20 document lookups in total, so fan-out
+//   notifications check only the sender, never each recipient.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -35,25 +37,45 @@ service cloud.firestore {
     function unchanged(key, fallback) {
       return request.resource.data.get(key, fallback) == resource.data.get(key, fallback);
     }
+    // Keys added or changed (not removed) by this update.
+    function addedOrChanged() {
+      let d = request.resource.data.diff(resource.data);
+      return d.addedKeys().union(d.changedKeys());
+    }
+    function isNow(t) { return t == request.time; }
+    function shortString(s, max) { return s is string && s.size() <= max; }
+    function isCount(n) { return n is int && n >= 0; }
+
+    function userPath(uid) { return /databases/$(database)/documents/users/$(uid); }
+    function myUsername() { return get(userPath(me())).data.get('username', ''); }
+    function deletionRequested(uid) {
+      return exists(/databases/$(database)/documents/deletionRequests/$(uid));
+    }
 
     // Communities
     function communityPath(cid) { return /databases/$(database)/documents/communities/$(cid); }
     function memberPath(cid, userId) { return /databases/$(database)/documents/communities/$(cid)/members/$(userId); }
     function banPath(cid, userId) { return /databases/$(database)/documents/communities/$(cid)/bans/$(userId); }
+    function invitePath(code) { return /databases/$(database)/documents/communityInvites/$(code); }
     function community(cid) { return get(communityPath(cid)).data; }
     function isOwner(cid) { return signedIn() && community(cid).createdBy == me(); }
     function isMember(cid) { return signedIn() && exists(memberPath(cid, me())); }
     function myMember(cid) { return get(memberPath(cid, me())).data; }
     function isBanned(cid) { return exists(banPath(cid, me())); }
     function isPaidCommunity(cid) { return community(cid).get('isPaid', false) == true; }
+    function isPrivateCommunity(cid) { return community(cid).get('isPrivate', false) == true; }
 
-    // A member whose paid subscription has ended keeps no access (the webhook normally removes them).
+    // A member whose paid subscription has ended keeps no access.
     function hasAccess(cid) {
       return isOwner(cid)
         || (isMember(cid) && myMember(cid).get('subscriptionStatus', 'none') != 'canceled');
     }
-    // Free communities are readable by anyone signed in (the app shows them before joining).
-    function canRead(cid) { return signedIn() && (!isPaidCommunity(cid) || hasAccess(cid)); }
+    // Free public communities are readable by anyone signed in who isn't banned.
+    // Private and paid ones only by members.
+    function canRead(cid) {
+      return signedIn() && !isBanned(cid)
+        && ((!isPaidCommunity(cid) && !isPrivateCommunity(cid)) || hasAccess(cid));
+    }
 
     // owner 4 > admin 3 > moderator 2 > member 1 > not a member 0
     function roleLevel(role) { return role == 'admin' ? 3 : (role == 'moderator' ? 2 : 1); }
@@ -71,32 +93,86 @@ service cloud.firestore {
         && myMember(cid).get('mutedUntil', null) != null
         && myMember(cid).mutedUntil > request.time;
     }
+    // The owner, while the community doc still exists (it is deleted last).
+    function ownerCleaningUp(cid) { return signedIn() && exists(communityPath(cid)) && isOwner(cid); }
 
     // Users
     function blockedBy(ownerId) { return exists(/databases/$(database)/documents/users/$(ownerId)/blockedUsers/$(me())); }
 
+    // Tickers: up to 10, uppercase, optional class suffix (BRK.B).
+    function validTickers(list) {
+      return list is list && list.size() <= 10
+        && (list.size() == 0
+            || list.join(',').matches('^[A-Z]{1,5}([.][A-Z])?(,[A-Z]{1,5}([.][A-Z])?)*$'));
+    }
+
+    // A callout result in percent, signed for direction: within 0.05 of the formula.
+    function resultMatches(direction, entry, exit, pct) {
+      let sign = direction == 'short' ? -1 : 1;
+      return pct is number && entry is number && entry > 0 && exit is number && exit > 0
+        && math.abs(pct - sign * (exit - entry) / entry * 100) <= 0.05;
+    }
+    // A closed callout's numbers agree: a target hit exits at the target, a stop-out at the stop.
+    function validCalloutClose(c) {
+      return c.status in ['target_hit', 'stopped_out', 'closed']
+        && c.exitPrice is number && c.exitPrice > 0
+        && c.closedAt is timestamp
+        && (c.status != 'target_hit' || c.exitPrice == c.get('targetPrice', -1))
+        && (c.status != 'stopped_out' || c.exitPrice == c.get('stopPrice', -1))
+        && resultMatches(c.direction, c.entryPrice, c.exitPrice, c.resultPercent);
+    }
+
     // ---------------------------------------------------------------- users
 
     match /users/{userId} {
+      // Public profile. Email and starting capital live in users/{uid}/private/profile.
       allow read: if signedIn();
 
-      // Onboarding writes experienceLevel, interests, onboardingCompleted and
-      // notificationPrefs; verification and plan tier are never self-granted.
       allow create: if isSelf(userId)
         && incoming().get('isVerified', false) == false
-        && incoming().get('subscriptionTier', 'basic') == 'basic';
+        && incoming().get('subscriptionTier', 'basic') == 'basic'
+        && incoming().get('followersCount', 0) == 0
+        && incoming().get('followingCount', 0) == 0
+        && !incoming().keys().hasAny(['email', 'startingCapital'])
+        && ownsUsername(incoming().username);
 
       allow update: if (isSelf(userId) && ownProfileUpdate())
-        || (signedIn() && !isSelf(userId) && (followersDelta(userId) || followingDecrement(userId) || communityRemoval()));
+        || (signedIn() && !isSelf(userId) && (followersDelta(userId) || followingDecrement(userId) || communityRemoval()))
+        || (isSelf(userId) && ownFollowingDelta(userId));
 
       allow delete: if isSelf(userId);
 
-      function ownProfileUpdate() {
-        return unchanged('isVerified', false) && unchanged('subscriptionTier', 'basic');
+      // Usernames are lowercase and claimed in usernames/{name} in the same batch.
+      function ownsUsername(name) {
+        return name is string && name.matches('^[a-z0-9_]{3,20}$')
+          && getAfter(/databases/$(database)/documents/usernames/$(name)).data.uid == me();
       }
 
-      // follow / unfollow: the follower changes the target's followersCount by exactly 1,
-      // in the same batch that creates or deletes users/{userId}/followers/{me}.
+      // Counts, verification and plan tier are never self-granted. Email and starting
+      // capital can be removed (moved to private/profile) but not added back.
+      function ownProfileUpdate() {
+        return unchanged('isVerified', false)
+          && unchanged('subscriptionTier', 'basic')
+          && unchanged('followersCount', 0)
+          && unchanged('followingCount', 0)
+          && !addedOrChanged().hasAny(['email', 'startingCapital'])
+          && (!changedKeys().hasAny(['username']) || ownsUsername(incoming().username));
+      }
+
+      // Follow / unfollow: my followingCount moves by 1 with users/{me}/following/{target}.
+      // The target id is read from the batch: the app writes `lastFollowChange`.
+      function ownFollowingDelta(userId) {
+        let before = resource.data.get('followingCount', 0);
+        let t = incoming().get('lastFollowChange', '');
+        let f = /databases/$(database)/documents/users/$(userId)/following/$(t);
+        return onlyChanged(['followingCount', 'lastFollowChange']) && t is string && t != '' && (
+          (incoming().followingCount == before + 1 && !exists(f) && existsAfter(f))
+          || (incoming().followingCount == before - 1 && exists(f) && !existsAfter(f))
+        );
+      }
+
+      // The follower changes the target's followersCount by exactly 1, in the same
+      // batch that creates or deletes users/{userId}/followers/{me}.
       function followersDelta(userId) {
         let f = /databases/$(database)/documents/users/$(userId)/followers/$(me());
         let before = resource.data.get('followersCount', 0);
@@ -141,12 +217,63 @@ service cloud.firestore {
       }
 
       // Private, owner-only subcollections the app manages itself.
+      // private/profile holds email, starting capital and onboarding answers.
       match /{sub}/{docId} {
         allow read, write: if isSelf(userId) && sub in [
           'likedPosts', 'likes', 'bookmarks', 'commentLikes', 'reportedPosts',
-          'watchlist', 'learnProgress', 'blockedUsers', 'fcmTokens', 'callouts',
-          'communityLessonProgress'
+          'watchlist', 'learnProgress', 'blockedUsers', 'fcmTokens',
+          'communityLessonProgress', 'private', 'eventRsvps'
         ];
+      }
+
+      // Callout mirror: the author's own copy of each callout, used for track records.
+      // Created from the chat message, never deleted by the app (so losers stay),
+      // and frozen once closed.
+      match /callouts/{calloutId} {
+        allow read: if signedIn();
+
+        function messageAfter() {
+          return getAfter(/databases/$(database)/documents/communities/$(incoming().communityId)/channels/$(incoming().channelId)/messages/$(incoming().messageId)).data;
+        }
+        function mirrorFields() {
+          return ['communityId', 'channelId', 'messageId', 'ticker', 'assetType', 'direction', 'entryPrice',
+                  'stopPrice', 'targetPrice', 'priceCheck', 'quoteAtPost', 'postedAt',
+                  'status', 'lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent',
+                  'closedBy', 'exitCheck', 'deletedAt'];
+        }
+        // The mirror keeps the levels it was posted with, so a target hit or stop-out must
+        // match the chat message's own close (which is checked against the current levels).
+        function validMirrorClose(c) {
+          return c.status in ['target_hit', 'stopped_out', 'closed']
+            && c.exitPrice is number && c.exitPrice > 0
+            && c.closedAt is timestamp
+            && resultMatches(c.direction, c.entryPrice, c.exitPrice, c.resultPercent)
+            && (c.status == 'closed' || (
+                 messageAfter().callout.status == c.status
+                 && messageAfter().callout.exitPrice == c.exitPrice));
+        }
+
+        allow create: if isSelf(userId)
+          && incoming().keys().hasOnly(mirrorFields())
+          && incoming().communityId is string && incoming().channelId is string
+          && incoming().messageId is string && incoming().messageId == calloutId
+          && messageAfter().authorId == me()
+          && incoming().ticker == messageAfter().callout.ticker
+          && incoming().direction == messageAfter().callout.direction
+          && incoming().entryPrice == messageAfter().callout.entryPrice
+          && incoming().get('priceCheck', 'unchecked') == messageAfter().callout.get('priceCheck', 'unchecked')
+          && (incoming().get('status', 'open') == 'open' || validMirrorClose(incoming()));
+
+        allow update: if isSelf(userId)
+          && resource.data.get('status', 'open') == 'open'
+          && incoming().keys().hasOnly(mirrorFields())
+          && onlyChanged(['status', 'lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent',
+                          'closedBy', 'exitCheck', 'deletedAt'])
+          && (!changedKeys().hasAny(['lastPrice']) || (incoming().lastPrice is number && incoming().lastPrice > 0))
+          && (incoming().get('status', 'open') == 'open' || validMirrorClose(incoming()));
+
+        // Only while deleting the account.
+        allow delete: if isSelf(userId) && deletionRequested(userId);
       }
 
       match /priceAlerts/{alertId} {
@@ -180,20 +307,57 @@ service cloud.firestore {
       }
     }
 
+    // Username claims: one per name. Read one by name to check it's free. A claim is
+    // created with (or for) your own user doc carrying that name.
+    match /usernames/{name} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && name.matches('^[a-z0-9_]{3,20}$')
+        && incoming().uid == me()
+        && getAfter(userPath(me())).data.get('username', '') == name
+        && incoming().keys().hasOnly(['uid', 'createdAt'])
+        && isNow(incoming().createdAt);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == me();
+    }
+
+    // Created first when someone deletes their account. Lifts the delete locks on
+    // price-checked trades and the callout mirror. Never removed by the app.
+    match /deletionRequests/{uid} {
+      allow get: if isSelf(uid);
+      allow create: if isSelf(uid)
+        && incoming().keys().hasOnly(['requestedAt'])
+        && isNow(incoming().requestedAt);
+      allow update, delete: if false;
+    }
+
     // ---------------------------------------------------------------- posts
 
     match /posts/{postId} {
+      function postPath() { return /databases/$(database)/documents/posts/$(postId); }
+      function commentPath(commentId) { return /databases/$(database)/documents/posts/$(postId)/comments/$(commentId); }
+
       allow read: if signedIn();
 
       allow create: if signedIn()
         && incoming().authorId == me()
+        && incoming().authorUsername == myUsername()
+        && isNow(incoming().createdAt)
         && incoming().get('likesCount', 0) == 0
         && incoming().get('commentsCount', 0) == 0
-        && !incoming().keys().hasAny(['isHidden', 'hiddenAt', 'hiddenReason', 'reportCount'])
+        && !incoming().keys().hasAny(['isHidden', 'hiddenAt', 'hiddenReason', 'reportCount', 'lastCommentId'])
+        && validContent()
         && validSentiment()
         && validTradeSnapshot()
         // Trade-result posts must come from a real logged trade.
         && (incoming().get('postType', 'text') != 'trade_result' || 'tradeSnapshot' in incoming());
+
+      function validContent() {
+        return incoming().content is string && incoming().content.size() <= 2000
+          && validTickers(incoming().get('tickers', []))
+          && incoming().get('hashtags', []) is list && incoming().get('hashtags', []).size() <= 10;
+      }
 
       // Optional Bullish/Bearish tag.
       function validSentiment() {
@@ -218,13 +382,17 @@ service cloud.firestore {
           && snap.quantity == trade.quantity
           && snap.get('entryDate', null) == trade.get('entryDate', null)
           && snap.get('exitDate', null) == trade.get('exitDate', null)
+          && snap.get('side', 'long') == trade.get('side', 'long')
           && snap.proof == trade.get('proof', 'self_reported');
       }
 
       allow update: if signedIn() && (
         (resource.data.authorId == me()
-          && !changedKeys().hasAny(['authorId', 'isHidden', 'hiddenAt', 'hiddenReason', 'reportCount',
+          && !changedKeys().hasAny(['authorId', 'authorUsername', 'createdAt', 'postType',
+                                     'likesCount', 'commentsCount', 'lastCommentId',
+                                     'isHidden', 'hiddenAt', 'hiddenReason', 'reportCount',
                                      'tradeId', 'tradeSnapshot'])
+          && validContent()
           && validSentiment())
         || likeDelta()
         || commentDelta()
@@ -259,10 +427,19 @@ service cloud.firestore {
         );
       }
 
+      // commentsCount moves by 1 only for top-level comments, in the batch that creates
+      // or deletes the comment named in lastCommentId.
       function commentDelta() {
         let before = resource.data.get('commentsCount', 0);
-        return onlyChanged(['commentsCount'])
-          && (incoming().commentsCount == before + 1 || incoming().commentsCount == before - 1);
+        let c = commentPath(incoming().lastCommentId);
+        return onlyChanged(['commentsCount', 'lastCommentId'])
+          && incoming().lastCommentId is string
+          && (
+            (incoming().commentsCount == before + 1 && !exists(c) && existsAfter(c)
+              && getAfter(c).data.get('parentCommentId', null) == null)
+            || (incoming().commentsCount == before - 1 && exists(c) && !existsAfter(c)
+              && get(c).data.get('parentCommentId', null) == null)
+          );
       }
 
       match /comments/{commentId} {
@@ -270,20 +447,48 @@ service cloud.firestore {
         allow create: if signedIn()
           && incoming().authorId == me()
           && incoming().postId == postId
+          && isNow(incoming().createdAt)
           && incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 2000
           && incoming().get('likesCount', 0) == 0
-          && !blockedBy(get(/databases/$(database)/documents/posts/$(postId)).data.authorId);
-        allow update: if signedIn() && resource.data.authorId == me()
-          && onlyChanged(['content', 'editedAt', 'isEdited', 'authorAvatarURL']);
+          && !blockedBy(get(postPath()).data.authorId);
+        allow update: if signedIn() && (
+          (resource.data.authorId == me()
+            && onlyChanged(['content', 'editedAt', 'isEdited', 'authorAvatarURL'])
+            && incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 2000)
+          || commentLikeDelta()
+        );
         // The comment's author, or the post's author (moderating, or deleting the post).
+        // Replies go with their parent: whoever deletes the parent clears its replies.
         allow delete: if signedIn()
-          && (resource.data.authorId == me() || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == me());
+          && (resource.data.authorId == me() || get(postPath()).data.authorId == me() || orphanedReply());
+
+        function orphanedReply() {
+          let parent = commentPath(resource.data.get('parentCommentId', ''));
+          return resource.data.get('parentCommentId', '') != ''
+            && !existsAfter(parent)
+            && (!exists(parent) || get(parent).data.authorId == me());
+        }
+
+        function commentLikeDelta() {
+          let like = /databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(me());
+          let before = resource.data.get('likesCount', 0);
+          return onlyChanged(['likesCount']) && (
+            (incoming().likesCount == before + 1 && !exists(like) && existsAfter(like))
+            || (incoming().likesCount == before - 1 && exists(like) && !existsAfter(like))
+          );
+        }
+
+        match /likes/{likerId} {
+          allow read: if signedIn();
+          allow create: if isSelf(likerId);
+          allow delete: if isSelf(likerId);
+        }
       }
 
       match /likes/{likerId} {
         allow read: if signedIn();
         allow create, update: if isSelf(likerId);
-        allow delete: if isSelf(likerId) || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == me();
+        allow delete: if isSelf(likerId) || get(postPath()).data.authorId == me();
       }
 
       // Report dedupe markers: one per reporter, never changed or removed.
@@ -294,34 +499,66 @@ service cloud.firestore {
       }
     }
 
-    // Legacy top-level comments (read by an old query; nothing writes here).
+    // Account deletion finds your comments and likes everywhere (collection-group queries).
+    match /{path=**}/comments/{commentId} {
+      allow list: if signedIn() && resource.data.authorId == me();
+    }
+    match /{path=**}/likes/{likeId} {
+      allow list: if signedIn() && resource.data.userId == me();
+    }
+
+    // Legacy top-level comments (nothing reads or writes them any more).
     match /comments/{commentId} {
-      allow read: if signedIn();
-      allow write: if false;
+      allow read, write: if false;
     }
 
     // ---------------------------------------------------------------- trades
 
-    // Readable by anyone signed in: profiles, search and leaderboards read other
-    // people's trades without an isPublic filter, so isPublic can't be enforced here.
+    // Private trades are readable only by their owner, so every query for someone
+    // else's trades must filter isPublic == true.
     match /trades/{tradeId} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (resource.data.userId == me() || resource.data.get('isPublic', false) == true);
 
       allow create: if signedIn()
         && incoming().userId == me()
         && incoming().get('source', 'manual') == 'manual'
         && incoming().get('isVerified', false) == false
         && !incoming().keys().hasAny(['externalId', 'brokerageConnectionId', 'brokerageAccountId'])
+        && incoming().ticker is string && incoming().ticker.size() > 0 && incoming().ticker.size() <= 30
+        && incoming().entryPrice is number && incoming().entryPrice > 0
+        && incoming().quantity is number && incoming().quantity > 0
+        && incoming().get('side', 'long') in ['long', 'short']
+        && isNow(incoming().loggedAt)
         && validProofOnCreate();
 
-      // "price_checked" needs a server time of now; the price check itself runs in the app.
+      // "price_checked" needs a price check from the app; entryProof records it forever.
       function validProofOnCreate() {
         let proof = incoming().get('proof', 'self_reported');
         return proof in ['price_checked', 'self_reported']
-          && (proof == 'self_reported' || (incoming().loggedAt == request.time && incoming().priceCheck is map))
+          && incoming().get('entryProof', proof) == proof
+          && (proof == 'self_reported' || validPriceCheck(incoming()))
           && (!('exitProof' in incoming()) || incoming().exitProof == 'self_reported');
       }
-      function isPriceChecked() { return resource.data.get('proof', 'self_reported') == 'price_checked'; }
+      // A checked entry: filled just now, inside ±1% of a live quote fetched in the last
+      // few minutes. (The quote itself comes from the app; the server can't re-fetch it.)
+      function validPriceCheck(t) {
+        let pc = t.priceCheck;
+        return pc is map
+          && pc.price is number && pc.price > 0
+          && pc.low is number && pc.high is number
+          && pc.low >= pc.price * 0.989 && pc.high <= pc.price * 1.011
+          && t.entryPrice >= pc.low && t.entryPrice <= pc.high
+          && pc.checkedAt is timestamp
+          && pc.checkedAt > request.time - duration.value(5, 'm')
+          && pc.checkedAt < request.time + duration.value(1, 'm')
+          && t.entryDate is timestamp
+          && t.entryDate > request.time - duration.value(10, 'm')
+          && t.entryDate < request.time + duration.value(10, 'm')
+          && t.get('isOpen', true) == true;
+      }
+      function entryWasChecked() {
+        return resource.data.get('entryProof', resource.data.get('proof', 'self_reported')) == 'price_checked';
+      }
 
       allow update: if signedIn()
         && resource.data.userId == me()
@@ -331,42 +568,54 @@ service cloud.firestore {
         && unchanged('externalId', null)
         && unchanged('brokerageConnectionId', null)
         && unchanged('brokerageAccountId', null)
+        // The proof label never changes after logging (an unchecked exit is exitProof).
+        && unchanged('proof', 'self_reported')
         // Verified (brokerage-imported) trades: prices, sizes and dates come from the broker.
         && (resource.data.get('isVerified', false) == false
             || !changedKeys().hasAny(['ticker', 'tradeType', 'entryPrice', 'exitPrice', 'quantity', 'entryDate', 'exitDate', 'isOpen']))
-        // Entry details never change after logging.
-        && !changedKeys().hasAny(['ticker', 'tradeType', 'entryPrice', 'quantity', 'entryDate', 'loggedAt', 'priceCheck'])
+        // Entry details never change after logging. entryProof may be added once to an
+        // old trade, set to its current proof.
+        && !changedKeys().hasAny(['ticker', 'tradeType', 'side', 'entryPrice', 'quantity', 'entryDate', 'loggedAt', 'priceCheck'])
+        && (!changedKeys().hasAny(['entryProof'])
+            || (!('entryProof' in resource.data) && incoming().entryProof == resource.data.get('proof', 'self_reported')))
         // A closed trade's exit never changes.
         && (resource.data.get('isOpen', true) == true
             || !changedKeys().hasAny(['exitPrice', 'exitDate', 'exitProof', 'exitLoggedAt', 'isOpen']))
-        && validProofOnUpdate();
+        && (!changedKeys().hasAny(['exitPrice']) || (incoming().exitPrice is number && incoming().exitPrice > 0))
+        && validExitProof();
 
-      // proof may only go price_checked -> self_reported (an unchecked exit), never up.
-      // A checked exit needs a server time of now.
-      function validProofOnUpdate() {
-        let before = resource.data.get('proof', 'self_reported');
-        let after = incoming().get('proof', 'self_reported');
-        return (after == before || (before == 'price_checked' && after == 'self_reported'))
-          // A price-checked exit is only set once, when closing (the closed-trade lock keeps it).
+      // A price-checked exit is set once, when closing, with a server time of now
+      // and an exit date of now (no back-dated "checked" exits).
+      function validExitProof() {
+        return incoming().get('exitProof', 'self_reported') in ['self_reported', 'price_checked']
           && (incoming().get('exitProof', 'self_reported') != 'price_checked'
               || resource.data.get('exitProof', 'self_reported') == 'price_checked'
-              || (!('exitProof' in resource.data) && incoming().exitLoggedAt == request.time));
+              || (!('exitProof' in resource.data)
+                  && isNow(incoming().exitLoggedAt)
+                  && incoming().exitDate is timestamp
+                  && incoming().exitDate > request.time - duration.value(10, 'm')
+                  && incoming().exitDate < request.time + duration.value(10, 'm')));
       }
 
-      // Price-checked trades can be deleted only shortly after logging, so losers can't be
-      // removed later. Account deletion deletes users/{uid} first, which lifts this.
+      // Trades with a price-checked entry can be deleted only shortly after logging,
+      // so losers can't be removed later, or while the account is being deleted.
       allow delete: if signedIn() && resource.data.userId == me() && (
-        !isPriceChecked()
+        !entryWasChecked()
         || request.time < resource.data.loggedAt + duration.value(15, 'm')
-        || !exists(/databases/$(database)/documents/users/$(me()))
+        || deletionRequested(me())
       );
     }
 
     // ---------------------------------------------------------------- communities
 
     match /communities/{cid} {
-      // The preview (name, description, price, member count) is public to signed-in users.
-      allow read: if signedIn();
+      // Public communities' previews are visible to everyone signed in; private ones
+      // only to members. List queries must filter isPrivate == false.
+      allow read: if signedIn() && (
+        resource.data.get('isPrivate', false) == false
+        || resource.data.createdBy == me()
+        || exists(memberPath(cid, me()))
+      );
 
       allow create: if signedIn()
         && incoming().createdBy == me()
@@ -374,7 +623,14 @@ service cloud.firestore {
         && incoming().get('priceMonthly', null) == null
         && incoming().get('trialDays', 0) == 0
         && !incoming().keys().hasAny(['stripeProductId', 'stripePriceId'])
-        && incoming().get('memberCount', 1) <= 1;
+        && incoming().get('memberCount', 1) <= 1
+        && incoming().isPrivate is bool
+        && validName();
+
+      function validName() {
+        return incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 50
+          && (!('nameLower' in incoming()) || incoming().nameLower == incoming().name.lower());
+      }
 
       allow update: if signedIn() && (
         (resource.data.createdBy == me() && ownerUpdate())
@@ -385,14 +641,18 @@ service cloud.firestore {
 
       allow delete: if signedIn() && resource.data.createdBy == me();
 
-      // Pricing goes through setCommunityPrice; Stripe ids are server-only.
+      // Pricing goes through setCommunityPrice; Stripe ids are server-only. The member
+      // count only moves with joins and leaves.
       function ownerUpdate() {
         return unchanged('createdBy', null)
           && unchanged('isPaid', false)
           && unchanged('priceMonthly', null)
           && unchanged('trialDays', 0)
           && unchanged('stripeProductId', null)
-          && unchanged('stripePriceId', null);
+          && unchanged('stripePriceId', null)
+          && unchanged('memberCount', 0)
+          && incoming().get('isPrivate', false) is bool
+          && validName();
       }
 
       // Join / leave: memberCount moves by 1 in the same batch that creates or
@@ -418,8 +678,7 @@ service cloud.firestore {
         return onlyChanged(['lastActivityDate']) && hasAccess(cid);
       }
 
-      // Members. Paid-community member lists are for members only; your own doc is
-      // always readable (the app polls it after checkout).
+      // Members. Your own doc is always readable (the app checks membership with it).
       match /members/{userId} {
         allow get: if isSelf(userId) || canRead(cid);
         allow list: if canRead(cid);
@@ -430,8 +689,12 @@ service cloud.firestore {
           && (
             // The owner's own membership, written in the createCommunity batch.
             (getAfter(communityPath(cid)).data.createdBy == me() && incoming().role == 'admin')
-            // Joining a free community. Paid ones are joined through Stripe Checkout.
-            || (incoming().role == 'member' && !isPaidCommunity(cid) && !isBanned(cid))
+            // Joining a free community. Paid ones are joined through Stripe Checkout,
+            // private ones with an invite code.
+            || (incoming().role == 'member' && !isPaidCommunity(cid) && !isBanned(cid)
+                && (!isPrivateCommunity(cid)
+                    || (incoming().inviteCode is string
+                        && get(invitePath(incoming().inviteCode)).data.communityId == cid)))
           );
 
         allow update: if signedIn() && (
@@ -452,6 +715,8 @@ service cloud.firestore {
           // Staff removing (or banning) someone ranked below them. resource may be
           // null when the app deletes a doc that's already gone.
           || outranks(cid, userId)
+          // The owner deleting the community.
+          || ownerCleaningUp(cid)
         );
       }
 
@@ -466,9 +731,10 @@ service cloud.firestore {
       }
 
       match /rules/{ruleId} {
-        allow read: if signedIn();
-        allow create, update: if isAdmin(cid);
-        allow delete: if isAdmin(cid) && resource.data.get('isDefault', false) == false;
+        allow read: if canRead(cid);
+        allow create: if getAfter(communityPath(cid)).data.createdBy == me() || isAdmin(cid);
+        allow update: if isAdmin(cid);
+        allow delete: if (isAdmin(cid) && resource.data.get('isDefault', false) == false) || ownerCleaningUp(cid);
       }
 
       // Classroom (Skool-style courses). Staff write; anyone who can read the community reads.
@@ -477,8 +743,9 @@ service cloud.firestore {
         allow create, update: if isStaff(cid)
           && incoming().communityId == cid
           && incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 120
-          && incoming().get('summary', '') is string && incoming().get('summary', '').size() <= 2000;
-        allow delete: if isStaff(cid);
+          && incoming().get('summary', '') is string && incoming().get('summary', '').size() <= 2000
+          && incoming().get('lessonIds', []) is list && incoming().get('lessonIds', []).size() <= 200;
+        allow delete: if isStaff(cid) || ownerCleaningUp(cid);
 
         match /lessons/{lessonId} {
           allow read: if canRead(cid);
@@ -487,18 +754,22 @@ service cloud.firestore {
             && incoming().get('body', '') is string && incoming().get('body', '').size() <= 20000
             && (!('videoURL' in incoming()) || incoming().videoURL == ''
                 || (incoming().videoURL is string && incoming().videoURL.matches('https://.+')));
-          allow delete: if isStaff(cid);
+          allow delete: if isStaff(cid) || ownerCleaningUp(cid);
         }
       }
 
       // Events (live sessions). Staff schedule; members RSVP.
       match /events/{eventId} {
+        function eventPath() { return /databases/$(database)/documents/communities/$(cid)/events/$(eventId); }
+
         allow read: if canRead(cid);
         function validEventFields() {
           return incoming().communityId == cid
             && incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 120
             && incoming().get('details', '') is string && incoming().get('details', '').size() <= 4000
             && incoming().startsAt is timestamp
+            && (!('durationMinutes' in incoming())
+                || (incoming().durationMinutes is int && incoming().durationMinutes >= 1 && incoming().durationMinutes <= 1440))
             && (!('link' in incoming()) || incoming().link == ''
                 || (incoming().link is string && incoming().link.matches('https://.+')));
         }
@@ -509,7 +780,7 @@ service cloud.firestore {
         allow update: if (isStaff(cid) && validEventFields()
                             && unchanged('createdBy', null) && unchanged('rsvpCount', 0))
           || rsvpCountDelta();
-        allow delete: if isStaff(cid);
+        allow delete: if isStaff(cid) || ownerCleaningUp(cid);
 
         // rsvpCount moves by 1 in the same batch that creates or deletes rsvps/{me}.
         function rsvpCountDelta() {
@@ -522,7 +793,6 @@ service cloud.firestore {
         }
 
         match /rsvps/{userId} {
-          function eventPath() { return /databases/$(database)/documents/communities/$(cid)/events/$(eventId); }
           allow read: if canRead(cid);
           // The event's rsvpCount must move with the RSVP in the same batch.
           allow create: if isSelf(userId) && hasAccess(cid) && !isBanned(cid)
@@ -530,19 +800,27 @@ service cloud.firestore {
           allow delete: if (isSelf(userId)
               && (!existsAfter(eventPath())
                   || getAfter(eventPath()).data.get('rsvpCount', 0) == get(eventPath()).data.get('rsvpCount', 0) - 1))
-            || isStaff(cid);
+            // Staff clean up RSVPs only along with the event itself (their own first).
+            || (isStaff(cid) && (isSelf(userId) || !existsAfter(eventPath())))
+            || ownerCleaningUp(cid);
         }
       }
 
       match /channels/{chid} {
         allow read: if canRead(cid);
-        allow create: if isAdmin(cid) && incoming().communityId == cid;
+        // Default channels are created in the same batch as the community.
+        allow create: if incoming().communityId == cid
+          && (getAfter(communityPath(cid)).data.createdBy == me() || isAdmin(cid));
         allow update: if isAdmin(cid) && unchanged('communityId', null);
-        allow delete: if isAdmin(cid) && resource.data.get('isDefault', false) == false;
+        allow delete: if (isAdmin(cid) && resource.data.get('isDefault', false) == false) || ownerCleaningUp(cid);
 
         function channel() { return get(/databases/$(database)/documents/communities/$(cid)/channels/$(chid)).data; }
 
         match /messages/{mid} {
+          function messagePath(id) {
+            return /databases/$(database)/documents/communities/$(cid)/channels/$(chid)/messages/$(id);
+          }
+
           allow read: if canRead(cid);
 
           allow create: if signedIn()
@@ -550,14 +828,14 @@ service cloud.firestore {
             && incoming().communityId == cid
             && incoming().channelId == chid
             && incoming().content is string && incoming().content.size() <= 4000
-            && incoming().createdAt is timestamp
+            && isNow(incoming().createdAt)
             && hasAccess(cid)
             && !isBanned(cid)
             && !isMuted(cid)
             && (channel().get('adminOnly', false) == false || isAdmin(cid))
             && incoming().get('isDeleted', false) == false
             && incoming().get('isPinned', false) == false
-            && !incoming().keys().hasAny(['deletedBy', 'deletedAt', 'pinnedBy', 'pinnedAt'])
+            && !incoming().keys().hasAny(['deletedBy', 'deletedAt', 'pinnedBy', 'pinnedAt', 'reactions'])
             && (!('callout' in incoming()) || validNewCallout(incoming().callout))
             && validMessageExtras();
 
@@ -568,14 +846,19 @@ service cloud.firestore {
             return kinds.size() <= 1
               && (!('replyTo' in m) || (m.replyTo is map && m.replyTo.messageId is string
                     && m.replyTo.get('preview', '') is string && m.replyTo.get('preview', '').size() <= 200))
+              && (!('media' in m) || validMedia(m.media))
               && (!('calloutUpdate' in m) || validCalloutUpdate(m.calloutUpdate))
               && (!('calloutResult' in m) || validCalloutResult(m.calloutResult))
               && (!('tradeShare' in m) || validTradeShare(m.tradeShare))
               && (!('gamePlan' in m) || validGamePlan(m.gamePlan));
           }
-          function parentMessage(pid) {
-            return get(/databases/$(database)/documents/communities/$(cid)/channels/$(chid)/messages/$(pid)).data;
+          // Structured media: only Firestore image ids (arkad-image://) for now.
+          function validMedia(md) {
+            return md is map && md.get('type', '') in ['image', 'document']
+              && md.url is string && md.url.size() <= 500
+              && md.url.matches('arkad-image://.+');
           }
+          function parentMessage(pid) { return get(messagePath(pid)).data; }
           // Follow-ups on your own open callout: trim, add, move stop or target, note.
           function validCalloutUpdate(u) {
             let parent = parentMessage(u.parentMessageId);
@@ -590,11 +873,14 @@ service cloud.firestore {
           function validCalloutResult(r) {
             let parent = parentMessage(r.parentMessageId);
             return r is map && r.parentMessageId is string
+              && mid == r.parentMessageId + '_result'
               && parent.authorId == me() && 'callout' in parent
               && parent.callout.get('status', 'open') != 'open'
               && r.status == parent.callout.status
               && r.exitPrice == parent.callout.exitPrice
-              && r.resultPercent == parent.callout.resultPercent;
+              && r.resultPercent == parent.callout.resultPercent
+              && r.get('ticker', parent.callout.ticker) == parent.callout.ticker
+              && r.get('direction', parent.callout.direction) == parent.callout.direction;
           }
           // Sharing one of your own logged trades. The snapshot must match the trade doc.
           function validTradeShare(t) {
@@ -607,6 +893,7 @@ service cloud.firestore {
               && t.quantity == trade.quantity
               && t.isOpen == trade.isOpen
               && t.proof == trade.get('proof', 'self_reported')
+              && t.get('side', 'long') == trade.get('side', 'long')
               && (trade.isOpen == true || t.exitPrice == trade.exitPrice);
           }
           // A structured daily plan: up to 15 tickers with a bias and levels.
@@ -617,11 +904,12 @@ service cloud.firestore {
           }
 
           allow update: if signedIn() && hasAccess(cid) && (
-            authorEdit() || softDelete() || pinChange() || authorTracksCallout()
+            authorEdit() || softDelete() || pinChange() || authorTracksCallout() || react()
           );
 
           // Messages are soft-deleted (isDeleted) so every listener sees the change.
-          allow delete: if false;
+          // The owner deletes them for real when deleting the community.
+          allow delete: if ownerCleaningUp(cid);
 
           function validNewCallout(c) {
             return c is map
@@ -631,14 +919,20 @@ service cloud.firestore {
               && c.get('status', 'open') == 'open'
               && c.get('authorId', me()) == me()
               && c.get('communityId', cid) == cid
-              && (!('stopPrice' in c) || c.stopPrice is number)
-              && (!('targetPrice' in c) || c.targetPrice is number)
-              && !c.keys().hasAny(['lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent', 'closedBy'])
+              && (!('stopPrice' in c) || (c.stopPrice is number && c.stopPrice > 0))
+              && (!('targetPrice' in c) || (c.targetPrice is number && c.targetPrice > 0))
+              && !c.keys().hasAny(['lastPrice', 'lastPriceAt', 'exitPrice', 'closedAt', 'resultPercent',
+                                   'closedBy', 'exitCheck', 'lastUpdateId'])
               && c.get('priceCheck', 'unchecked') in ['live', 'unchecked']
-              // A "live" entry must sit within 2% of the quote the app saw when posting.
-              && (c.get('priceCheck', 'unchecked') != 'live'
-                  || (c.quoteAtPost is number && c.quoteAtPost > 0
-                      && math.abs(c.entryPrice - c.quoteAtPost) <= c.quoteAtPost * 0.02));
+              // A "live" entry may be at most 0.25% better than the quote the app saw when
+              // posting (and at most 2% worse).
+              && (c.get('priceCheck', 'unchecked') != 'live' || liveEntryOk(c));
+          }
+          function liveEntryOk(c) {
+            let q = c.quoteAtPost;
+            return q is number && q > 0 && (
+              (c.direction == 'long' && c.entryPrice >= q * 0.9975 && c.entryPrice <= q * 1.02)
+              || (c.direction == 'short' && c.entryPrice <= q * 1.0025 && c.entryPrice >= q * 0.98));
           }
 
           function notDeleted() { return resource.data.get('isDeleted', false) == false; }
@@ -652,17 +946,17 @@ service cloud.firestore {
               && incoming().content is string && incoming().content.size() <= 4000;
           }
 
-          // Authors, and the owner / admins / moderators, soft-delete: content cleared,
-          // callout removed. Other fields may only be removed, not added or changed.
+          // The author, or staff who outrank the author, soft-delete: content cleared,
+          // structured fields removed. Other fields may only be removed, not added or changed.
           function softDelete() {
             let d = request.resource.data.diff(resource.data);
-            return (resource.data.authorId == me() || isStaff(cid))
+            return (resource.data.authorId == me() || outranks(cid, resource.data.authorId))
               && notDeleted()
               && incoming().isDeleted == true
               && incoming().content == ''
               && incoming().deletedBy == me()
               && incoming().deletedAt is timestamp
-              && !('callout' in incoming())
+              && !incoming().keys().hasAny(['callout', 'calloutUpdate', 'calloutResult', 'tradeShare', 'gamePlan', 'media'])
               && d.addedKeys().union(d.changedKeys()).hasOnly(
                    ['isDeleted', 'content', 'deletedBy', 'deletedAt', 'isPinned'])
               && !d.removedKeys().hasAny(['authorId', 'authorUsername', 'communityId', 'channelId', 'createdAt']);
@@ -677,9 +971,21 @@ service cloud.firestore {
               && (incoming().isPinned == false || (incoming().pinnedBy == me() && incoming().pinnedAt is timestamp));
           }
 
+          // Reactions live on the message: reactions.<uid> = [emoji, ...]. You change only your own list.
+          function react() {
+            let before = resource.data.get('reactions', {});
+            let after = incoming().get('reactions', {});
+            return notDeleted()
+              && !isBanned(cid)
+              && onlyChanged(['reactions'])
+              && after is map
+              && after.diff(before).affectedKeys().hasOnly([me()])
+              && (!(me() in after) || (after[me()] is list && after[me()].size() <= 10));
+          }
+
           // Free mode: the author's app tracks its own open callout. It may update the last
-          // price, and close it (target_hit, stopped_out or closed) with exit, time and result.
-          // Entry, stop, target and direction never change.
+          // price, move the stop or target (posting a calloutUpdate in the same batch), and
+          // close it with numbers that agree. Entry and direction never change.
           function authorTracksCallout() {
             let before = resource.data.callout;
             let after = incoming().callout;
@@ -689,39 +995,43 @@ service cloud.firestore {
               && 'callout' in resource.data
               && before.get('status', 'open') == 'open'
               && onlyChanged(['callout'])
-              && changed.hasOnly(['lastPrice', 'lastPriceAt', 'status', 'exitPrice', 'closedAt', 'resultPercent', 'closedBy',
-                                  'stopPrice', 'targetPrice'])
+              && changed.hasOnly(['lastPrice', 'lastPriceAt', 'status', 'exitPrice', 'closedAt', 'resultPercent',
+                                  'closedBy', 'exitCheck', 'stopPrice', 'targetPrice', 'lastUpdateId'])
               && (!changed.hasAny(['lastPrice']) || (after.lastPrice is number && after.lastPrice > 0))
-              // Moving the stop or target is posted as a calloutUpdate so members see it.
-              && (!changed.hasAny(['stopPrice']) || (after.stopPrice is number && after.stopPrice > 0))
-              && (!changed.hasAny(['targetPrice']) || (after.targetPrice is number && after.targetPrice > 0))
-              && (after.get('status', 'open') == 'open' || (
-                   after.status in ['target_hit', 'stopped_out', 'closed']
-                   && after.exitPrice is number && after.exitPrice > 0
-                   && after.closedAt is timestamp
-                   && after.resultPercent is number));
+              && (!changed.hasAny(['stopPrice', 'targetPrice']) || levelChangePosted(after))
+              && (after.get('status', 'open') == 'open' || validCalloutClose(after));
+          }
+          // Moving the stop or target needs a calloutUpdate message created in the same batch.
+          function levelChangePosted(after) {
+            let u = messagePath(after.lastUpdateId);
+            return after.lastUpdateId is string
+              && after.get('stopPrice', 1) is number && after.get('stopPrice', 1) > 0
+              && after.get('targetPrice', 1) is number && after.get('targetPrice', 1) > 0
+              && !exists(u) && existsAfter(u)
+              && getAfter(u).data.calloutUpdate.parentMessageId == mid
+              && getAfter(u).data.calloutUpdate.kind in ['move_stop', 'move_target'];
           }
 
+          // Legacy reaction docs: read-only now (reactions moved onto the message).
           match /reactions/{reactionId} {
             allow read: if canRead(cid);
-            // Reaction ids are "<uid>_<emoji>".
-            allow create, update: if signedIn() && hasAccess(cid)
-              && incoming().userId == me()
-              && reactionId.matches(me() + '_.+');
-            allow delete: if signedIn() && (resource.data.userId == me() || isStaff(cid));
+            allow create, update: if false;
+            allow delete: if signedIn() && (resource.data.userId == me() || isStaff(cid) || ownerCleaningUp(cid));
           }
         }
 
         match /typing/{userId} {
           allow read: if canRead(cid);
           allow write: if isSelf(userId) && hasAccess(cid);
+          allow delete: if ownerCleaningUp(cid);
         }
       }
 
       // Free mode: each trader's app writes its own per-community stats.
       match /traderStats/{userId} {
-        allow read: if signedIn();
-        allow write: if isSelf(userId) && (isOwner(cid) || isMember(cid));
+        allow read: if canRead(cid);
+        allow write: if isSelf(userId) && (isOwner(cid) || isMember(cid)) && validTraderStats();
+        allow delete: if isSelf(userId) || ownerCleaningUp(cid);
       }
       match /private/{docId} {
         allow read: if isOwner(cid);
@@ -729,33 +1039,101 @@ service cloud.firestore {
       }
     }
 
+    // Invite codes for private communities. Anyone with the code can look it up;
+    // only the people who made them (or the owner, when deleting) can list them.
+    match /communityInvites/{code} {
+      allow get: if signedIn();
+      allow list: if signedIn()
+        && (resource.data.createdBy == me() || isOwner(resource.data.communityId));
+      allow create: if signedIn()
+        && code.matches('^[A-Z0-9]{8}$')
+        && incoming().keys().hasOnly(['communityId', 'createdBy', 'createdAt'])
+        && incoming().createdBy == me()
+        && isNow(incoming().createdAt)
+        && isAdmin(incoming().communityId);
+      allow update: if false;
+      allow delete: if signedIn() && (isAdmin(resource.data.communityId) || resource.data.createdBy == me());
+    }
+
+    // Trader stats: written by the trader's own app in free mode, so the rules bound them.
+    // winRate is a fraction (0...1); counts add up.
+    function validTraderStats() {
+      let s = incoming();
+      return s.keys().hasOnly(['calloutsTotal', 'calloutsClosed', 'openCallouts', 'wins', 'losses',
+                               'winRate', 'avgReturnPercent', 'totalReturnPercent',
+                               'bestCalloutPercent', 'worstCalloutPercent', 'lastCalloutAt',
+                               'updatedAt', 'username', 'profileImageUrl'])
+        && s.username == myUsername()
+        && isCount(s.calloutsTotal) && isCount(s.calloutsClosed) && isCount(s.openCallouts)
+        && isCount(s.wins) && isCount(s.losses)
+        && s.openCallouts == s.calloutsTotal - s.calloutsClosed
+        && s.wins + s.losses == s.calloutsClosed
+        && s.winRate is number && s.winRate >= 0 && s.winRate <= 1
+        && (s.calloutsClosed == 0 || math.abs(s.winRate - s.wins / s.calloutsClosed) <= 0.001)
+        && s.get('avgReturnPercent', 0) is number
+        && s.get('totalReturnPercent', 0) is number
+        && isNow(s.updatedAt);
+    }
+
     // ---------------------------------------------------------------- notifications
 
-    // Free mode: the acting user's app creates them (fromUserId == me). Blocking is
-    // filtered in the recipient's inbox, so one blocked recipient can't fail a fan-out.
+    // Free mode: the acting user's app creates them (fromUserId == me), with evidence
+    // that the event happened. Blocking is filtered in the recipient's inbox.
     match /notifications/{notificationId} {
       allow read: if signedIn() && resource.data.userId == me();
       allow update: if signedIn() && resource.data.userId == me()
         && onlyChanged(['isRead']) && incoming().isRead is bool;
+      allow delete: if signedIn() && resource.data.userId == me();
+
       allow create: if signedIn()
+        && incoming().keys().hasOnly(['userId', 'fromUserId', 'type', 'title', 'body', 'data', 'isRead', 'createdAt'])
         && incoming().fromUserId == me()
         && incoming().userId is string
-        && (incoming().userId != me() || incoming().type == 'price_alert')
-        && incoming().type in ['callout', 'callout_result', 'callout_update', 'mention', 'reply', 'like',
-                               'follow', 'member_joined', 'price_alert', 'community_event', 'trade_share']
-        && incoming().title is string && incoming().title.size() <= 200
-        && incoming().body is string && incoming().body.size() <= 1000
         && incoming().isRead == false
-        && incoming().keys().hasOnly(['userId', 'fromUserId', 'type', 'title', 'body', 'data', 'isRead', 'createdAt']);
-      allow delete: if signedIn() && resource.data.userId == me();
+        && isNow(incoming().createdAt)
+        && shortString(incoming().title, 200)
+        && shortString(incoming().body, 1000)
+        && incoming().get('data', {}) is map
+        && incoming().get('data', {}).size() <= 12
+        && hasEvidence(incoming().type, incoming().userId, incoming().get('data', {}));
+      // Only the recipient updates (isRead). Fixed ids such as like_{postId}_{me} rely on
+      // re-sends being refused, so a like / follow notifies once.
+
+      function postDoc(pid) { return get(/databases/$(database)/documents/posts/$(pid)).data; }
+
+      function hasEvidence(t, to, d) {
+        return (t == 'price_alert' && to == me())
+          || (to != me() && (
+            // You liked their post.
+            (t == 'like' && d.postId is string
+              && existsAfter(/databases/$(database)/documents/posts/$(d.postId)/likes/$(me()))
+              && postDoc(d.postId).authorId == to)
+            // You follow them.
+            || (t == 'follow'
+              && existsAfter(/databases/$(database)/documents/users/$(to)/followers/$(me())))
+            // You wrote the comment (a reply or a mention in a comment).
+            || (t in ['reply', 'mention'] && d.postId is string && d.commentId is string
+              && getAfter(/databases/$(database)/documents/posts/$(d.postId)/comments/$(d.commentId)).data.authorId == me())
+            // You wrote the post that mentions them.
+            || (t == 'mention' && d.postId is string && !('commentId' in d)
+              && getAfter(/databases/$(database)/documents/posts/$(d.postId)).data.authorId == me())
+            // Community events: you're a member of that community. (Recipients aren't
+            // checked one by one: a batch may look up at most 20 documents.)
+            || (t in ['callout', 'callout_result', 'callout_update', 'mention', 'member_joined',
+                      'community_event', 'trade_share']
+              && d.communityId is string
+              && existsAfter(memberPath(d.communityId, me())))
+          ));
+      }
     }
 
-    // ---------------------------------------------------------------- server-only
+    // ---------------------------------------------------------------- stats & images
 
-    // Free mode: each trader's app writes its own stats.
+    // Free mode: each trader's app writes its own overall stats.
     match /traderStats/{userId} {
       allow read: if signedIn();
-      allow write: if isSelf(userId);
+      allow write: if isSelf(userId) && validTraderStats();
+      allow delete: if isSelf(userId);
     }
 
     // Free mode: small images stored in Firestore (the Storage bucket needs Blaze).
@@ -778,6 +1156,8 @@ service cloud.firestore {
       }
     }
 
+    // ---------------------------------------------------------------- server-only
+
     match /stripeAccounts/{userId} {
       allow read: if isSelf(userId);
       allow write: if false;
@@ -796,19 +1176,12 @@ service cloud.firestore {
       allow create: if signedIn()
         && incoming().reportedBy == me()
         && incoming().get('status', 'pending') == 'pending'
+        && incoming().get('details', '') is string
         && incoming().get('details', '').size() <= 2000;
       allow read, update, delete: if false;
     }
 
     // ---------------------------------------------------------------- other app data
-
-    // Market news cache, shared by every client.
-    match /marketNews/{articleId} {
-      allow read: if signedIn();
-      allow create, update: if signedIn()
-        && incoming().keys().hasAll(['publishedUtc', 'cachedAt']);
-      allow delete: if signedIn() && resource.data.cachedAt < request.time - duration.value(6, 'd');
-    }
 
     // Activity feed items: written by their owner.
     match /activity/{activityId} {
@@ -822,32 +1195,10 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
-    // Direct messages (not used by the current UI). Conversation ids are "<uidA>_<uidB>".
-    match /messages/{messageId} {
-      allow read: if signedIn() && (
-        resource.data.senderId == me()
-        || resource.data.recipientId == me()
-        || me() in resource.data.conversationId.split('_')
-      );
-      allow create: if signedIn()
-        && incoming().senderId == me()
-        && incoming().recipientId is string
-        && !blockedBy(incoming().recipientId);
-      allow update: if signedIn() && resource.data.recipientId == me() && onlyChanged(['isRead']);
-      allow delete: if signedIn() && resource.data.senderId == me();
-    }
-    match /conversations/{conversationId} {
-      allow read: if signedIn() && me() in resource.data.participants;
-      allow create, update: if signedIn()
-        && me() in incoming().participants
-        && conversationId.split('_').hasAll(incoming().participants);
-      allow delete: if false;
-    }
-
-    // Old membership index (read by a legacy helper; nothing writes it).
-    match /communityMembers/{docId} {
-      allow read: if signedIn() && resource.data.userId == me();
-      allow write: if false;
-    }
+    // Unused features, locked: market news cache, direct messages, the old membership index.
+    match /marketNews/{articleId} { allow read, write: if false; }
+    match /messages/{messageId} { allow read, write: if false; }
+    match /conversations/{conversationId} { allow read, write: if false; }
+    match /communityMembers/{docId} { allow read, write: if false; }
   }
 }

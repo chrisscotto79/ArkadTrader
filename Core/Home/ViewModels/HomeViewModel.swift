@@ -1,10 +1,11 @@
-// Fixed HomeViewModel.swift - No new files, just fix the existing code
+// File: Core/Home/ViewModels/HomeViewModel.swift
+// The Home feed and News tab, plus MarketNewsArticle.
+
 import Foundation
-import Combine
-import Firebase
+import UIKit
+import FirebaseFirestore
 import FirebaseStorage
 
-// Add MarketNewsArticle to existing HomeViewModel file instead of creating new file
 struct MarketNewsArticle: Identifiable, Codable {
     let id: String
     let title: String
@@ -116,149 +117,101 @@ struct MarketNewsArticle: Identifiable, Codable {
     }
 }
 
+/// The Home tab's For You feed (newest posts, paged) and the News tab. Likes, bookmarks,
+/// counts, deletes and reports live in PostStore, shared by every screen.
 @MainActor
 class HomeViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var posts: [Post] = []
-    @Published var followingPosts: [Post] = []
     @Published var marketNews: [MarketNewsArticle] = []
     @Published var isLoading = false
     @Published var isLoadingNews = false
     @Published var isRefreshing = false
+    /// The feed couldn't load (shown in place of the feed, or above it when posts are showing).
+    @Published var loadError: String?
+    /// News errors, shown as an alert.
     @Published var errorMessage = ""
     @Published var showError = false
-    
-    // Feed management
-    @Published var hasMorePosts = true
+
+    // Paging
+    @Published var hasMorePosts = false
     @Published var isLoadingMore = false
-    
-    // User interactions - loaded from Firebase
-    @Published var likedPosts: Set<String> = []
-    @Published var bookmarkedPosts: Set<String> = []
-    
-    @Published var hiddenPosts: Set<String> = []
-    @Published var reportedPostsByUser: Set<String> = []
-    
-    func hideReportedPost(postId: String, reportedBy: String) {
-        // Hide immediately for the reporter
-        reportedPostsByUser.insert(postId)
-        
-        // Remove from visible posts arrays
-        posts.removeAll { $0.id == postId }
-        followingPosts.removeAll { $0.id == postId }
-        
-        print("✅ Hidden post \(postId) from user \(reportedBy)")
-    }
+    @Published var loadMoreError: String?
 
-    func checkAndHidePost(postId: String) async {
-        // This will be called by Firebase when report count threshold is reached
-        hiddenPosts.insert(postId)
-        
-        await MainActor.run {
-            // Remove from all local arrays
-            posts.removeAll { $0.id == postId }
-            followingPosts.removeAll { $0.id == postId }
-        }
-        
-        print("🚨 Auto-hidden post \(postId) due to multiple reports")
-    }
-
-    // Filter posts to exclude hidden ones
-    private func filterHiddenPosts() {
-        posts = posts.filter { post in
-            !hiddenPosts.contains(post.id) &&
-            !reportedPostsByUser.contains(post.id)
-        }
-        
-        followingPosts = followingPosts.filter { post in
-            !hiddenPosts.contains(post.id) &&
-            !reportedPostsByUser.contains(post.id)
-        }
-    }
-    
     private let authService = FirebaseAuthService.shared
-    private let blockStore = BlockStore.shared
-    private var cancellables = Set<AnyCancellable>()
-    private var currentPage = 0
-    private let postsPerPage = 20
-    
+    private let postStore = PostStore.shared
+    private let pageSize = 30
+    private var cursor: DocumentSnapshot?
+    /// Bumped on every first-page load so a late "load more" for an older list is dropped.
+    private var generation = 0
+
     // Finnhub API configuration
     private var finnhubApiKey: String { AppConfig.finnhubAPIKey }
     private let finnhubBaseUrl = "https://finnhub.io/api/v1"
-    
-    // News caching - refresh every 30 minutes
-    private let newsCacheInterval: TimeInterval = 30 * 60
-    
-    // MARK: - Initialization
-    init() {
-        // Drop a person's posts as soon as they're blocked (from a profile, chat, anywhere)
-        blockStore.$blockedIds
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] blockedIds in
-                MainActor.assumeIsolated {
-                    self?.removePosts(fromAuthors: blockedIds)
-                }
-            }
-            .store(in: &cancellables)
 
-        // Monitor authentication state
-        Task {
-            // Wait for authentication to complete
-            while !authService.isAuthenticated {
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            }
-            
-            // Now load user interactions
-            await loadUserInteractions()
-        }
-    }
-    
-    // MARK: - Post Management
+    // MARK: - Feed
+
+    /// The first page of the feed. On failure the posts already showing stay.
     func loadPosts() async {
+        generation += 1
+        let thisGeneration = generation
         isLoading = true
-        currentPage = 0
-        
+        defer { if thisGeneration == generation { isLoading = false } }
+
+        async let interactions: Void = postStore.loadIfNeeded()
+        async let blocks: Void = BlockStore.shared.loadIfNeeded()
         do {
-            await blockStore.loadIfNeeded()
-            let allPosts = try await authService.getFeedPosts()
-            posts = allPosts.filter(isVisible)
-            
-            // Load user interactions
-            await loadUserInteractions()
-            
-            // Filter posts for different tabs
-            await filterPostsByCategory()
-            
+            let page = try await FirebaseServices.shared.getFeedPage(limit: pageSize, after: nil)
+            _ = await (interactions, blocks)
+            guard thisGeneration == generation else { return }
+            posts = page.posts
+            postStore.absorb(page.posts)
+            cursor = page.cursor
+            hasMorePosts = page.cursor != nil
+            loadError = nil
+            loadMoreError = nil
         } catch {
-            errorMessage = "Failed to load posts: \(error.localizedDescription)"
-            showError = true
+            _ = await (interactions, blocks)
+            guard thisGeneration == generation else { return }
+            loadError = TickerFeedError.friendlyMessage(for: error)
         }
-        
-        isLoading = false
     }
-    
+
     func refreshPosts() async {
         isRefreshing = true
         await loadPosts()
         isRefreshing = false
     }
-    
+
+    /// The next page, after the last post loaded.
     func loadMorePosts() async {
-        guard !isLoadingMore && hasMorePosts else { return }
-        
+        guard hasMorePosts, !isLoadingMore, let cursor else { return }
+        let thisGeneration = generation
         isLoadingMore = true
-        currentPage += 1
-        
-        // Pagination isn't implemented yet; the first load returns everything.
-        hasMorePosts = false
-        
-        isLoadingMore = false
+        loadMoreError = nil
+        defer { isLoadingMore = false }
+
+        do {
+            let page = try await FirebaseServices.shared.getFeedPage(limit: pageSize, after: cursor)
+            guard thisGeneration == generation else { return }
+            let shown = Set(posts.map(\.id))
+            let fresh = page.posts.filter { !shown.contains($0.id) }
+            posts.append(contentsOf: fresh)
+            postStore.absorb(fresh)
+            self.cursor = page.cursor
+            hasMorePosts = page.cursor != nil
+        } catch {
+            guard thisGeneration == generation else { return }
+            loadMoreError = TickerFeedError.friendlyMessage(for: error)
+        }
     }
-    
-    func createPost(_ draft: PostDraft) async {
-        await createPost(content: draft.content, tickers: draft.tickers, images: draft.images,
-                         postType: draft.postType, trade: draft.trade, sentiment: draft.sentiment)
+
+    // MARK: - New post
+
+    /// Saves the composer's post. Throws so the composer can stay open and show the error.
+    func createPost(_ draft: PostDraft) async throws {
+        try await createPost(content: draft.content, tickers: draft.tickers, images: draft.images,
+                             postType: draft.postType, trade: draft.trade, sentiment: draft.sentiment)
     }
 
     /// Without a postType, it's guessed from the text (for callers that don't have the composer's choice).
@@ -266,300 +219,69 @@ class HomeViewModel: ObservableObject {
     /// label are copied into `tradeSnapshot` (no typed-in P&L). Without one it's posted as a text post.
     func createPost(content: String, tickers: [String] = [], images: [UIImage] = [],
                     postType chosenType: PostType? = nil, trade: Trade? = nil,
-                    sentiment: PostSentiment? = nil) async {
-        guard let currentUser = authService.currentUser else { return }
+                    sentiment: PostSentiment? = nil) async throws {
+        guard let currentUser = authService.currentUser else {
+            throw NSError(domain: "Post", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sign in to post."])
+        }
         let userId = currentUser.id
-        let username = currentUser.username
-        
+
         var postType = chosenType ?? determinePostType(from: content)
         let snapshot = trade.flatMap { $0.userId == userId ? TradeSnapshot(trade: $0) : nil }
         if postType == .tradeResult && snapshot == nil {
             postType = .text
         }
-        
+
         // Photos stay off until Cloud Storage is available (AppConfig.mediaUploadsEnabled)
         var imageUrls: [String] = []
-        
         if AppConfig.mediaUploadsEnabled && !images.isEmpty {
-            print("📸 Uploading \(images.count) images...")
-            
-            // Create a unique post ID for consistent image naming
-            let postId = UUID().uuidString
-            
-            // Upload each image
+            let imageBatchId = UUID().uuidString
             for (index, image) in images.enumerated() {
-                do {
-                    if let imageUrl = try await uploadImage(image, postId: postId, imageIndex: index) {
-                        imageUrls.append(imageUrl)
-                        print("✅ Uploaded image \(index + 1): \(imageUrl)")
-                    } else {
-                        print("⚠️ Failed to upload image \(index + 1)")
-                    }
-                } catch {
-                    print("❌ Error uploading image \(index + 1): \(error)")
+                if let imageUrl = try? await uploadImage(image, postId: imageBatchId, imageIndex: index) {
+                    imageUrls.append(imageUrl)
                 }
             }
-            
-            print("📸 Successfully uploaded \(imageUrls.count)/\(images.count) images")
         }
-        
-        // Create post with uploaded image URLs
+
+        // The stored username: the rules check it against users/{uid}.username
         var newPost = Post(
             content: content,
             authorId: userId,
-            authorUsername: username,
+            authorUsername: currentUser.username,
             postType: postType,
             tickers: tickers,
-            imageUrls: imageUrls // ✅ FIXED: Use actual uploaded URLs
+            imageUrls: imageUrls
         )
         newPost.authorFullName = currentUser.fullName
         newPost.authorAvatarURL = currentUser.profileImageUrl
-        newPost.sentiment = sentiment
-        
+        newPost.sentiment = newPost.tickers.isEmpty ? nil : sentiment
+
         // Trade result: the chosen closed trade. FirebaseServices.createPost copies the snapshot
         // from the trade document so it matches what the rules check.
         if postType == .tradeResult, let trade, let snapshot {
             newPost.tradeId = trade.id
             newPost.tradeSnapshot = snapshot
-            if !newPost.tickers.contains(snapshot.ticker) {
-                newPost.tickers.insert(snapshot.ticker, at: 0)
+            let symbol = Cashtag.normalize(snapshot.ticker)
+            if Cashtag.isValid(symbol), !newPost.tickers.contains(symbol) {
+                newPost.tickers = Cashtag.cleaned([symbol] + newPost.tickers)
             }
         }
-        
-        do {
-            try await authService.createPost(newPost)
-            posts.insert(newPost, at: 0)
-            await filterPostsByCategory()
-            print("✅ Post created successfully with \(imageUrls.count) images")
-        } catch {
-            errorMessage = "Failed to create post: \(error.localizedDescription)"
-            showError = true
-            print("❌ Failed to create post: \(error)")
-        }
+
+        try await FirebaseServices.shared.createPost(newPost)
+        posts.insert(newPost, at: 0)
     }
 
-    // ✅ Add image upload method
     private func uploadImage(_ image: UIImage, postId: String, imageIndex: Int) async throws -> String? {
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            print("❌ Failed to convert image to data")
-            return nil
-        }
-        
-        let fileName = "\(postId)_\(imageIndex).jpg"
-        let storageRef = Storage.storage().reference().child("post_images/\(fileName)")
-        
-        do {
-            print("🔄 Uploading image: \(fileName)")
-            let _ = try await storageRef.putDataAsync(imageData)
-            let downloadURL = try await storageRef.downloadURL()
-            print("✅ Image uploaded successfully: \(downloadURL.absoluteString)")
-            return downloadURL.absoluteString
-        } catch {
-            print("❌ Image upload failed: \(error)")
-            throw error // ✅ FIXED: Throw error instead of returning nil
-        }
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else { return nil }
+        let storageRef = Storage.storage().reference().child("post_images/\(postId)_\(imageIndex).jpg")
+        _ = try await storageRef.putDataAsync(imageData)
+        return try await storageRef.downloadURL().absoluteString
     }
 
-    
-    // MARK: - User Interactions
-    func toggleLike(for postId: String) {
-        let wasLiked = likedPosts.contains(postId)
-        
-        // Update UI immediately for responsiveness
-        if wasLiked {
-            likedPosts.remove(postId)
-        } else {
-            likedPosts.insert(postId)
-        }
-        
-        // Update local count immediately
-        updateLocalPostCount(postId: postId, increment: !wasLiked)
-        
-        // Sync with Firebase (don't update count again)
-        Task {
-            await syncLikeWithFirebase(postId: postId, isLiked: !wasLiked)
-        }
-    }
-    func updatePostCommentCount(postId: String, newCount: Int) {
-        // Update in main posts array
-        if let index = posts.firstIndex(where: { $0.id == postId }) {
-            posts[index].commentsCount = newCount
-        }
-        
-        // Update in following posts array
-        if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
-            followingPosts[index].commentsCount = newCount
-        }
-        
-        print("✅ Updated comment count for post \(postId) to \(newCount)")
-    }
-    func toggleBookmark(for postId: String) {
-        let wasBookmarked = bookmarkedPosts.contains(postId)
-        
-        if wasBookmarked {
-            bookmarkedPosts.remove(postId)
-        } else {
-            bookmarkedPosts.insert(postId)
-        }
-        
-        // Sync with Firebase immediately
-        Task {
-            await syncBookmarkWithFirebase(postId: postId, isBookmarked: !wasBookmarked)
-        }
-    }
-    
-    func reportPost(_ postId: String, reason: String) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            // Store report in Firebase
-            try await authService.reportPost(postId: postId, reportedBy: userId, reason: reason)
-            
-            // Remove post from local arrays
-            posts.removeAll { $0.id == postId }
-            followingPosts.removeAll { $0.id == postId }
-            
-        } catch {
-            errorMessage = "Failed to report post: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-    
-    func blockUser(_ userId: String) async {
-        do {
-            // Also removes follows both ways; the store's update drops their posts here
-            try await blockStore.block(userId)
-            removePosts(fromAuthors: [userId])
-        } catch {
-            errorMessage = "Failed to block user: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-    
-    // MARK: - Blocked and hidden posts
-
-    /// Hidden by reports, reported by you, or written by someone you blocked
-    private func isVisible(_ post: Post) -> Bool {
-        !post.isHidden
-            && !hiddenPosts.contains(post.id)
-            && !reportedPostsByUser.contains(post.id)
-            && !blockStore.isBlocked(post.authorId)
-    }
-
-    private func removePosts(fromAuthors authorIds: Set<String>) {
-        guard !authorIds.isEmpty else { return }
-        posts.removeAll { authorIds.contains($0.authorId) }
-        followingPosts.removeAll { authorIds.contains($0.authorId) }
-    }
-
-    // MARK: - Firebase Sync Methods
-    private func syncLikeWithFirebase(postId: String, isLiked: Bool) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            if isLiked {
-                try await authService.likePost(postId: postId, userId: userId)
-            } else {
-                try await authService.unlikePost(postId: postId, userId: userId)
-            }
-            
-            // ❌ REMOVE THIS SECTION - it's causing double counting
-            // await MainActor.run {
-            //     updateLocalPostCount(postId: postId, increment: isLiked)
-            // }
-            
-            print("✅ Firebase sync successful - count already updated in UI")
-            
-        } catch {
-            // Revert local like state if Firebase sync fails
-            await MainActor.run {
-                if isLiked {
-                    likedPosts.remove(postId)
-                } else {
-                    likedPosts.insert(postId)
-                }
-                
-                // Revert the count change too
-                updateLocalPostCount(postId: postId, increment: !isLiked)
-            }
-            
-            errorMessage = "Failed to sync like: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-
-    // ✅ ADD THIS NEW METHOD
-    private func updateLocalPostCount(postId: String, increment: Bool) {
-        let change = increment ? 1 : -1
-        
-        // Update in main posts array
-        if let index = posts.firstIndex(where: { $0.id == postId }) {
-            posts[index].likesCount = max(0, posts[index].likesCount + change)
-        }
-        
-        // Update in following posts array
-        if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
-            followingPosts[index].likesCount = max(0, followingPosts[index].likesCount + change)
-        }
-    }
-    
-    private func syncBookmarkWithFirebase(postId: String, isBookmarked: Bool) async {
-        guard let userId = authService.currentUser?.id else { return }
-        
-        do {
-            if isBookmarked {
-                try await authService.bookmarkPost(postId: postId, userId: userId)
-            } else {
-                try await authService.unbookmarkPost(postId: postId, userId: userId)
-            }
-        } catch {
-            // Revert local change if Firebase sync fails
-            if isBookmarked {
-                bookmarkedPosts.remove(postId)
-            } else {
-                bookmarkedPosts.insert(postId)
-            }
-            
-            errorMessage = "Failed to sync bookmark: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-    
-    private func loadUserInteractions() async {
-        guard let userId = authService.currentUser?.id else { return }
-
-        do {
-            likedPosts = try await authService.getUserLikedPosts(userId: userId)
-            bookmarkedPosts = try await authService.getUserBookmarkedPosts(userId: userId)
-        } catch {
-            // Likes and bookmarks just show as unset; the feed itself still loads.
-        }
-    }
-    
-    // MARK: - Post Filtering and Categorization
-    private func filterPostsByCategory() async {
-        guard let currentUserId = authService.currentUser?.id else { return }
-        
-        do {
-            // Get user's following list from Firebase
-            let followingUserIds = try await authService.getUserFollowing(userId: currentUserId)
-            
-            // Filter following posts
-            followingPosts = posts.filter { post in
-                followingUserIds.contains(post.authorId)
-            }
-            
-        } catch {
-            print("Failed to filter posts: \(error)")
-            // Fallback to empty arrays if Firebase call fails
-            followingPosts = []
-        }
-    }
-    
     // MARK: - Helper Methods
+
     private func determinePostType(from content: String) -> PostType {
         let lowercaseContent = content.lowercased()
-        
+
         if lowercaseContent.contains("#trade") ||
            lowercaseContent.contains("profit") ||
            lowercaseContent.contains("loss") ||
@@ -578,66 +300,9 @@ class HomeViewModel: ObservableObject {
             return .text
         }
     }
-    
-    private func updateLikeCount(postId: String, increment: Bool) {
-        let change = increment ? 1 : -1
-        
-        // Update in main posts array
-        if let index = posts.firstIndex(where: { $0.id == postId }) {
-            posts[index].likesCount = max(0, posts[index].likesCount + change)
-        }
-        
-        // Update in following posts array
-        if let index = followingPosts.firstIndex(where: { $0.id == postId }) {
-            followingPosts[index].likesCount = max(0, followingPosts[index].likesCount + change)
-        }
-    }
-    
-    // MARK: - Search and Filter
-    func searchPosts(query: String) -> [Post] {
-        guard !query.isEmpty else { return posts }
-        
-        return posts.filter { post in
-            post.content.localizedCaseInsensitiveContains(query) ||
-            post.authorUsername.localizedCaseInsensitiveContains(query)
-        }
-    }
-    
-    func searchNews(query: String) -> [MarketNewsArticle] {
-        guard !query.isEmpty else { return marketNews }
-        
-        return marketNews.filter { article in
-            article.title.localizedCaseInsensitiveContains(query) ||
-            (article.description?.localizedCaseInsensitiveContains(query) ?? false) ||
-            article.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
-        }
-    }
-    
-    func filterPosts(by type: PostType) -> [Post] {
-        return posts.filter { $0.postType == type }
-    }
-    
-    func getPostsByUser(userId: String) -> [Post] {
-        return posts.filter { $0.authorId == userId }
-    }
-    
-    // MARK: - Analytics and Insights
-    func getEngagementStats() -> (totalLikes: Int, totalComments: Int, totalPosts: Int) {
-        let totalLikes = posts.reduce(0) { $0 + $1.likesCount }
-        let totalComments = posts.reduce(0) { $0 + $1.commentsCount }
-        let totalPosts = posts.count
-        
-        return (totalLikes, totalComments, totalPosts)
-    }
-    
-    func getMostEngagedPost() -> Post? {
-        return posts.max { post1, post2 in
-            let engagement1 = post1.likesCount + post1.commentsCount
-            let engagement2 = post2.likesCount + post2.commentsCount
-            return engagement1 < engagement2
-        }
-    }
-    
+
+    // MARK: - News
+
     /// The newest few articles that have a picture, shown as large cards.
     /// (Finnhub returns general news newest-first; there is no popularity signal.)
     func getTopStories() -> [MarketNewsArticle] {
@@ -647,25 +312,13 @@ class HomeViewModel: ObservableObject {
         }
         return Array(articlesWithImages.prefix(5))
     }
-    
+
     /// Every other article, newest first.
     func getRegularNews() -> [MarketNewsArticle] {
         let topIds = Set(getTopStories().map { $0.id })
         return marketNews.filter { !topIds.contains($0.id) }
     }
-    
-    func getNewsStats() -> (totalArticles: Int, recentArticles: Int) {
-        let totalArticles = marketNews.count
-        let oneDayAgo = Date().addingTimeInterval(-24 * 60 * 60)
-        
-        let recentArticles = marketNews.filter { article in
-            guard let publishedDate = article.publishedDate else { return false }
-            return publishedDate > oneDayAgo
-        }.count
-        
-        return (totalArticles, recentArticles)
-    }
-    
+
     // MARK: - Market News Management
     func loadMarketNews() async {
         isLoadingNews = true
@@ -674,7 +327,7 @@ class HomeViewModel: ObservableObject {
             let articles = try await fetchMarketNews()
             marketNews = articles
         } catch {
-            errorMessage = "Failed to load market news: \(error.localizedDescription)"
+            errorMessage = "Couldn't load the news. Pull to refresh or try again."
             showError = true
         }
         
@@ -687,8 +340,14 @@ class HomeViewModel: ObservableObject {
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
         }
+        // Same Finnhub key and per-minute budget as stock quotes (QuoteClient)
+        guard await QuoteClient.shared.reserveCall() else { return [] }
         
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if (response as? HTTPURLResponse)?.statusCode == 429 {
+            await QuoteClient.shared.reportRateLimited()
+            return []
+        }
         let newsItems = try JSONDecoder().decode([NewsItem].self, from: data)
         
         return newsItems
@@ -700,7 +359,7 @@ class HomeViewModel: ObservableObject {
     }
 }
 
-// MARK: - Supporting Structures for News (add to existing file)
+// MARK: - Finnhub news
 fileprivate struct NewsItem: Codable {
     let id: Int
     let headline: String

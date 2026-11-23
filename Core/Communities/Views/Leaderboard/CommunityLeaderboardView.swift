@@ -123,9 +123,14 @@ struct CommunityLeaderboardView: View {
                 .tracking(0.5)
                 .foregroundStyle(.secondary)
                 .padding(.leading, DS.Spacing.xs)
-            LeaderboardRow(entry: entry, category: viewModel.category, isCurrentUser: true)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
-                .cardStyle(padding: 0)
+            Button {
+                openProfile(userId: entry.userId)
+            } label: {
+                LeaderboardRow(entry: entry, category: viewModel.category, isCurrentUser: true)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+                    .cardStyle(padding: 0)
+            }
+            .buttonStyle(PressableStyle())
         }
     }
 
@@ -161,7 +166,11 @@ struct CommunityLeaderboardView: View {
 
     private func memberRow(_ user: User) -> some View {
         Button {
-            if user.id != currentUserId { profileUser = user }
+            if user.id == currentUserId {
+                TabRouter.shared.open(.profile(userId: nil))
+            } else {
+                profileUser = user
+            }
         } label: {
             HStack(spacing: DS.Spacing.m) {
                 UserAvatar(username: user.username, imageURL: user.profileImageUrl, size: 40)
@@ -196,8 +205,12 @@ struct CommunityLeaderboardView: View {
 
     // MARK: - Helpers
 
+    /// Someone else's profile in a sheet; your own row opens your Profile tab
     private func openProfile(userId: String) {
-        guard userId != currentUserId else { return }
+        guard userId != currentUserId else {
+            TabRouter.shared.open(.profile(userId: nil))
+            return
+        }
         if let member = members.first(where: { $0.id == userId }) {
             profileUser = member
             return

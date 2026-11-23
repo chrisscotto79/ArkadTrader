@@ -53,12 +53,19 @@ final class ClassroomViewModel: ObservableObject {
             hasLoaded = true
             errorMessage = nil
         } catch {
+            // Shown in place of the list before the first load, as a banner over loaded courses
             errorMessage = Self.friendly(error, doing: "load the courses")
+            return
         }
         await loadProgress()
-        // Refresh any course detail that's open
-        for courseId in lessonsByCourse.keys {
-            await loadLessons(courseId: courseId)
+        // Lessons for courses that are open or that the user has started, so their progress
+        // counts only lessons that still exist.
+        let started = completed.filter { !$0.value.isEmpty }.map(\.key)
+        let toLoad = Set(lessonsByCourse.keys).union(started).filter { id in courses.contains { $0.id == id } }
+        await withTaskGroup(of: Void.self) { group in
+            for courseId in toLoad {
+                group.addTask { await self.loadLessons(courseId: courseId) }
+            }
         }
     }
 
@@ -109,19 +116,22 @@ final class ClassroomViewModel: ObservableObject {
         completed[courseId]?.contains(lessonId) ?? false
     }
 
-    /// Completed lessons in a course. Counts only lessons that still exist once they're loaded.
-    func completedCount(for course: CommunityCourse) -> Int {
-        let done = completed[course.id] ?? []
-        if let lessons = lessonsByCourse[course.id] {
-            return lessons.filter { done.contains($0.id) }.count
-        }
-        return min(done.count, course.lessonCount)
+    /// Whether this course's lessons are loaded, so its progress can be trusted.
+    func hasLessons(for courseId: String) -> Bool {
+        lessonsByCourse[courseId] != nil
     }
 
-    /// Completed lessons divided by the lesson count, 0–1.
+    /// Completed lessons in a course that still exist. 0 until the lessons are loaded, since
+    /// progress records can outlive deleted lessons.
+    func completedCount(for course: CommunityCourse) -> Int {
+        guard let lessons = lessonsByCourse[course.id] else { return 0 }
+        let done = completed[course.id] ?? []
+        return lessons.filter { done.contains($0.id) }.count
+    }
+
+    /// Completed lessons divided by the lesson count, 0–1. 0 until the lessons are loaded.
     func progress(for course: CommunityCourse) -> Double {
-        let total = lessonsByCourse[course.id]?.count ?? course.lessonCount
-        guard total > 0 else { return 0 }
+        guard let total = lessonsByCourse[course.id]?.count, total > 0 else { return 0 }
         return min(Double(completedCount(for: course)) / Double(total), 1)
     }
 
@@ -237,23 +247,22 @@ final class ClassroomViewModel: ObservableObject {
     // MARK: - Errors
 
     nonisolated static func friendly(_ error: Error, doing action: String) -> String {
+        if let draftError = error as? EventDraftError { return draftError.message }
+        if let classroomError = error as? ClassroomError {
+            return classroomError.errorDescription ?? "Couldn't \(action)."
+        }
         let nsError = error as NSError
         if nsError.domain == "FIRFirestoreErrorDomain" {
             switch nsError.code {
             case 7:
-                // Reads are open to anyone who can see the community, so a denied read
-                // means the new security rules haven't been published yet.
                 if action.hasPrefix("load") {
-                    return "This will work once the database update is published."
+                    return "You don't have access to this classroom."
                 }
                 return "You don't have permission to \(action)."
-            case 9: return "This will work once the database update is published."
+            case 9: return "Still setting up. Try again in a minute."
             case 14: return "Couldn't \(action). Check your connection and try again."
             default: break
             }
-        }
-        if let classroomError = error as? ClassroomError {
-            return classroomError.errorDescription ?? "Couldn't \(action)."
         }
         return "Couldn't \(action). Please try again."
     }

@@ -1,10 +1,12 @@
 // File: Core/Portfolio/Views/TradeManagementViews.swift
 // Trade detail sheet: see a trade, edit its journal, close it, or delete it.
 // Trades imported from a linked brokerage are read-only.
-// Proof labels (docs/backend-contracts.md, section 0): the entry (symbol, type, price, size, date)
-// is locked once logged, and the exit once closed. Closing checks the exit against today's range;
-// a price-checked trade stays price-checked only if its exit is too. A price-checked trade can be
-// deleted only within 15 minutes of logging. "Share to community" opens ShareTradeToCommunitySheet.
+// Proof labels (docs/backend-contracts.md, section 0): the entry (symbol, type, side, price, size,
+// date) is locked once logged, and the exit once closed. Closing checks the exit against the live
+// price (only for an exit happening now). The trade's label never changes on close: a price-checked
+// trade with an unchecked exit keeps counting and is marked "Exit not checked". A trade whose entry
+// was price-checked can be deleted only within 15 minutes of logging.
+// "Share to community" opens ShareTradeToCommunitySheet.
 
 import SwiftUI
 
@@ -32,8 +34,10 @@ struct TradeActionsSheet: View {
 
     // Close state
     @State private var exitPrice = ""
+    @State private var exitTiming: FillTiming = .now
     @State private var exitDate = Date()
     @State private var closingNotes = ""
+    @State private var showQuotesUnavailable = false
     @StateObject private var priceChecker = TradePriceChecker()
 
     init(trade: Trade) {
@@ -87,8 +91,19 @@ struct TradeActionsSheet: View {
         } message: {
             Text("It will be removed from your portfolio and stats. This can't be undone.")
         }
+        .alert("Live prices are unavailable right now", isPresented: $showQuotesUnavailable) {
+            Button("Try again") { Task { await runClose() } }
+            Button("Close with exit not checked") { Task { await runClose(allowUncheckedExit: true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The exit can't be price-checked without a live price. Try again in a minute, or close it now with the exit marked as not checked.")
+        }
         .onChange(of: selectedAction) { _, action in
             if action == .close { loadExitQuote() }
+        }
+        .onReceive(portfolioViewModel.$trades) { _ in
+            // Keep the sheet's copy in step with the listener (server times, quotes, other devices)
+            if let latest = portfolioViewModel.trade(withId: current.id) { current = latest }
         }
         .sheet(isPresented: $showShareToCommunity) {
             ShareTradeToCommunitySheet(trade: current)
@@ -196,15 +211,20 @@ struct TradeActionsSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let check = current.priceCheck {
-                Text("Entry checked against the day's range \(terms.price(check.low))–\(terms.price(check.high)).")
+                Text(check.price.map { "Entry checked against the live price \(terms.price($0))." }
+                     ?? "Entry checked against the day's range \(terms.price(check.low))–\(terms.price(check.high)).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !current.isOpen, let exitProof = current.exitProof {
-                Text(exitProof == .priceChecked
-                     ? "Exit price-checked when it was closed."
-                     : "Exit self-reported.")
+            if current.exitNotChecked {
+                Label("Exit not checked: the exit price wasn't checked against the market. The trade still counts.",
+                      systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !current.isOpen, current.exitProof == .priceChecked {
+                Text("Exit price-checked when it was closed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -268,6 +288,7 @@ struct TradeActionsSheet: View {
     private var detailsCard: some View {
         VStack(spacing: 0) {
             TradeInfoRow(title: "Asset", value: current.tradeType.displayName)
+            TradeInfoRow(title: "Direction", value: current.side.displayName)
             TradeInfoRow(title: terms.quantityTitle, value: terms.quantityText(current.quantity, symbol: current.ticker))
             TradeInfoRow(title: terms.entryPriceTitle, value: terms.price(current.entryPrice))
             TradeInfoRow(title: "Cost basis", value: current.totalInvested.asCurrency)
@@ -355,12 +376,12 @@ struct TradeActionsSheet: View {
                 Text(current.isOpen ? "Entry locked" : "Entry and exit locked")
                     .font(.subheadline.weight(.semibold))
             }
-            Text("\(current.ticker) · \(current.tradeType.displayName) · \(terms.quantityText(current.quantity, symbol: current.ticker)) at \(terms.price(current.entryPrice)) on \(formatDate(current.entryDate))")
+            Text("\(current.ticker) · \(current.side.displayName) · \(current.tradeType.displayName) · \(terms.quantityText(current.quantity, symbol: current.ticker)) at \(terms.price(current.entryPrice)) on \(formatDate(current.entryDate))")
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(current.isOpen
-                 ? "The symbol, size, entry price and date can't change after logging. If something's wrong, delete the trade and log it again\(current.proof == .priceChecked ? " (price-checked trades only within 15 minutes)" : "")."
+                 ? "The symbol, direction, size, entry price and date can't change after logging. If something's wrong, delete the trade and log it again\(current.entryProofValue == .priceChecked ? " (price-checked trades only within 15 minutes)" : "")."
                  : "A closed trade's entry and exit can't change. You can still edit the strategy and notes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -372,11 +393,19 @@ struct TradeActionsSheet: View {
 
     private var editValidationMessage: String? {
         guard current.isOpen else { return nil }
-        if !stopLossPrice.trimmingCharacters(in: .whitespaces).isEmpty && (AssetTerms.parseNumber(stopLossPrice) ?? 0) <= 0 {
+        let stop = AssetTerms.parseNumber(stopLossPrice)
+        let target = AssetTerms.parseNumber(takeProfitPrice)
+        if !stopLossPrice.trimmingCharacters(in: .whitespaces).isEmpty && (stop ?? 0) <= 0 {
             return "Stop loss must be a number above 0."
         }
-        if !takeProfitPrice.trimmingCharacters(in: .whitespaces).isEmpty && (AssetTerms.parseNumber(takeProfitPrice) ?? 0) <= 0 {
+        if !takeProfitPrice.trimmingCharacters(in: .whitespaces).isEmpty && (target ?? 0) <= 0 {
             return "Take profit must be a number above 0."
+        }
+        if let stop, stop > 0, let problem = current.side.stopLossProblem(stop: stop, entry: current.entryPrice) {
+            return problem
+        }
+        if let target, target > 0, let problem = current.side.takeProfitProblem(target: target, entry: current.entryPrice) {
+            return problem
         }
         return nil
     }
@@ -395,11 +424,17 @@ struct TradeActionsSheet: View {
                 )
                 quickCloseChips
                 Divider().overlay(Color.hairline)
-                DatePicker(selection: $exitDate, in: exitDateRange, displayedComponents: .date) {
-                    Label("Exit date", systemImage: "calendar")
-                        .font(.subheadline)
+                VStack(alignment: .leading, spacing: 6) {
+                    TradeFieldLabel(text: "When did you close?")
+                    SegmentedPicker(options: FillTiming.allCases, selection: $exitTiming) { $0.title }
                 }
-                .tint(Color.arkadGold)
+                if exitTiming == .earlier {
+                    DatePicker(selection: $exitDate, in: exitDateRange, displayedComponents: [.date, .hourAndMinute]) {
+                        Label("Exit time", systemImage: "calendar")
+                            .font(.subheadline)
+                    }
+                    .tint(Color.arkadGold)
+                }
                 TradeNotesField(title: "Closing notes (optional)", text: $closingNotes, placeholder: "What happened, what you learned…")
             }
             .cardStyle()
@@ -414,7 +449,8 @@ struct TradeActionsSheet: View {
                 message: exitProofMessage,
                 currentPriceText: priceChecker.quote.map { terms.price($0.current) },
                 showsUseCurrentPrice: canUseCurrentExitPrice,
-                onUseCurrentPrice: { if let quote = priceChecker.quote { setExitPrice(quote.current) } }
+                onUseCurrentPrice: { if let quote = priceChecker.quote { setExitPrice(quote.current) } },
+                onRetry: { priceChecker.retry(ticker: current.ticker, type: current.tradeType) }
             )
 
             Label("Closing is final: the exit price and date can't be changed afterwards.", systemImage: "lock")
@@ -426,36 +462,31 @@ struct TradeActionsSheet: View {
 
     // MARK: - Exit proof
 
-    /// The exit's own check (date today, price inside today's range)
+    /// The exit's own check (closing now, within 1% of the live price)
     private var exitOutcome: PriceCheckOutcome {
-        priceChecker.outcome(price: parsedExitPrice, date: exitDate, type: current.tradeType)
-    }
-
-    /// The label the whole trade ends up with after closing
-    private var proofAfterClose: TradeProof {
-        if current.proof == .priceChecked && exitOutcome.proof != .priceChecked { return .selfReported }
-        return current.proof
+        priceChecker.outcome(price: parsedExitPrice, isNow: exitTiming == .now, type: current.tradeType)
     }
 
     private var exitProofMessage: String {
         let exitLine = TradePriceCheckRules.message(
             for: exitOutcome, price: parsedExitPrice, side: "exit", ticker: current.ticker, type: current.tradeType
         )
-        guard !exitOutcome.isChecking, parsedExitPrice != nil else { return exitLine }
-        switch (current.proof, proofAfterClose) {
-        case (.priceChecked, .priceChecked):
-            return exitLine + " The trade stays price-checked."
-        case (.priceChecked, _):
-            return exitLine + " The trade will become self-reported and stop counting toward your stats."
-        case (.selfReported, _):
+        guard !exitOutcome.isChecking, !exitOutcome.isQuotesUnavailable, parsedExitPrice != nil else { return exitLine }
+        switch current.proof {
+        case .priceChecked:
+            return exitLine + (exitOutcome.proof == .priceChecked
+                ? " The trade stays price-checked."
+                : " The trade still counts, marked \"Exit not checked\".")
+        case .selfReported:
             return exitLine + " The entry was self-reported, so the trade stays self-reported."
-        default:
+        case .verified:
             return exitLine
         }
     }
 
     private var canUseCurrentExitPrice: Bool {
-        guard let quote = priceChecker.quote, Calendar.current.isDateInToday(exitDate) else { return false }
+        guard let quote = priceChecker.quote, exitTiming == .now,
+              TradePriceCheckRules.canQuote(current.tradeType) else { return false }
         return parsedExitPrice.map { abs($0 - quote.current) > 0.000_001 } ?? true
     }
 
@@ -552,17 +583,32 @@ struct TradeActionsSheet: View {
         }
     }
 
+    /// From the "Live prices are unavailable" alert
     @MainActor
-    private func closePosition() async {
-        guard let price = parsedExitPrice else { return }
+    private func runClose(allowUncheckedExit: Bool = false) async {
+        guard !isLoading else { return }
+        isLoading = true
+        await closePosition(allowUncheckedExit: allowUncheckedExit)
+        isLoading = false
+    }
 
-        // Check the exit with a quote at most two minutes old; if the label changed since the
-        // user last saw it, show the new one instead of closing.
+    @MainActor
+    private func closePosition(allowUncheckedExit: Bool = false) async {
+        guard let price = parsedExitPrice else { return }
+        let isNow = exitTiming == .now
+        let closedAt = isNow ? Date() : exitDate
+
+        // Check the exit with a quote at most 30 seconds old. When quotes are unavailable, ask;
+        // if the label changed since the user last saw it, show the new one instead of closing.
         let shownProof = exitOutcome.proof
         let outcome = await priceChecker.outcomeForSaving(
-            ticker: current.ticker, price: price, date: exitDate, type: current.tradeType
+            ticker: current.ticker, price: price, isNow: isNow, type: current.tradeType
         )
-        if outcome.proof != shownProof {
+        if outcome.isQuotesUnavailable && !allowUncheckedExit {
+            showQuotesUnavailable = true
+            return
+        }
+        if outcome.proof != shownProof && !(allowUncheckedExit && outcome.isQuotesUnavailable) {
             present(
                 "Proof label changed",
                 TradePriceCheckRules.message(for: outcome, price: price, side: "exit",
@@ -581,7 +627,7 @@ struct TradeActionsSheet: View {
 
         do {
             let closedTrade = try await portfolioViewModel.closeTrade(
-                current, exitPrice: price, exitDate: exitDate, exitOutcome: outcome, notes: notesAfterClose
+                current, exitPrice: price, exitDate: closedAt, exitOutcome: outcome, notes: notesAfterClose
             )
             current = closedTrade
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -589,9 +635,14 @@ struct TradeActionsSheet: View {
             let result = profit >= 0
                 ? "You closed \(closedTrade.ticker) with a profit of \(profit.asCurrency)."
                 : "You closed \(closedTrade.ticker) with a loss of \(abs(profit).asCurrency)."
-            let label = closedTrade.proof == .priceChecked
-                ? " It's price-checked and counts toward your stats."
-                : " It's self-reported, so it doesn't count toward your stats."
+            let label: String
+            if closedTrade.exitNotChecked {
+                label = " It counts toward your stats, marked \"Exit not checked\"."
+            } else if closedTrade.countsTowardStats {
+                label = " It's price-checked and counts toward your stats."
+            } else {
+                label = " It's self-reported, so it doesn't count toward your stats."
+            }
             present("Position closed", result + label, thenDismiss: true)
         } catch {
             present("Couldn't close position", "Failed to close trade: \(error.localizedDescription)")
@@ -655,7 +706,7 @@ private struct TradeHeroCard: View {
                             .lineLimit(1)
                         TradeProofBadge(proof: trade.proof, compact: true)
                     }
-                    Text("\(trade.tradeType.displayName) · \(terms.quantityText(trade.quantity, symbol: trade.ticker))")
+                    Text("\(trade.side == .short ? "Short · " : "")\(trade.tradeType.displayName) · \(terms.quantityText(trade.quantity, symbol: trade.ticker))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -759,12 +810,11 @@ struct ProjectedPLCard: View {
     let exitPrice: Double
 
     private var projectedPL: Double {
-        (exitPrice - trade.entryPrice) * trade.quantity
+        Trade.profitLoss(side: trade.side, entry: trade.entryPrice, exit: exitPrice, quantity: trade.quantity)
     }
 
     private var returnPercentage: Double {
-        let cost = trade.entryPrice * trade.quantity
-        return cost > 0 ? projectedPL / cost * 100 : 0
+        Trade.returnPercent(side: trade.side, entry: trade.entryPrice, exit: exitPrice)
     }
 
     var body: some View {

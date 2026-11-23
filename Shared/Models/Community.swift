@@ -202,10 +202,17 @@ struct Community: Identifiable, Codable, Hashable {
         return "\(CommunityPricing.format(priceMonthly))/mo"
     }
 
+    /// `nameLower`: the name lowercased (the rules require exactly `name.lower()`; names are
+    /// trimmed before saving). Used to check that names are unique without reading every community.
+    static func normalizedName(_ name: String) -> String {
+        name.lowercased()
+    }
+
     // MARK: - Firebase Conversion
     func toFirestore() -> [String: Any] {
         var data: [String: Any] = [
             "name": name,
+            "nameLower": Community.normalizedName(name),
             "description": description,
             "type": type.rawValue,
             "createdBy": createdBy,

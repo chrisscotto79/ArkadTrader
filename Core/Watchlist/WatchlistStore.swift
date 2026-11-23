@@ -17,7 +17,8 @@ import FirebaseFirestore
 final class WatchlistStore: ObservableObject {
     static let shared = WatchlistStore()
 
-    /// The server (or, in free mode, the Firestore rules) enforces the same limit.
+    /// Enforced here, in the app (`canCreateAlert`). The Firestore rules can't count documents,
+    /// so a modified client could store more; PriceAlertChecker only ever reads active ones.
     nonisolated static let maxActiveAlerts = 20
 
     @Published private(set) var items: [WatchlistItem] = []
@@ -27,6 +28,8 @@ final class WatchlistStore: ObservableObject {
     @Published private(set) var hasLoaded = false
     @Published private(set) var isLoadingQuotes = false
     @Published private(set) var lastQuoteUpdate: Date?
+    /// True when the last quote refresh got no prices because Finnhub was rate limited or offline
+    @Published private(set) var quotesUnavailable = false
     /// Set when the list couldn't be loaded.
     @Published private(set) var loadError: String?
 
@@ -97,10 +100,17 @@ final class WatchlistStore: ObservableObject {
         let symbols = Set(items.filter(\.hasLiveQuote).map(\.symbol))
         guard !symbols.isEmpty, WatchlistQuotes.isConfigured else { return }
         isLoadingQuotes = true
-        let fresh = await WatchlistQuotes.fetch(symbols: symbols)
+        let results = await WatchlistQuotes.fetchResults(symbols: symbols)
+        let fresh = results.compactMapValues { $0.quote.map(WatchlistQuote.init) }
         quotes.merge(fresh) { _, new in new }
         if !fresh.isEmpty { lastQuoteUpdate = Date() }
+        quotesUnavailable = results.allTemporarilyUnavailable
         isLoadingQuotes = false
+    }
+
+    /// Clears everything. Call on sign-out.
+    func reset() {
+        reset(for: nil)
     }
 
     private func reset(for userId: String?) {
@@ -111,6 +121,7 @@ final class WatchlistStore: ObservableObject {
         hasLoaded = false
         loadError = nil
         lastQuoteUpdate = nil
+        quotesUnavailable = false
     }
 
     // MARK: - Watchlist

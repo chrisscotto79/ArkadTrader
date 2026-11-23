@@ -1,5 +1,6 @@
 // File: Core/Communities/ViewModels/CommunitySettingsViewModel.swift
-// Simple Community Settings ViewModel
+// Community settings: details (saved field by field), images, rules, the private invite code,
+// pricing (paid mode only) and deleting the community. Members are managed in the members sheet.
 
 import Foundation
 import Firebase
@@ -15,16 +16,16 @@ class CommunitySettingsViewModel: ObservableObject {
     @Published var settings: CommunitySettings
     @Published var isLoading = false
     @Published var errorMessage = ""
-    @Published var showingDeleteConfirmation = false
-    
-    // Member management
-    @Published var members: [CommunityMemberWithRole] = []
-    @Published var isLoadingMembers = false
-    @Published var selectedMemberForRemoval: CommunityMemberWithRole?
-    
+    /// The details as last saved, so "Done" knows what changed
+    @Published private(set) var savedSettings: CommunitySettings
+
+    // Invite code (private communities, owner only)
+    @Published private(set) var inviteCode: String?
+    @Published private(set) var isLoadingInvite = false
+    @Published var inviteError: String?
+
     // Community rules and moderation
     @Published var communityRules: [CommunityRule] = []
-    @Published var moderationSettings = CommunityModerationSettings()
     @Published var isLoadingRules = false
     @Published var showingAddRule = false
     
@@ -35,10 +36,6 @@ class CommunitySettingsViewModel: ObservableObject {
     @Published var bannerImage: UIImage?
     @Published var isUploadingAvatar = false
     @Published var isUploadingBanner = false
-    @Published var avatarUploadProgress: Double = 0
-    @Published var bannerUploadProgress: Double = 0
-    @Published var showingImagePicker = false
-    @Published var imagePickerType: ImagePickerType = .avatar
 
     // Pricing (owner only). Saved through the setCommunityPrice function, never written directly.
     @Published var pricingIsPaid: Bool
@@ -61,6 +58,7 @@ class CommunitySettingsViewModel: ObservableObject {
     init(community: Community) {
         self.community = community
         self.settings = CommunitySettings(from: community)
+        self.savedSettings = CommunitySettings(from: community)
         self.pricingIsPaid = community.isPaid
         self.pricingPriceText = CommunityPricing.inputText(for: community.priceMonthly)
         self.pricingTrialDays = community.trialDays
@@ -121,14 +119,12 @@ class CommunitySettingsViewModel: ObservableObject {
         }
 
         isUploadingAvatar = true
-        avatarUploadProgress = 0
         errorMessage = ""
 
         do {
             let avatarURL = try await ImageStore.shared.uploadCommunityAvatar(avatarImage, communityId: community.id)
             try await saveImageField("avatarURL", value: avatarURL)
             settings.avatarURL = avatarURL
-            avatarUploadProgress = 1
         } catch {
             errorMessage = "Failed to upload avatar: \(error.localizedDescription)"
         }
@@ -145,14 +141,12 @@ class CommunitySettingsViewModel: ObservableObject {
         }
 
         isUploadingBanner = true
-        bannerUploadProgress = 0
         errorMessage = ""
 
         do {
             let bannerURL = try await ImageStore.shared.uploadCommunityBanner(bannerImage, communityId: community.id)
             try await saveImageField("bannerURL", value: bannerURL)
             settings.bannerURL = bannerURL
-            bannerUploadProgress = 1
         } catch {
             errorMessage = "Failed to upload banner: \(error.localizedDescription)"
         }
@@ -223,7 +217,7 @@ class CommunitySettingsViewModel: ObservableObject {
                 try await ImageStore.shared.deleteImage(id: fallbackId)
             }
         } catch {
-            print("⚠️ Community image cleanup failed: \(error.localizedDescription)")
+            // Best-effort: a leftover image doc isn't shown anywhere
         }
     }
 
@@ -277,12 +271,6 @@ class CommunitySettingsViewModel: ObservableObject {
         }
     }
 
-    /// Open image picker for specific type
-    func openImagePicker(for type: ImagePickerType) {
-        imagePickerType = type
-        showingImagePicker = true
-    }
-
     // MARK: - Image Validation
 
     /// Avatars are centre-cropped to a square and every image is resized before upload,
@@ -323,50 +311,120 @@ class CommunitySettingsViewModel: ObservableObject {
     }
     
     // MARK: - Update Community
-    func updateCommunity() async {
+
+    /// Saves only the details that changed (name, description, privacy). Returns true on success.
+    @discardableResult
+    func updateCommunity() async -> Bool {
         guard canSave else {
             errorMessage = "Please fill in all required fields correctly"
-            return
+            return false
         }
-        
         guard isOwner else {
             errorMessage = "Only the community owner can edit settings"
-            return
+            return false
         }
-        
+
+        let name = settings.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = settings.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameChanged = name != savedSettings.name
+        let descriptionChanged = description != savedSettings.description
+        let privacyChanged = settings.isPrivate != savedSettings.isPrivate
+        guard nameChanged || descriptionChanged || privacyChanged else { return true }
+
+        if nameChanged {
+            let nameValidation = communityService.validateCommunityName(name)
+            guard nameValidation.isValid else {
+                errorMessage = nameValidation.message
+                return false
+            }
+        }
+        if descriptionChanged {
+            let descValidation = communityService.validateCommunityDescription(description)
+            guard descValidation.isValid else {
+                errorMessage = descValidation.message
+                return false
+            }
+        }
+
         isLoading = true
         errorMessage = ""
-        
+        defer { isLoading = false }
+
         do {
-            // Validate name
-            let nameValidation = communityService.validateCommunityName(settings.name)
-            if !nameValidation.isValid {
-                errorMessage = nameValidation.message
-                isLoading = false
-                return
+            // A new name (not just new capitals) must not belong to another public community
+            if nameChanged,
+               Community.normalizedName(name) != Community.normalizedName(savedSettings.name),
+               !(try await communityService.isNameAvailable(name)) {
+                errorMessage = "Another community already uses that name."
+                return false
             }
-            
-            // Validate description
-            let descValidation = communityService.validateCommunityDescription(settings.description)
-            if !descValidation.isValid {
-                errorMessage = descValidation.message
-                isLoading = false
-                return
+            try await communityService.updateCommunityDetails(
+                communityId: community.id,
+                name: nameChanged ? name : nil,
+                description: descriptionChanged ? description : nil,
+                isPrivate: privacyChanged ? settings.isPrivate : nil
+            )
+            settings.name = name
+            settings.description = description
+            savedSettings.name = name
+            savedSettings.description = description
+            savedSettings.isPrivate = settings.isPrivate
+            if privacyChanged && settings.isPrivate {
+                await loadInvite()
             }
-            
-            // Update the community
-            let updatedCommunity = settings.updateCommunity(community)
-            try await communityService.updateCommunity(updatedCommunity)
-            
-            // Success - the UI will dismiss automatically
-            
+            return true
         } catch {
-            errorMessage = "Failed to update community: \(error.localizedDescription)"
+            errorMessage = "Couldn't save your changes. Check your connection and try again."
+            return false
         }
-        
-        isLoading = false
     }
-    
+
+    // MARK: - Invite code
+
+    /// Invite docs can't be listed, so this phone remembers the code it made
+    private var inviteDefaultsKey: String? {
+        authService.currentUser.map { "communityInvite.\(community.id).\($0.id)" }
+    }
+
+    /// The owner's invite code for a private community: the one this phone made (if it still
+    /// works), otherwise a new one.
+    func loadInvite() async {
+        guard isOwner, savedSettings.isPrivate, let userId = authService.currentUser?.id,
+              let key = inviteDefaultsKey else { return }
+        isLoadingInvite = true
+        inviteError = nil
+        defer { isLoadingInvite = false }
+        do {
+            if let stored = UserDefaults.standard.string(forKey: key),
+               (try? await FirebaseServices.shared.communityId(forInviteCode: stored)) == community.id {
+                inviteCode = stored
+                return
+            }
+            let code = try await FirebaseServices.shared.createCommunityInvite(communityId: community.id, createdBy: userId)
+            UserDefaults.standard.set(code, forKey: key)
+            inviteCode = code
+        } catch {
+            inviteError = "Couldn't load the invite code. Try again."
+        }
+    }
+
+    /// A fresh code; the old one stops working.
+    func regenerateInvite() async {
+        guard isOwner, let userId = authService.currentUser?.id, let key = inviteDefaultsKey else { return }
+        isLoadingInvite = true
+        inviteError = nil
+        defer { isLoadingInvite = false }
+        do {
+            let code = try await FirebaseServices.shared.regenerateCommunityInvite(
+                communityId: community.id, userId: userId, replacing: inviteCode
+            )
+            UserDefaults.standard.set(code, forKey: key)
+            inviteCode = code
+        } catch {
+            inviteError = "Couldn't make a new code. Try again."
+        }
+    }
+
     // MARK: - Community Rules Management
     func loadCommunityRules() async {
         isLoadingRules = true
@@ -435,10 +493,12 @@ class CommunitySettingsViewModel: ObservableObject {
     }
     
     // MARK: - Delete Community
-    func deleteCommunity() async {
+    /// Returns true when the community is gone.
+    @discardableResult
+    func deleteCommunity() async -> Bool {
         guard isOwner else {
             errorMessage = "Only the community owner can delete the community"
-            return
+            return false
         }
         
         isLoading = true
@@ -450,26 +510,29 @@ class CommunitySettingsViewModel: ObservableObject {
 
         do {
             try await communityService.deleteCommunity(communityId: community.id)
-            // Success - the UI will handle navigation
+            isLoading = false
+            return true
         } catch {
-            errorMessage = "Failed to delete community: \(error.localizedDescription)"
+            errorMessage = "Couldn't delete the community. Check your connection and try again."
+            isLoading = false
+            return false
         }
-        
-        isLoading = false
     }
     
     // MARK: - Helper Methods
+    /// Undo unsaved detail edits. Images are saved as soon as they're picked, so they stay.
     func resetSettings() {
-        settings = CommunitySettings(from: community)
+        settings.name = savedSettings.name
+        settings.description = savedSettings.description
+        settings.isPrivate = savedSettings.isPrivate
         errorMessage = ""
     }
-    
+
+    /// Unsaved edits to the details (images save on their own)
     var hasChanges: Bool {
-        settings.name != community.name ||
-        settings.description != community.description ||
-        settings.isPrivate != community.isPrivate ||
-        settings.avatarURL != community.avatarURL ||
-        settings.bannerURL != community.bannerURL
+        settings.name.trimmingCharacters(in: .whitespacesAndNewlines) != savedSettings.name ||
+        settings.description.trimmingCharacters(in: .whitespacesAndNewlines) != savedSettings.description ||
+        settings.isPrivate != savedSettings.isPrivate
     }
     
     // MARK: - Pricing
@@ -523,87 +586,6 @@ class CommunitySettingsViewModel: ObservableObject {
             pricingError = CloudFunctions.friendlyMessage(for: error)
         }
         isSavingPricing = false
-    }
-
-    // MARK: - Member Management
-    func loadMembers() async {
-        isLoadingMembers = true
-        errorMessage = ""
-        
-        do {
-            members = try await communityService.getCommunityMembersWithRoles(communityId: community.id)
-        } catch {
-            errorMessage = "Failed to load members: \(error.localizedDescription)"
-        }
-        
-        isLoadingMembers = false
-    }
-    
-    func removeMember(_ member: CommunityMemberWithRole) async {
-        guard isOwner else {
-            errorMessage = "Only the community owner can remove members"
-            return
-        }
-        
-        guard member.role != .owner else {
-            errorMessage = "Cannot remove the community owner"
-            return
-        }
-        
-        isLoading = true
-        
-        do {
-            try await communityService.removeMemberFromCommunity(
-                communityId: community.id,
-                userId: member.userId
-            )
-            
-            // Remove from local list
-            members.removeAll { $0.id == member.id }
-            
-        } catch {
-            errorMessage = "Failed to remove member: \(error.localizedDescription)"
-        }
-        
-        isLoading = false
-    }
-    
-    func updateMemberRole(_ member: CommunityMemberWithRole, to newRole: CommunityRole) async {
-        guard isOwner else {
-            errorMessage = "Only the community owner can change member roles"
-            return
-        }
-        
-        guard member.role != .owner else {
-            errorMessage = "Cannot change the owner's role"
-            return
-        }
-        
-        isLoading = true
-        
-        do {
-            try await communityService.updateMemberRole(
-                communityId: community.id,
-                userId: member.userId,
-                newRole: newRole
-            )
-            
-            // Update local list
-            if let index = members.firstIndex(where: { $0.id == member.id }) {
-                members[index] = CommunityMemberWithRole(
-                    userId: member.userId,
-                    username: member.username,
-                    fullName: member.fullName,
-                    role: newRole,
-                    joinedAt: member.joinedAt
-                )
-            }
-            
-        } catch {
-            errorMessage = "Failed to update member role: \(error.localizedDescription)"
-        }
-        
-        isLoading = false
     }
 }
 

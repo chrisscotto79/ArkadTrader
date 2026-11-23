@@ -1,5 +1,5 @@
 // File: Shared/Models/Trade.swift
-// Enhanced Trade Model - Compatible with Existing Code
+// A logged trade: trades/{id}. Long or short (`side`); every P&L is signed by the side.
 
 import Foundation
 import FirebaseFirestore
@@ -22,6 +22,8 @@ struct Trade: Identifiable, Codable {
     var isOpen: Bool
     var sharedCommunityIds: [String]
     var isPublic: Bool = false
+    /// Long (profit when the price rises) or short (profit when it falls). Missing on old trades = long.
+    var side: TradeSide = .long
     
     // MARK: - Enhanced Properties (Optional - can be nil if not set)
     var stopLossPrice: Double?
@@ -43,7 +45,11 @@ struct Trade: Identifiable, Codable {
 
     // MARK: - Proof label (docs/backend-contracts.md, section 0: "Proof labels")
     /// How much the trade can be trusted. A missing `proof` field means self-reported.
+    /// Set when the trade is logged and never lowered afterwards (closing doesn't change it).
     var proof: TradeProof = .selfReported
+    /// The proof the entry got when the trade was logged. Written once on create and never changed
+    /// (the rules lock it). Nil on trades logged before it existed: use `entryProofValue`.
+    var entryProof: TradeProof?
     /// Server time the trade was logged (`FieldValue.serverTimestamp()` on create).
     /// Nil on old trades, and briefly nil locally until the server has set it.
     var loggedAt: Date?
@@ -57,13 +63,26 @@ struct Trade: Identifiable, Codable {
     /// Only price-checked and verified trades count toward win rate, P&L and performance.
     var countsTowardStats: Bool { proof.countsTowardStats }
 
+    /// The entry's proof, falling back to `proof` for trades logged before `entryProof` existed.
+    var entryProofValue: TradeProof { entryProof ?? proof }
+
+    /// A counted trade whose exit price wasn't checked against the market (closed on another day,
+    /// or while quotes were unavailable). It still counts; the UI flags it "Exit not checked".
+    var exitNotChecked: Bool {
+        !isOpen && proof == .priceChecked && exitProof == .selfReported
+    }
+
+    /// +1 for long, -1 for short
+    var sideSign: Double { side.sign }
+
     /// How long after `loggedAt` a price-checked trade can still be deleted (the rules allow 15 minutes).
     static let priceCheckedDeleteWindow: TimeInterval = 15 * 60
 
     /// When a price-checked trade stops being deletable, or nil when it can always be deleted.
-    /// A small margin keeps the app from offering a delete the server would just refuse.
+    /// Based on the entry's proof. A small margin keeps the app from offering a delete the server
+    /// would just refuse.
     var deleteDeadline: Date? {
-        guard proof == .priceChecked else { return nil }
+        guard entryProofValue == .priceChecked else { return nil }
         // Not yet confirmed by the server: it was logged moments ago
         let logged = loggedAt ?? Date()
         return logged.addingTimeInterval(Trade.priceCheckedDeleteWindow - 30)
@@ -78,36 +97,45 @@ struct Trade: Identifiable, Codable {
     
     // MARK: - Computed Properties
     
+    /// Realized P&L of a closed trade, signed by the side (a short gains when the price falls).
     var profitLoss: Double {
         guard let exitPrice = exitPrice else { return 0 }
-        return (exitPrice - entryPrice) * quantity
+        return Trade.profitLoss(side: side, entry: entryPrice, exit: exitPrice, quantity: quantity)
     }
     
     var profitLossPercentage: Double {
-        guard let exitPrice = exitPrice else { return 0 }
-        return ((exitPrice - entryPrice) / entryPrice) * 100
+        guard let exitPrice = exitPrice, entryPrice > 0 else { return 0 }
+        return Trade.returnPercent(side: side, entry: entryPrice, exit: exitPrice)
+    }
+
+    /// P&L for `quantity` at `exit`, signed by `side`. Shared by trades, the close preview and the risk plan.
+    static func profitLoss(side: TradeSide, entry: Double, exit: Double, quantity: Double) -> Double {
+        side.sign * (exit - entry) * quantity
+    }
+
+    /// Percent return from entry to exit, signed by `side`; 0 without a positive entry.
+    static func returnPercent(side: TradeSide, entry: Double, exit: Double) -> Double {
+        guard entry > 0 else { return 0 }
+        return side.sign * (exit - entry) / entry * 100
     }
     
+    /// What the position is worth: cost basis plus its P&L (for a short, the margin held plus
+    /// the gain or loss on the borrowed shares).
     var currentValue: Double {
-        if isOpen {
-            let price = (currentPrice != nil && currentPrice! > 0) ? currentPrice! : entryPrice
-            return price * quantity
-        } else {
-            let price = exitPrice ?? entryPrice
-            return price * quantity
-        }
+        totalInvested + (isOpen ? unrealizedPL : profitLoss)
     }
     
+    /// Open position's P&L at the live price, signed by the side (0 without a live price).
     var unrealizedPL: Double {
         guard isOpen else { return 0 }
         guard let current = currentPrice, current > 0 else { return 0 }
-        return (current - entryPrice) * quantity
+        return Trade.profitLoss(side: side, entry: entryPrice, exit: current, quantity: quantity)
     }
     
     var unrealizedPLPercentage: Double {
         guard isOpen else { return 0 }
         guard let current = currentPrice, current > 0, entryPrice > 0 else { return 0 }
-        return ((current - entryPrice) / entryPrice) * 100
+        return Trade.returnPercent(side: side, entry: entryPrice, exit: current)
     }
     
     var daysHeld: Int {
@@ -140,7 +168,7 @@ struct Trade: Identifiable, Codable {
     }
     
     var hasSignificantPriceMovement: Bool {
-        guard isOpen, let current = currentPrice else { return false }
+        guard isOpen, let current = currentPrice, entryPrice > 0 else { return false }
         let priceChangePercentage = abs((current - entryPrice) / entryPrice) * 100
         return priceChangePercentage >= 1.0
     }
@@ -232,7 +260,8 @@ struct Trade: Identifiable, Codable {
     /// The data for creating the trade document (FirebaseServices.addTrade).
     /// The brokerage fields (`source`, `isVerified`, `externalId`, `brokerageConnectionId`) are left out
     /// on purpose: only the server writes them.
-    /// Proof: `proof`, `loggedAt` (server time) and, for price-checked entries, `priceCheck`.
+    /// Proof: `proof` and the immutable `entryProof` (equal on create), `loggedAt` (server time) and,
+    /// for price-checked entries, `priceCheck`.
     /// A trade created already closed has an unchecked exit, so it's self-reported overall.
     /// Updates don't use this: see FirebaseServices.updateTrade / closeTrade, which never rewrite
     /// the fields the rules lock after create.
@@ -249,15 +278,12 @@ struct Trade: Identifiable, Codable {
             "isOpen": isOpen,
             "sharedCommunityIds": sharedCommunityIds,
             "isPublic": isPublic,
+            "side": side.rawValue,
             "tags": tags
         ]
         
         if let exitPrice = exitPrice {
             data["exitPrice"] = exitPrice
-        }
-        
-        if let currentPrice = currentPrice {
-            data["currentPrice"] = currentPrice
         }
         
         if let exitDate = exitDate {
@@ -284,6 +310,7 @@ struct Trade: Identifiable, Codable {
             data["exitLoggedAt"] = FieldValue.serverTimestamp()
         }
         data["proof"] = createProof.rawValue
+        data["entryProof"] = createProof.rawValue
         data["loggedAt"] = FieldValue.serverTimestamp()
         if createProof == .priceChecked, let priceCheck {
             data["priceCheck"] = priceCheck.toFirestore()
@@ -315,6 +342,7 @@ struct Trade: Identifiable, Codable {
         trade.exitDate = (data["exitDate"] as? Timestamp)?.dateValue()
         trade.isOpen = isOpen
         trade.isPublic = data["isPublic"] as? Bool ?? false
+        trade.side = (data["side"] as? String).flatMap(TradeSide.init(rawValue:)) ?? .long
         trade.stopLossPrice = data["stopLossPrice"] as? Double
         trade.takeProfitPrice = data["takeProfitPrice"] as? Double
         trade.sector = data["sector"] as? String
@@ -330,12 +358,64 @@ struct Trade: Identifiable, Codable {
         } else {
             trade.proof = (trade.isImported && trade.isVerified == true) ? .verified : .selfReported
         }
+        trade.entryProof = (data["entryProof"] as? String).flatMap(TradeProof.init(rawValue:))
+        // Read with serverTimestampBehavior .estimate (see `from(document:)`), so a just-logged
+        // trade has its estimated time rather than nil
         trade.loggedAt = (data["loggedAt"] as? Timestamp)?.dateValue()
         trade.priceCheck = (data["priceCheck"] as? [String: Any]).flatMap(TradePriceCheck.fromFirestore)
         trade.exitProof = (data["exitProof"] as? String).flatMap(TradeProof.init(rawValue:))
         trade.exitLoggedAt = (data["exitLoggedAt"] as? Timestamp)?.dateValue()
         
         return trade
+    }
+
+    /// Decodes a trade document, estimating pending server timestamps (`loggedAt` right after logging).
+    static func from(document: DocumentSnapshot) -> Trade? {
+        guard let data = document.data(with: .estimate) else { return nil }
+        return try? fromFirestore(data: data, id: document.documentID)
+    }
+}
+
+// MARK: - Side
+
+/// Long or short. Stored as `side` on trades ("long" / "short"); missing means long.
+enum TradeSide: String, Codable, CaseIterable {
+    case long
+    case short
+
+    var sign: Double { self == .long ? 1 : -1 }
+
+    var displayName: String {
+        switch self {
+        case .long: return "Long"
+        case .short: return "Short"
+        }
+    }
+
+    /// "Buy" / "Sell short", for sentences and pickers
+    var actionName: String {
+        switch self {
+        case .long: return "Buy"
+        case .short: return "Sell short"
+        }
+    }
+
+    /// Why a stop loss is on the wrong side of the entry, or nil when it's fine.
+    func stopLossProblem(stop: Double, entry: Double) -> String? {
+        switch self {
+        case .long where stop >= entry: return "For a long, the stop loss should be below your entry."
+        case .short where stop <= entry: return "For a short, the stop loss should be above your entry."
+        default: return nil
+        }
+    }
+
+    /// Why a take profit is on the wrong side of the entry, or nil when it's fine.
+    func takeProfitProblem(target: Double, entry: Double) -> String? {
+        switch self {
+        case .long where target <= entry: return "For a long, the take profit should be above your entry."
+        case .short where target >= entry: return "For a short, the take profit should be below your entry."
+        default: return nil
+        }
     }
 }
 
@@ -385,28 +465,34 @@ enum TradeProof: String, Codable, CaseIterable {
     var explanation: String {
         switch self {
         case .verified: return "Imported from a linked brokerage."
-        case .priceChecked: return "Logged as it happened, at a price inside the day's market range."
+        case .priceChecked: return "Logged as it happened, within 1% of the live market price."
         case .selfReported: return "Entered by the trader and not checked against market prices. Doesn't count toward win rate or P&L."
         }
     }
 }
 
-/// The day range a price was checked against: `priceCheck: { low, high, checkedAt }`.
+/// What a price was checked against: `priceCheck: { price, low, high, checkedAt }`.
+/// `price` is the live quote at logging time and `low`...`high` the accepted band around it
+/// (±1%, TradePriceCheckRules.tolerance). Older trades stored the day's low and high, without `price`.
 struct TradePriceCheck: Codable, Equatable {
-    /// Finnhub's day low and high (before the 0.5% widening for quote delay)
     var low: Double
     var high: Double
     var checkedAt: Date
+    /// The live quote the band was built from (nil on older trades)
+    var price: Double? = nil
 
     func toFirestore() -> [String: Any] {
-        ["low": low, "high": high, "checkedAt": Timestamp(date: checkedAt)]
+        var data: [String: Any] = ["low": low, "high": high, "checkedAt": Timestamp(date: checkedAt)]
+        if let price { data["price"] = price }
+        return data
     }
 
     static func fromFirestore(_ data: [String: Any]) -> TradePriceCheck? {
         guard let low = (data["low"] as? NSNumber)?.doubleValue,
               let high = (data["high"] as? NSNumber)?.doubleValue else { return nil }
         let checkedAt = (data["checkedAt"] as? Timestamp)?.dateValue() ?? Date.distantPast
-        return TradePriceCheck(low: low, high: high, checkedAt: checkedAt)
+        return TradePriceCheck(low: low, high: high, checkedAt: checkedAt,
+                               price: (data["price"] as? NSNumber)?.doubleValue)
     }
 }
 
@@ -461,6 +547,14 @@ struct TradeStats: Equatable {
     /// Only self-reported trades
     init(selfReported trades: [Trade]) {
         self.init(trades: trades.filter { !$0.countsTowardStats })
+    }
+
+    /// The public track record: public, closed, price-checked or verified trades, realized P&L
+    /// only (no unrealized P&L from possibly stale prices). The user's profile document
+    /// (`totalProfitLoss`, `winRate`) is written from this, and other people's profiles show the
+    /// same numbers computed from their public trades.
+    static func publicRecord(_ trades: [Trade]) -> TradeStats {
+        TradeStats(trades: trades.filter { $0.isPublic && !$0.isOpen && $0.countsTowardStats })
     }
 }
 

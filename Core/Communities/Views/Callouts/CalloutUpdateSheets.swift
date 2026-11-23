@@ -37,22 +37,13 @@ struct CalloutUpdateSheet: View {
     /// The price new levels are checked against: the live quote, else the last stored price.
     private var referencePrice: Double? { livePrice ?? callout.lastPrice }
 
-    /// Accepts "182.4", "$182.40" and "182,4".
+    /// Accepts "182.4", "$182.40", "50%", and "182,4" where the decimal separator is a comma.
     private static func number(_ text: String) -> Double? {
-        var cleaned = text.replacingOccurrences(of: "$", with: "")
-            .replacingOccurrences(of: "%", with: "")
-            .trimmingCharacters(in: .whitespaces)
-        if cleaned.contains(",") && !cleaned.contains(".") {
-            cleaned = cleaned.replacingOccurrences(of: ",", with: ".")
-        } else {
-            cleaned = cleaned.replacingOccurrences(of: ",", with: "")
-        }
-        guard let value = Double(cleaned), value.isFinite else { return nil }
-        return value
+        TradeCallout.parsePrice(text)
     }
 
     private static func editable(_ price: Double) -> String {
-        String(format: abs(price) < 1 ? "%.4f" : "%.2f", price)
+        TradeCallout.editablePrice(price)
     }
 
     private var update: CalloutUpdate {

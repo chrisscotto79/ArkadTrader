@@ -2,6 +2,7 @@
 // Sign in: email + password, remember-me (email only), password reset and sign-up.
 
 import SwiftUI
+import FirebaseAuth
 
 struct LoginView: View {
     @EnvironmentObject var authService: FirebaseAuthService
@@ -12,6 +13,7 @@ struct LoginView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var rememberMe = false
+    @State private var isSubmitting = false
 
     @FocusState private var emailFieldFocused: Bool
     @FocusState private var passwordFieldFocused: Bool
@@ -52,7 +54,7 @@ struct LoginView: View {
                 .environmentObject(authService)
         }
         .sheet(isPresented: $showForgotPassword) {
-            ForgotPasswordView(initialEmail: isValidEmail ? email : "")
+            ForgotPasswordView(initialEmail: isValidEmail ? trimmedEmail : "")
                 .environmentObject(authService)
         }
     }
@@ -110,14 +112,14 @@ struct LoginView: View {
                 submitLabel: .go,
                 focus: $passwordFieldFocused
             ) {
-                if isFormValid { login() }
+                if isFormValid && !isSubmitting { login() }
             }
 
             optionsRow
 
             Button(action: login) {
                 HStack(spacing: 8) {
-                    if authService.isLoading {
+                    if isSubmitting {
                         ProgressView().tint(Color.onGold)
                     } else {
                         Text("Sign in")
@@ -125,7 +127,8 @@ struct LoginView: View {
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(!isFormValid || authService.isLoading)
+            .disabled(!isFormValid || isSubmitting)
+            .accessibilityLabel(isSubmitting ? "Signing in" : "Sign in")
             .padding(.top, DS.Spacing.xs)
         }
     }
@@ -172,9 +175,13 @@ struct LoginView: View {
 
     // MARK: - Validation
 
+    private var trimmedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var isValidEmail: Bool {
         let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: email)
+        return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: trimmedEmail)
     }
 
     private var isFormValid: Bool {
@@ -184,7 +191,10 @@ struct LoginView: View {
     // MARK: - Actions
 
     private func login() {
+        guard !isSubmitting else { return }
         hideKeyboard()
+        isSubmitting = true
+        let email = trimmedEmail
 
         Task {
             do {
@@ -197,9 +207,27 @@ struct LoginView: View {
                     UserDefaults.standard.removeObject(forKey: Self.savedEmailKey)
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = Self.message(for: error)
                 showError = true
             }
+            isSubmitting = false
+        }
+    }
+
+    private static func message(for error: Error) -> String {
+        switch AuthErrorCode(rawValue: (error as NSError).code) {
+        case .wrongPassword, .invalidCredential, .userNotFound:
+            return "That email and password don't match. Check them and try again."
+        case .invalidEmail:
+            return "Please enter a valid email address."
+        case .tooManyRequests:
+            return "Too many attempts. Wait a few minutes, or reset your password."
+        case .userDisabled:
+            return "This account has been turned off. Contact support for help."
+        case .networkError:
+            return "Check your connection and try again."
+        default:
+            return error.localizedDescription
         }
     }
 

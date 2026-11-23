@@ -32,6 +32,21 @@ extension CommunitiesView {
 
             discoverMoreCard
         }
+        joinWithCodeButton
+    }
+
+    /// Private communities are joined with a code from someone already in them
+    var joinWithCodeButton: some View {
+        Button {
+            showJoinWithCode = true
+        } label: {
+            Label("Join with invite code", systemImage: "ticket")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.goldText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DS.Spacing.s)
+        }
+        .buttonStyle(PressableStyle())
     }
 
     func communitySection(title: String, communities: [Community], isOwner: Bool) -> some View {

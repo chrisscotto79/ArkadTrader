@@ -30,9 +30,9 @@ extension CommunitiesView {
         }
     }
 
-    /// Popular communities (most members, boosted by recent activity), excluding private ones you can't see
+    /// Popular communities (most members, boosted by recent activity). Lists only hold public ones.
     var popularCommunities: [Community] {
-        viewModel.featuredCommunities.filter { !$0.isPrivate || viewModel.isUserMember(of: $0) }
+        viewModel.featuredCommunities
     }
 
     // MARK: - Search Results
@@ -129,6 +129,10 @@ extension CommunitiesView {
                     Button("View") { join(community) }
                         .buttonStyle(PillButtonStyle(kind: .gold))
                         .accessibilityLabel("View \(community.name)")
+                } else if viewModel.isJoining(community) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(minWidth: 56)
                 } else {
                     Button("Join") { join(community) }
                         .buttonStyle(PillButtonStyle(kind: .gold))
@@ -143,7 +147,7 @@ extension CommunitiesView {
             } label: {
                 Label("Quick Look", systemImage: "info.circle")
             }
-            if !isMember && !community.requiresSubscription {
+            if !isMember && !community.requiresSubscription && !viewModel.isJoining(community) {
                 Button {
                     join(community)
                 } label: {
@@ -200,7 +204,6 @@ extension CommunitiesView {
             return
         }
         viewModel.joinCommunity(community)
-        HapticManager.shared.notification(type: .success)
     }
 
     func selectCategory(_ category: CommunityType?) {
@@ -214,7 +217,6 @@ extension CommunitiesView {
         viewModel.selectedCategory = nil
         viewModel.minimumMemberCount = 0
         viewModel.sortType = .memberCount
-        Task { await viewModel.loadDiscoveryCommunities() }
     }
 }
 
@@ -240,7 +242,6 @@ extension CommunitiesView {
                 if !viewModel.searchQuery.isEmpty {
                     Button {
                         viewModel.searchQuery = ""
-                        Task { await viewModel.loadDiscoveryCommunities() }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)

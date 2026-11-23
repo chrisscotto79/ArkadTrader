@@ -21,7 +21,8 @@ struct PostDraft {
 
 struct CreatePostView: View {
     // MARK: - Properties
-    let onPost: (PostDraft) -> Void
+    /// Saves the post. The sheet stays open until it returns, and shows the error if it throws.
+    let onPost: (PostDraft) async throws -> Void
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var authService: FirebaseAuthService
 
@@ -30,6 +31,7 @@ struct CreatePostView: View {
     @State private var selectedPostType: PostType = .text
     @State private var characterCount = 0
     @State private var isPosting = false
+    @State private var postError: String?
 
     // Trade result
     @State private var detectedTickers: [String] = []
@@ -62,9 +64,9 @@ struct CreatePostView: View {
 
     // MARK: - Constants
     struct Constants {
-        static let maxCharacters = 500
+        static let maxCharacters = Post.maxContentLength
         static let maxImages = 6
-        static let warningThreshold = 450
+        static let warningThreshold = Post.maxContentLength - 100
     }
 
     // MARK: - Data
@@ -80,6 +82,15 @@ struct CreatePostView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.l) {
+                    if let postError {
+                        Label(postError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.marketRed)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .cardStyle(padding: 12)
+                            .transition(.opacity)
+                    }
+
                     SegmentedPicker(options: PostType.allCases, selection: postTypeBinding) { shortTitle(for: $0) }
 
                     composerCard
@@ -138,7 +149,7 @@ struct CreatePostView: View {
                 Button("Keep editing", role: .cancel) { }
             }
         }
-        .interactiveDismissDisabled(hasDraft)
+        .interactiveDismissDisabled(hasDraft || isPosting)
     }
 
     // MARK: - Toolbar
@@ -147,6 +158,7 @@ struct CreatePostView: View {
         ToolbarItem(placement: .cancellationAction) {
             Button("Cancel") { handleCancel() }
                 .foregroundStyle(Color.primary)
+                .disabled(isPosting)
         }
 
         ToolbarItem(placement: .confirmationAction) {
@@ -404,9 +416,15 @@ struct CreatePostView: View {
 
     // MARK: - Tickers
 
-    /// Tickers in the post first, then popular ones to add with a tap.
+    /// Tickers in the post first, then popular ones to add with a tap (none once the post is full).
     private var tickerChoices: [String] {
-        detectedTickers + popularTickers.prefix(10).filter { !detectedTickers.contains($0) }
+        guard detectedTickers.count < Post.maxTickers else { return detectedTickers }
+        return detectedTickers + popularTickers.prefix(10).filter { !detectedTickers.contains($0) }
+    }
+
+    /// True when the text mentions more tickers than a post can be tagged with.
+    private var hasTooManyTickers: Bool {
+        Cashtag.symbols(in: content).count > Post.maxTickers
     }
 
     private var tickerSection: some View {
@@ -438,6 +456,12 @@ struct CreatePostView: View {
                 }
             }
             .scrollClipDisabled()
+
+            if hasTooManyTickers {
+                Text("A post can tag up to \(Post.maxTickers) tickers. Only the first \(Post.maxTickers) count.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .cardStyle()
     }
@@ -600,33 +624,25 @@ struct CreatePostView: View {
         characterCount = content.count
     }
 
+    /// Tickers in the text ($aapl counts as $AAPL), in the order typed, up to Post.maxTickers.
     private func detectTickers() {
-        let pattern = "\\$[A-Z]{1,5}\\b"
-        let regex = try! NSRegularExpression(pattern: pattern)
-        let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
-
-        let tickers = matches.compactMap { match in
-            String(content[Range(match.range, in: content)!]).replacingOccurrences(of: "$", with: "")
-        }
-
-        // Keep the order they were typed in
-        var seen = Set<String>()
-        detectedTickers = tickers.filter { seen.insert($0).inserted }
+        detectedTickers = extractTickers(from: content)
     }
 
     private func addTicker(_ ticker: String) {
-        if !detectedTickers.contains(ticker) {
-            detectedTickers.append(ticker)
-            if !content.contains("$\(ticker)") {
-                content += content.isEmpty ? "$\(ticker)" : " $\(ticker)"
-            }
+        let symbol = Cashtag.normalize(ticker)
+        guard Cashtag.isValid(symbol), !detectedTickers.contains(symbol),
+              detectedTickers.count < Post.maxTickers else { return }
+        if !Cashtag.symbols(in: content).contains(symbol) {
+            content += content.isEmpty ? "$\(symbol)" : " $\(symbol)"
         }
+        detectTickers()
     }
 
+    /// Removes every whole "$TICKER" for this symbol ("$AAPL" goes, "$AAPLX" stays).
     private func removeTicker(_ ticker: String) {
-        detectedTickers.removeAll { $0 == ticker }
-        content = content.replacingOccurrences(of: " $\(ticker)", with: "")
-        content = content.replacingOccurrences(of: "$\(ticker)", with: "")
+        content = Cashtag.removing(ticker, from: content)
+        detectTickers()
     }
 
     /// Adds "$" or "#" at the end of the text and puts the cursor back in the editor.
@@ -721,35 +737,52 @@ struct CreatePostView: View {
         }
     }
 
+    /// Saves the post and closes the sheet only once it's saved; on failure the text stays put.
     private func createPost() {
         guard canPost else { return }
 
         isPosting = true
+        postError = nil
         focusedField = nil
-
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
-        // Short pause so the button state is visible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            let trade = selectedPostType == .tradeResult ? selectedTrade : nil
-            var tickers = detectedTickers
-            if let ticker = trade?.ticker, !tickers.contains(ticker) {
-                tickers.insert(ticker, at: 0)
-            }
-            onPost(PostDraft(
-                content: content,
-                tickers: tickers,
-                images: AppConfig.mediaUploadsEnabled ? selectedUIImages : [],
-                postType: selectedPostType,
-                trade: trade,
-                // No tag without a ticker to apply it to
-                sentiment: tickers.isEmpty ? nil : sentiment
-            ))
+        let trade = selectedPostType == .tradeResult ? selectedTrade : nil
+        var tickers = detectedTickers
+        if let ticker = trade.map({ Cashtag.normalize($0.ticker) }),
+           Cashtag.isValid(ticker), !tickers.contains(ticker) {
+            tickers.insert(ticker, at: 0)
+        }
+        tickers = Array(tickers.prefix(Post.maxTickers))
+        let draft = PostDraft(
+            content: content,
+            tickers: tickers,
+            images: AppConfig.mediaUploadsEnabled ? selectedUIImages : [],
+            postType: selectedPostType,
+            trade: trade,
+            // No tag without a ticker to apply it to
+            sentiment: tickers.isEmpty ? nil : sentiment
+        )
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        Task {
+            do {
+                try await onPost(draft)
+                isPosting = false
                 dismiss()
+            } catch {
+                isPosting = false
+                withAnimation(.snappy(duration: 0.25)) {
+                    postError = Self.message(for: error)
+                }
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
+    }
+
+    private static func message(for error: Error) -> String {
+        if let error = error as? LocalizedError, let description = error.errorDescription, !description.isEmpty {
+            return description
+        }
+        return "Couldn't share your post. Check your connection and try again."
     }
 }
 
@@ -797,7 +830,7 @@ private struct ComposerPreviewCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             HStack(spacing: DS.Spacing.m) {
-                UserAvatar(username: user?.username ?? "", imageURL: user?.profileImageUrl, size: 42)
+                UserAvatar(user: user, size: 42)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -902,8 +935,6 @@ private struct ClosedTradePickerSheet: View {
 }
 
 #Preview {
-    CreatePostView { draft in
-        print("Draft: \(draft.content), tickers \(draft.tickers), \(draft.images.count) images")
-    }
+    CreatePostView { _ in }
     .environmentObject(FirebaseAuthService.shared)
 }

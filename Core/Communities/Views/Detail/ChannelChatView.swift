@@ -9,6 +9,10 @@ import UIKit
 struct ChannelChatView: View {
     let community: Community
     let channel: Channel
+    /// Whether the viewer is a member; the chat keeps this up to date from their member doc
+    var isMember: Bool = true
+    /// A message to scroll to when the chat opens (from a notification)
+    var initialMessageId: String? = nil
 
     @Environment(\.dismiss) var dismiss
     @StateObject var viewModel = ChannelChatViewModel()
@@ -43,6 +47,14 @@ struct ChannelChatView: View {
     @State var scrollTargetMessageId: String?
     /// Message briefly highlighted after jumping to it from search
     @State var highlightedMessageId: String?
+    /// The list is scrolled to (or near) the newest message
+    @State var isNearBottom = true
+    /// New messages arrived while the viewer was reading further up
+    @State var hasUnseenMessages = false
+    /// The first scroll (to the newest message, or the linked one) has happened
+    @State var didInitialScroll = false
+    /// The top message before an older page loaded, kept in place afterwards
+    @State var anchorBeforeOlderLoad: String?
 
     // Typing-dots animation
     @State var animatingDot = 0
@@ -76,6 +88,10 @@ struct ChannelChatView: View {
         ZStack {
             VStack(spacing: 0) {
                 channelHeader
+                if !viewModel.errorMessage.isEmpty {
+                    errorBanner
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 if let latestPin = viewModel.pinnedMessages.first {
                     pinnedBar(latestPin)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -102,6 +118,7 @@ struct ChannelChatView: View {
             .animation(.snappy(duration: 0.2), value: replyingTo?.id)
             .animation(.snappy(duration: 0.2), value: editingMessage?.id)
             .animation(.snappy(duration: 0.2), value: viewModel.pinnedMessages.first?.id)
+            .animation(.snappy(duration: 0.2), value: viewModel.errorMessage)
 
             if showEmojiPicker {
                 emojiPickerOverlay
@@ -113,6 +130,7 @@ struct ChannelChatView: View {
         }
         .background(Color.surface.ignoresSafeArea())
         .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
         .sheet(isPresented: $showUserProfile) {
             if let user = selectedUserForProfile {
                 UserProfileSheet(user: user, community: community, onBlocked: { blockedId in
@@ -212,7 +230,7 @@ struct ChannelChatView: View {
             Text("It's removed for everyone in #\(channel.name) and shows as \"Message deleted\". This can't be undone.")
         }
         .onAppear {
-            viewModel.loadChannelData(community: community, channel: channel)
+            viewModel.loadChannelData(community: community, channel: channel, isMember: isMember)
             loadUsersForMessages()
         }
         .onDisappear {
@@ -288,6 +306,29 @@ extension ChannelChatView {
 
     var channelColor: Color { channel.displayTint }
 
+    var errorBanner: some View {
+        HStack(spacing: DS.Spacing.s) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.footnote)
+            Text(viewModel.errorMessage)
+                .font(.footnote)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            Button {
+                viewModel.clearError()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .foregroundStyle(Color.marketRed)
+        .padding(.horizontal, DS.pageMargin)
+        .padding(.vertical, DS.Spacing.s)
+        .background(Color.marketRed.opacity(0.08))
+    }
+
     var channelIcon: String { channel.displayIcon }
 }
 
@@ -339,8 +380,17 @@ extension ChannelChatView {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     if viewModel.messages.isEmpty {
-                        emptyChannelState
+                        if viewModel.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 96)
+                        } else {
+                            emptyChannelState
+                        }
                     } else {
+                        if viewModel.hasMoreOlder {
+                            olderMessagesRow
+                        }
                         ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
                             messageCell(message, at: index)
                                 .id(message.id)
@@ -351,15 +401,55 @@ extension ChannelChatView {
                 .padding(.top, DS.Spacing.m)
                 .padding(.bottom, DS.Spacing.s)
             }
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: viewModel.messages.count) {
-                // Auto-scroll to bottom when a new message arrives
-                if let lastMessage = viewModel.messages.last {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 140
+            } action: { _, nearBottom in
+                isNearBottom = nearBottom
+                if nearBottom { hasUnseenMessages = false }
+            }
+            .overlay(alignment: .bottom) {
+                if hasUnseenMessages {
+                    newMessagesPill {
+                        hasUnseenMessages = false
+                        if let last = viewModel.messages.last {
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo(last.id, anchor: .bottom)
+                            }
+                        }
                     }
+                    .padding(.bottom, DS.Spacing.m)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+            }
+            .animation(.snappy(duration: 0.2), value: hasUnseenMessages)
+            .onChange(of: viewModel.messages.last?.id) { _, lastId in
+                guard let lastId, let last = viewModel.messages.last else { return }
+                if !didInitialScroll {
+                    didInitialScroll = true
+                    if let target = initialMessageId, viewModel.message(withId: target) != nil {
+                        DispatchQueue.main.async { scrollTargetMessageId = target }
+                    } else {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
+                } else if isNearBottom || last.authorId == viewModel.currentUserId {
+                    // Only follow new messages when the viewer is already at the bottom, or sent it
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
+                } else {
+                    hasUnseenMessages = true
+                }
+            }
+            .onChange(of: viewModel.messages.count) {
                 loadUsersForNewMessages()
+            }
+            .onChange(of: viewModel.isLoadingOlder) { _, loading in
+                // Keep the message the viewer was looking at in place after older ones load above it
+                guard !loading, let anchor = anchorBeforeOlderLoad else { return }
+                anchorBeforeOlderLoad = nil
+                proxy.scrollTo(anchor, anchor: .top)
             }
             .onChange(of: scrollTargetMessageId) { _, target in
                 guard let target else { return }
@@ -368,7 +458,8 @@ extension ChannelChatView {
                 }
                 highlightedMessageId = target
                 scrollTargetMessageId = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                Task {
+                    try? await Task.sleep(for: .seconds(1.6))
                     if highlightedMessageId == target {
                         highlightedMessageId = nil
                     }
@@ -382,6 +473,44 @@ extension ChannelChatView {
                 isMessageFieldFocused = false
             }
         }
+    }
+
+    /// Top of the list: loads the previous 50 messages when it scrolls into view
+    var olderMessagesRow: some View {
+        HStack(spacing: DS.Spacing.s) {
+            if viewModel.isLoadingOlder {
+                ProgressView().controlSize(.small)
+                Text("Loading earlier messages…")
+            } else {
+                Button("Load earlier messages") { loadOlder() }
+                    .foregroundStyle(Color.goldText)
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.Spacing.m)
+        .onAppear { loadOlder() }
+    }
+
+    func loadOlder() {
+        guard viewModel.hasMoreOlder, !viewModel.isLoadingOlder, didInitialScroll else { return }
+        anchorBeforeOlderLoad = viewModel.messages.first?.id
+        viewModel.loadOlderMessages()
+    }
+
+    func newMessagesPill(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label("New messages", systemImage: "arrow.down")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.onGold)
+                .padding(.horizontal, DS.Spacing.l)
+                .padding(.vertical, DS.Spacing.s)
+                .background(Capsule().fill(Color.arkadGold))
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityHint("Scrolls to the newest message")
     }
 
     @ViewBuilder
@@ -412,7 +541,7 @@ extension ChannelChatView {
             isUserMessage: message.authorId == viewModel.currentUserId,
             canEdit: viewModel.canEditMessage(message),
             canDelete: viewModel.canDeleteMessage(message),
-            reactions: viewModel.getGroupedReactions(for: message.id),
+            reactions: viewModel.getGroupedReactions(for: message),
             onReply: {
                 replyingTo = message
                 isMessageFieldFocused = true
@@ -426,10 +555,7 @@ extension ChannelChatView {
                 emojiPickerForMessage = message
                 showEmojiPicker = true
             },
-            onProfileTap: { user in
-                selectedUserForProfile = user
-                showUserProfile = true
-            },
+            onProfileTap: { openProfile(authorId: message.authorId) },
             currentUserId: authService.currentUser?.id ?? "",
             currentUsername: authService.currentUser?.username ?? "",
             onTrackCallout: { calloutToTrack = message },
@@ -440,7 +566,9 @@ extension ChannelChatView {
             calloutUpdates: message.callout == nil ? [] : viewModel.calloutUpdates(for: message.id),
             parentCallout: viewModel.parentCallout(of: message),
             isMessageLoaded: { viewModel.message(withId: $0) != nil },
-            onJumpToMessage: { jumpToMessage($0) }
+            onJumpToMessage: { jumpToMessage($0) },
+            canInteract: viewModel.isMember,
+            isReplyParentDeleted: message.replyTo.flatMap { viewModel.message(withId: $0.messageId) }?.isDeleted ?? false
         )
     }
 
@@ -699,15 +827,25 @@ extension ChannelChatView {
         guard userCache[userId] == nil else { return }
 
         Task {
-            do {
-                if let user = try await authService.getUserById(userId: userId) {
-                    await MainActor.run {
-                        userCache[userId] = user
-                    }
-                }
-            } catch {
-                // The row falls back to the username stored on the message
+            // On failure the row falls back to the username stored on the message
+            if let user = try? await authService.getUserById(userId: userId) {
+                userCache[userId] = user
             }
+        }
+    }
+
+    /// Opens an author's profile, reading it first when it isn't cached (or failed to load earlier)
+    func openProfile(authorId: String) {
+        if let user = userCache[authorId] {
+            selectedUserForProfile = user
+            showUserProfile = true
+            return
+        }
+        Task {
+            guard let user = try? await authService.getUserById(userId: authorId) else { return }
+            userCache[authorId] = user
+            selectedUserForProfile = user
+            showUserProfile = true
         }
     }
 

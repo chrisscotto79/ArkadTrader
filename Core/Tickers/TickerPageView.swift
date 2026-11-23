@@ -31,10 +31,8 @@ final class TickerPageModel: ObservableObject {
 
     let ticker: String
 
-    /// Holds the page's posts. UserPostCard works through a HomeViewModel, so keeping the
-    /// posts in one (like Discover's post detail does) makes likes, bookmarks, comment counts,
-    /// delete, report and block update this list.
-    let feedStore = HomeViewModel()
+    /// The page's posts. Likes, counts, deletes, reports and blocks come from PostStore.
+    @Published private(set) var posts: [Post] = []
 
     @Published private(set) var feedPhase: FeedPhase = .loading
     @Published private(set) var quotePhase: QuotePhase = .loading
@@ -93,12 +91,15 @@ final class TickerPageModel: ObservableObject {
     private func loadFirstPage() async {
         generation += 1
         let thisGeneration = generation
-        if feedStore.posts.isEmpty { feedPhase = .loading }
+        if posts.isEmpty { feedPhase = .loading }
 
         do {
-            let (posts, next) = try await service.posts(for: ticker, limit: pageSize, after: nil)
+            async let interactions: Void = PostStore.shared.loadIfNeeded()
+            let (loaded, next) = try await service.posts(for: ticker, limit: pageSize, after: nil)
+            await interactions
             guard thisGeneration == generation else { return }
-            feedStore.posts = posts
+            posts = loaded
+            PostStore.shared.absorb(loaded)
             cursor = next
             hasMore = next != nil
             loadMoreError = nil
@@ -108,10 +109,10 @@ final class TickerPageModel: ObservableObject {
         } catch {
             guard thisGeneration == generation else { return }
             let message = TickerFeedError.friendlyMessage(for: error)
-            if feedStore.posts.isEmpty {
+            if posts.isEmpty {
                 feedPhase = .failed(message)
             } else {
-                refreshError = "Couldn't refresh. \(message)"
+                refreshError = message
             }
         }
     }
@@ -124,10 +125,12 @@ final class TickerPageModel: ObservableObject {
         defer { isLoadingMore = false }
 
         do {
-            let (posts, next) = try await service.posts(for: ticker, limit: pageSize, after: cursor)
+            let (loaded, next) = try await service.posts(for: ticker, limit: pageSize, after: cursor)
             guard thisGeneration == generation else { return }
-            let shown = Set(feedStore.posts.map(\.id))
-            feedStore.posts.append(contentsOf: posts.filter { !shown.contains($0.id) })
+            let shown = Set(posts.map(\.id))
+            let fresh = loaded.filter { !shown.contains($0.id) }
+            posts.append(contentsOf: fresh)
+            PostStore.shared.absorb(fresh)
             self.cursor = next
             hasMore = next != nil
             pagesLoaded += 1
@@ -160,7 +163,7 @@ final class TickerPageModel: ObservableObject {
             sentimentPhase = .loaded(summary)
         } catch {
             if case .loaded = sentimentPhase { return }
-            sentimentPhase = .failed(TickerFeedError.friendlyMessage(for: error, feature: "The sentiment meter"))
+            sentimentPhase = .failed(TickerFeedError.friendlyMessage(for: error, feature: "the sentiment meter"))
         }
     }
 }
@@ -197,6 +200,7 @@ struct TickerPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .refreshable { await model.refresh() }
+        .postStoreFeedback()
         .task { await model.loadIfNeeded() }
         .task {
             if !watchlist.hasLoaded { await watchlist.load() }
@@ -373,7 +377,7 @@ struct TickerPageView: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
                 if case .loaded(let summary?) = model.sentimentPhase {
-                    Text("\(summary.taggedCount) tagged of \(summary.postsConsidered) recent posts")
+                    Text("\(summary.taggedCount) \(summary.taggedCount == 1 ? "person" : "people") tagged it, of \(summary.postsConsidered) recent posts")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -410,12 +414,12 @@ struct TickerPageView: View {
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(split.bullish) percent bullish, \(split.bearish) percent bearish, from \(summary.taggedCount) tagged posts")
+                .accessibilityLabel("\(split.bullish) percent bullish, \(split.bearish) percent bearish, from \(summary.taggedCount) people's tags")
 
             case .loaded(nil):
                 VStack(alignment: .leading, spacing: DS.Spacing.s) {
                     SentimentMeterBar(bullishPercent: nil)
-                    Text("Not enough tagged posts yet")
+                    Text("Not enough tags yet")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.primary)
                     Text("Tag your post Bullish or Bearish when you mention $\(ticker) to add to the meter.")
@@ -472,7 +476,7 @@ struct TickerPageView: View {
                 }
 
             case .loaded:
-                TickerPostsList(store: model.feedStore, model: model, ticker: ticker)
+                TickerPostsList(model: model, ticker: ticker)
             }
         }
     }
@@ -480,14 +484,17 @@ struct TickerPageView: View {
 
 // MARK: - Posts list
 
-/// Observes the HomeViewModel that holds the posts, so likes, deletes and blocks redraw the list.
+/// Observes PostStore and BlockStore too, so deletes, reports and blocks redraw the list.
 private struct TickerPostsList: View {
-    @ObservedObject var store: HomeViewModel
     @ObservedObject var model: TickerPageModel
+    @ObservedObject private var store = PostStore.shared
+    @ObservedObject private var blockStore = BlockStore.shared
     let ticker: String
 
     var body: some View {
-        if store.posts.isEmpty && !model.hasMore && !model.isLoadingMore {
+        let posts = store.visible(model.posts)
+
+        if posts.isEmpty && !model.hasMore && !model.isLoadingMore {
             EmptyStateView(
                 systemImage: "text.bubble",
                 title: "No posts about $\(ticker) yet — be the first",
@@ -495,8 +502,8 @@ private struct TickerPostsList: View {
             )
         } else {
             LazyVStack(spacing: DS.Spacing.m) {
-                ForEach(store.posts, id: \.id) { post in
-                    UserPostCard(post: post, homeViewModel: store)
+                ForEach(posts, id: \.id) { post in
+                    UserPostCard(post: post)
                         .environmentObject(FirebaseAuthService.shared)
                 }
                 footer

@@ -12,6 +12,8 @@ struct SearchResultView: View {
 
     let result: SearchResult
     var style: Style = .row
+    /// Called when the result is opened (Discover saves the search then)
+    var onOpen: (() -> Void)? = nil
     @EnvironmentObject private var authService: FirebaseAuthService
 
     // Navigation states
@@ -175,7 +177,7 @@ struct SearchResultView: View {
     private var resultIcon: some View {
         switch result.type {
         case .user:
-            UserAvatar(username: result.user?.username ?? "user", imageURL: result.user?.profileImageUrl, size: 44)
+            UserAvatar(username: result.user?.username ?? "user", fullName: result.user?.fullName, imageURL: result.user?.profileImageUrl, size: 44)
 
         case .post:
             IconWell(systemName: "text.bubble.fill", tint: .info, size: 44)
@@ -255,6 +257,7 @@ struct SearchResultView: View {
 
     // MARK: - Navigation Actions
     private func handleResultTap() {
+        onOpen?()
         switch result.type {
         case .user:
             handleUserTap()
@@ -364,6 +367,7 @@ struct SearchResultView: View {
                 }
             }
             .screenBackground()
+            .postStoreFeedback()
             .navigationTitle("Post")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -639,14 +643,23 @@ struct SearchResultView: View {
 
 // MARK: - Post detail
 
-/// A post opened from Discover. Owns its own HomeViewModel so likes and bookmarks work
-/// (and the model isn't recreated every time the sheet redraws).
+/// A post opened from Discover. Likes, bookmarks and counts come from PostStore, like every
+/// other card; once deleted or reported it shows a note instead.
 private struct SearchPostDetail: View {
     let post: Post
-    @StateObject private var homeViewModel = HomeViewModel()
+    @ObservedObject private var store = PostStore.shared
 
     var body: some View {
-        UserPostCard(post: post, homeViewModel: homeViewModel)
+        if store.isVisible(post) {
+            UserPostCard(post: post)
+                .task { await store.loadIfNeeded() }
+        } else {
+            EmptyStateView(
+                systemImage: "text.bubble",
+                title: "Post unavailable",
+                message: "This post was deleted or hidden."
+            )
+        }
     }
 }
 

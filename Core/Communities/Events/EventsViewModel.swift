@@ -15,7 +15,11 @@ final class EventsViewModel: ObservableObject {
     @Published private(set) var hasLoaded = false
     /// Events with an RSVP write in flight
     @Published private(set) var busyEventIds: Set<String> = []
-    @Published var errorMessage: String?
+    /// Why the events couldn't be loaded: shown in place of the list before the first load,
+    /// as a banner over the loaded list after that.
+    @Published var loadError: String?
+    /// Why an RSVP or a staff action failed (an alert)
+    @Published var actionError: String?
     /// A gentle note after an RSVP (for example, reminders are off)
     @Published var notice: String?
 
@@ -36,7 +40,8 @@ final class EventsViewModel: ObservableObject {
         past = []
         going = []
         hasLoaded = false
-        errorMessage = nil
+        loadError = nil
+        actionError = nil
     }
 
     func loadIfNeeded() async {
@@ -53,21 +58,20 @@ final class EventsViewModel: ObservableObject {
             upcoming = result.upcoming
             past = result.past
             hasLoaded = true
-            errorMessage = nil
+            loadError = nil
         } catch {
-            errorMessage = ClassroomViewModel.friendly(error, doing: "load the events")
+            loadError = ClassroomViewModel.friendly(error, doing: "load the events")
             return
         }
-        if let userId {
-            going = await service.rsvpedEventIds(
-                communityId: community.id, eventIds: upcoming.map(\.id), userId: userId
-            )
-            await EventReminderScheduler.reconcile(
-                communityId: community.id,
-                communityName: community.name,
-                goingTo: upcoming.filter { going.contains($0.id) }
-            )
-        }
+        guard let userId else { return }
+        // If the RSVPs can't be read, keep what we had and leave the reminders alone.
+        guard let ids = try? await service.rsvpedEventIds(communityId: community.id, userId: userId) else { return }
+        going = ids
+        await EventReminderScheduler.reconcile(
+            communityId: community.id,
+            communityName: community.name,
+            goingTo: upcoming.filter { going.contains($0.id) }
+        )
     }
 
     // MARK: - Lookups
@@ -79,15 +83,34 @@ final class EventsViewModel: ObservableObject {
     func isGoing(_ event: CommunityEvent) -> Bool { going.contains(event.id) }
 
     /// Re-reads one event (its RSVP count and the user's RSVP), for the detail screen.
+    /// An event that no longer exists is removed, with its reminder.
     func refresh(eventId: String) async {
         guard let community else { return }
-        guard let fresh = try? await service.fetchEvent(communityId: community.id, eventId: eventId) else {
+        let fresh: CommunityEvent?
+        do {
+            fresh = try await service.fetchEvent(communityId: community.id, eventId: eventId)
+        } catch {
+            return  // offline: keep showing what we have
+        }
+        guard let fresh else {
+            removeGone(eventId: eventId)
             return
         }
         replace(fresh)
-        if let userId {
-            let ids = await service.rsvpedEventIds(communityId: community.id, eventIds: [eventId], userId: userId)
+        if let userId, let ids = try? await service.rsvpedEventIds(communityId: community.id, userId: userId) {
             if ids.contains(eventId) { going.insert(eventId) } else { going.remove(eventId) }
+        }
+    }
+
+    /// The event was deleted: drop it, its reminder and the user's RSVP mirror.
+    private func removeGone(eventId: String) {
+        guard let community else { return }
+        let wasGoing = going.contains(eventId)
+        remove(eventId: eventId)
+        going.remove(eventId)
+        EventReminderScheduler.cancel(communityId: community.id, eventId: eventId)
+        if wasGoing, let userId {
+            Task { await service.removeRSVPMirror(eventId: eventId, userId: userId) }
         }
     }
 
@@ -104,10 +127,16 @@ final class EventsViewModel: ObservableObject {
         // Optimistic: flip first, roll back if the batch fails
         setGoing(nowGoing, for: event)
         do {
-            try await service.setRSVP(nowGoing, communityId: community.id, eventId: event.id, userId: userId)
+            let changed = try await service.setRSVP(nowGoing, communityId: community.id, eventId: event.id, userId: userId)
+            // Already in that state (another device): our optimistic count is off, so re-read it
+            if !changed {
+                if let fresh = try? await service.fetchEvent(communityId: community.id, eventId: event.id) {
+                    replace(fresh)
+                }
+            }
         } catch {
             setGoing(wasGoing, for: event)
-            errorMessage = ClassroomViewModel.friendly(error, doing: nowGoing ? "RSVP" : "cancel your RSVP")
+            actionError = ClassroomViewModel.friendly(error, doing: nowGoing ? "RSVP" : "cancel your RSVP")
             return
         }
 
@@ -158,21 +187,34 @@ final class EventsViewModel: ObservableObject {
         updated.link = link.isEmpty ? nil : link
         remove(eventId: event.id)
         insert(updated)
-        // The time may have moved: refresh this user's own reminder
+        // The time may have moved: refresh this user's own reminder and tell the people going
         if going.contains(event.id) {
             EventReminderScheduler.cancel(communityId: community.id, eventId: event.id)
             if !updated.isPast() {
                 await EventReminderScheduler.schedule(updated, communityName: community.name)
             }
         }
+        if updated.startsAt != event.startsAt || updated.durationMinutes != event.durationMinutes {
+            let service = self.service
+            Task {
+                let ids = await service.rsvpUserIds(communityId: community.id, eventId: updated.id)
+                await service.notifyRSVPs(ids, about: updated, community: community, cancelled: false)
+            }
+        }
     }
 
     func deleteEvent(_ event: CommunityEvent) async throws {
         guard let community else { return }
+        // Who to tell: the RSVPs can't be listed once the event is gone
+        let goingIds = event.isPast() ? [] : await service.rsvpUserIds(communityId: community.id, eventId: event.id)
         try await service.deleteEvent(communityId: community.id, eventId: event.id, userId: userId)
         remove(eventId: event.id)
         going.remove(event.id)
         EventReminderScheduler.cancel(communityId: community.id, eventId: event.id)
+        if !goingIds.isEmpty {
+            let service = self.service
+            Task { await service.notifyRSVPs(goingIds, about: event, community: community, cancelled: true) }
+        }
     }
 
     // MARK: - List upkeep

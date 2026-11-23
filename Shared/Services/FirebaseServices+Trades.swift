@@ -1,25 +1,25 @@
 // File: Shared/Services/FirebaseServices+Trades.swift
+// trades/{id}. The rules let anyone but the owner read a trade only when isPublic == true, so every
+// query for someone else's trades filters on it.
 
 import Foundation
-import Firebase
 import FirebaseAuth
 import FirebaseFirestore
-import FirebaseStorage
-import SwiftUI
 
 extension FirebaseServices {
     // MARK: - Trade Management
-    
-    /// Creates the trade. `Trade.toFirestore()` adds `proof`, `loggedAt` (server time) and, for a
-    /// price-checked entry, `priceCheck { low, high, checkedAt }`, which the rules require.
+
+    /// Creates the trade. `Trade.toFirestore()` adds `proof`, `entryProof` (the same value,
+    /// immutable), `side`, `loggedAt` (server time) and, for a price-checked entry,
+    /// `priceCheck { price, low, high, checkedAt }`.
     func addTrade(_ trade: Trade) async throws {
         try await db.collection("trades").document(trade.id).setData(trade.toFirestore())
     }
-    
+
     /// Saves only the fields that may change after logging (firestore.rules lock ticker, tradeType,
-    /// entryPrice, quantity, entryDate, proof, loggedAt and priceCheck, and a closed trade's exit).
-    /// Locked fields are never rewritten, so a Date round trip can't count as a change.
-    /// Closing goes through `closeTrade`.
+    /// side, entryPrice, quantity, entryDate, proof, entryProof, loggedAt and priceCheck, and a
+    /// closed trade's exit). Locked fields are never rewritten, so a Date round trip can't count as
+    /// a change. Closing goes through `closeTrade`.
     func updateTrade(_ trade: Trade) async throws {
         var data: [String: Any] = [
             "notes": trade.notes.map { $0 as Any } ?? NSNull(),
@@ -31,13 +31,13 @@ extension FirebaseServices {
         data["stopLossPrice"] = trade.stopLossPrice.map { $0 as Any } ?? FieldValue.delete()
         data["takeProfitPrice"] = trade.takeProfitPrice.map { $0 as Any } ?? FieldValue.delete()
         if let sector = trade.sector { data["sector"] = sector }
-        if trade.isOpen, let currentPrice = trade.currentPrice { data["currentPrice"] = currentPrice }
         try await db.collection("trades").document(trade.id).updateData(data)
     }
 
-    /// Closes an open trade: the exit, its proof and the overall proof in one write.
-    /// Writes `isOpen: false`, `exitPrice`, `exitDate`, `exitProof`, `exitLoggedAt` (server time,
-    /// which the rules require for a price-checked exit) and `proof` when it drops to self-reported.
+    /// Closes an open trade in one write: `isOpen: false`, `exitPrice`, `exitDate`, `exitProof`
+    /// ("price_checked" only for an exit checked against the live price and dated now),
+    /// `exitLoggedAt` (server time), `notes`, and deletes `currentPrice`.
+    /// `proof` is never written here: closing doesn't change the trade's label.
     func closeTrade(_ trade: Trade) async throws {
         guard let exitPrice = trade.exitPrice, let exitDate = trade.exitDate else {
             throw NSError(domain: "TradeClose", code: 0,
@@ -49,13 +49,12 @@ extension FirebaseServices {
             "exitDate": Timestamp(date: exitDate),
             "exitProof": (trade.exitProof == .priceChecked ? TradeProof.priceChecked : .selfReported).rawValue,
             "exitLoggedAt": FieldValue.serverTimestamp(),
-            "proof": trade.proof.rawValue,
             "currentPrice": FieldValue.delete()
         ]
         data["notes"] = trade.notes.map { $0 as Any } ?? NSNull()
         try await db.collection("trades").document(trade.id).updateData(data)
     }
-    
+
     func deleteTrade(tradeId: String) async throws {
         try await db.collection("trades").document(tradeId).delete()
     }
@@ -64,89 +63,57 @@ extension FirebaseServices {
     func getTradeData(tradeId: String) async throws -> [String: Any]? {
         try await db.collection("trades").document(tradeId).getDocument().data()
     }
-    
-    // Add this method to your FirebaseServices.swift file
-    // This goes in the "Trade Management" section
 
+    /// A user's trades, newest first. Your own: all of them. Anyone else's: public ones only
+    /// (the rules refuse the query otherwise). Equality filters only, so no composite index.
     func getUserTradesSimple(userId: String) async throws -> [Trade] {
-        print("🔍 FirebaseServices: Getting trades for user \(userId) with simple query")
-        
-        let snapshot = try await db.collection("trades")
-            .whereField("userId", isEqualTo: userId)
-            // Remove the .order(by:) to avoid index requirement
-            .getDocuments()
-        
-        let trades = snapshot.documents.compactMap { document in
-            try? Trade.fromFirestore(data: document.data(), id: document.documentID)
+        var query: Query = db.collection("trades").whereField("userId", isEqualTo: userId)
+        if userId != Auth.auth().currentUser?.uid {
+            query = query.whereField("isPublic", isEqualTo: true)
         }
-        
-        // Sort in memory instead of in the query
-        let sortedTrades = trades.sorted { $0.entryDate > $1.entryDate }
-        
-        print("✅ FirebaseServices: Found \(sortedTrades.count) trades for user")
-        return sortedTrades
+        let snapshot = try await query.getDocuments()
+        return snapshot.documents
+            .compactMap(Trade.from(document:))
+            .sorted { $0.entryDate > $1.entryDate }
     }
-    
-    func listenToUserTrades(userId: String, completion: @escaping ([Trade]) -> Void) {
-        let listener = db.collection("trades")
+
+    /// Live updates of the signed-in user's own trades, newest first. The caller owns the returned
+    /// registration and must remove it (PortfolioViewModel keeps exactly one).
+    /// Errors (permissions, offline with no cache) are passed on instead of being dropped.
+    func listenToUserTrades(userId: String,
+                            onChange: @escaping (Result<[Trade], Error>) -> Void) -> ListenerRegistration {
+        db.collection("trades")
             .whereField("userId", isEqualTo: userId)
             .order(by: "entryDate", descending: true)
             .addSnapshotListener { snapshot, error in
                 guard let documents = snapshot?.documents else {
-                    print("Error fetching trades: \(error?.localizedDescription ?? "Unknown error")")
+                    onChange(.failure(error ?? NSError(
+                        domain: "Trades", code: 0,
+                        userInfo: [NSLocalizedDescriptionKey: "Couldn't load your trades."])))
                     return
                 }
-                
-                let trades = documents.compactMap { document in
-                    try? Trade.fromFirestore(data: document.data(), id: document.documentID)
-                }
-                
-                completion(trades)
+                onChange(.success(documents.compactMap(Trade.from(document:))))
             }
-        
-        listeners.append(listener)
     }
-    
+
     func getTradeById(tradeId: String) async throws -> Trade? {
         let document = try await db.collection("trades").document(tradeId).getDocument()
-        guard let data = document.data() else { return nil }
-        return try Trade.fromFirestore(data: data, id: tradeId)
+        return Trade.from(document: document)
     }
-    
-    func copyTrade(tradeId: String, userId: String) async throws {
-        guard let originalTrade = try await getTradeById(tradeId: tradeId) else {
-            throw FirestoreError.documentNotFound
-        }
-        
-        var copiedTrade = Trade(
-            ticker: originalTrade.ticker,
-            tradeType: originalTrade.tradeType,
-            entryPrice: originalTrade.entryPrice,
-            quantity: originalTrade.quantity,
-            userId: userId
-        )
-        
-        copiedTrade.notes = originalTrade.notes
-        copiedTrade.strategy = originalTrade.strategy
-        
-        try await addTrade(copiedTrade)
-    }
-    
-    
+
+    /// Public trades whose ticker starts with `query`.
+    /// Needs a composite index: trades (isPublic ASC, ticker ASC).
     func searchTrades(query: String, limit: Int = 20) async throws -> [Trade] {
-        guard !query.isEmpty else { return [] }
-        
         let searchQuery = query.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Search by ticker symbol
+        guard !searchQuery.isEmpty else { return [] }
+
         let snapshot = try await db.collection("trades")
+            .whereField("isPublic", isEqualTo: true)
             .whereField("ticker", isGreaterThanOrEqualTo: searchQuery)
             .whereField("ticker", isLessThan: searchQuery + "\u{f8ff}")
             .limit(to: limit)
             .getDocuments()
-        
-        return snapshot.documents.compactMap { document in
-            try? Trade.fromFirestore(data: document.data(), id: document.documentID)
-        }
+
+        return snapshot.documents.compactMap(Trade.from(document:))
     }
 }
