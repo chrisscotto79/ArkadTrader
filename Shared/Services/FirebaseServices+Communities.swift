@@ -162,21 +162,41 @@ extension FirebaseServices {
         }
     }
 
-    /// The communities in the user's `communityIds`, read by id (so private ones work too).
+    /// The communities in the user's `communityIds`, each read by id. A query can't be used:
+    /// the rules allow a private community only after checking the reader's member doc, which
+    /// Firestore can only do one document at a time. Ones that are gone or no longer readable
+    /// are left out; it throws only when every read fails.
     func getUserCommunities(userId: String) async throws -> [Community] {
         let user = try await getUserById(userId: userId)
         guard let communityIds = user?.communityIds, !communityIds.isEmpty else { return [] }
+        let ids = Array(Set(communityIds.filter { !$0.isEmpty }))
 
-        // Firestore `in` filters accept at most 30 values
+        let results = await withTaskGroup(of: Result<Community?, Error>.self) { group in
+            for id in ids {
+                group.addTask { [db] in
+                    do {
+                        let doc = try await db.collection("communities").document(id).getDocument()
+                        guard let data = doc.data() else { return .success(nil) }
+                        return .success(try? Community.fromFirestore(data: data, id: doc.documentID))
+                    } catch {
+                        return .failure(error)
+                    }
+                }
+            }
+            var all: [Result<Community?, Error>] = []
+            for await result in group { all.append(result) }
+            return all
+        }
+
         var communities: [Community] = []
-        for chunk in communityIds.chunked(into: 30) {
-            let snapshot = try await db.collection("communities")
-                .whereField(FieldPath.documentID(), in: chunk)
-                .getDocuments()
-            communities += snapshot.documents.compactMap { document in
-                try? Community.fromFirestore(data: document.data(), id: document.documentID)
+        var errors: [Error] = []
+        for result in results {
+            switch result {
+            case .success(let community): if let community { communities.append(community) }
+            case .failure(let error): errors.append(error)
             }
         }
+        if errors.count == results.count, let first = errors.first { throw first }
         return communities
     }
 

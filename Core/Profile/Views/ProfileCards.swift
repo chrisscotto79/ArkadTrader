@@ -338,20 +338,18 @@ struct ProfileUserTradeCard: View {
             )
 
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(trade.ticker)
-                        .font(.headline)
-                        .lineLimit(1)
-                    if trade.isOpen {
-                        Tag(text: "Open")
-                    }
-                    TradeProofBadge(proof: trade.proof, compact: true)
+                // The ticker and tag keep their size; on a narrow row the proof label
+                // shrinks to its icon instead of squeezing the ticker.
+                ViewThatFits(in: .horizontal) {
+                    titleLine(fullProof: true)
+                    titleLine(fullProof: false)
                 }
 
                 Text("\(trade.quantity.quantityString) \(unitLabel) @ \(trade.entryPrice.asTradingPrice)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
 
             Spacer(minLength: DS.Spacing.s)
@@ -364,14 +362,36 @@ struct ProfileUserTradeCard: View {
                         .foregroundStyle(pl >= 0 ? Color.marketGreen : Color.marketRed)
                 }
 
-                Text(trade.entryDate.formatted(date: .abbreviated, time: .omitted))
+                Text(AssetTerms.shortDate(trade.entryDate))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .fixedSize()
         }
         .padding(.horizontal, DS.Spacing.l)
         .padding(.vertical, DS.Spacing.m)
         .accessibilityElement(children: .combine)
+    }
+
+    private func titleLine(fullProof: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(trade.ticker)
+                .font(.headline)
+                .lineLimit(1)
+                .fixedSize()
+            if trade.isOpen {
+                Tag(text: "Open")
+                    .fixedSize()
+            }
+            if fullProof {
+                TradeProofBadge(proof: trade.proof, compact: true)
+            } else {
+                Image(systemName: trade.proof.systemImage)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(trade.proof.tint)
+                    .accessibilityLabel(trade.proof.label)
+            }
+        }
     }
 
     private var plColor: Color {
